@@ -1,0 +1,241 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Printer, Banknote, RefreshCw } from 'lucide-react'
+import { apiGet } from '../lib/api'
+import { formatMoney, formatDate, formatDateTime, formatAmountWords } from '../lib/format'
+import { useToast } from '../components/ui/Toast'
+import PageHeader from '../components/PageHeader'
+import GlassCard from '../components/ui/GlassCard'
+import StatusBadge from '../components/ui/StatusBadge'
+import EmptyState from '../components/ui/EmptyState'
+import Button from '../components/ui/Button'
+import DataToolbar from '../components/ui/DataToolbar'
+import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+
+interface PaymentOrder {
+  id: string
+  serial_no: string | null
+  generated_by: string | null
+  generated_at: string | null
+  status: string | null
+  invoices: {
+    invoice_no: string | null
+    invoice_date: string | null
+    amount: number
+    status: string | null
+    contracts: { contract_no: string | null; vendors: Array<{ name: string | null }> | null } | null
+  } | null
+}
+
+export default function PaymentOrdersPage() {
+  const [orders, setOrders] = useState<PaymentOrder[]>([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState('generated_at')
+  const [sortDir, setSortDir] = useState<SortDirection>('desc')
+  const toast = useToast()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const d = await apiGet<{ paymentOrders: PaymentOrder[] }>('/api/payment-orders')
+      setOrders(d.paymentOrders)
+    } catch (e) {
+      toast.error('Failed to load payment orders', (e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const refresh = async () => {
+    setRefreshing(true)
+    await load()
+    setRefreshing(false)
+  }
+
+  const vendorOf = (o: PaymentOrder) => o.invoices?.contracts?.vendors?.[0]?.name ?? '—'
+  const contractOf = (o: PaymentOrder) => o.invoices?.contracts?.contract_no ?? '—'
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return orders.filter((o) =>
+      `${o.serial_no ?? ''} ${o.invoices?.invoice_no ?? ''} ${vendorOf(o)} ${contractOf(o)}`.toLowerCase().includes(q),
+    )
+  }, [orders, search])
+
+  const sorted = useMemo(
+    () =>
+      sortRows(
+        filtered,
+        sortBy || null,
+        sortDir,
+        (row, key) =>
+          key === 'generated_at'
+            ? dateSortValue(row.generated_at)
+            : key === 'invoice_date'
+              ? dateSortValue(row.invoices?.invoice_date)
+              : key === 'amount'
+                ? Number(row.invoices?.amount ?? 0)
+                : key === 'vendor'
+                  ? String(vendorOf(row))
+                  : key === 'serial_no'
+                    ? String(row.serial_no ?? '')
+                    : String(row.invoices?.invoice_no ?? ''),
+      ),
+    [filtered, sortBy, sortDir],
+  )
+
+  const exportCSV = () =>
+    downloadCSV(
+      `payment-orders-${new Date().toISOString().slice(0, 10)}.csv`,
+      sorted.map((o) => ({
+        po_serial: o.serial_no ?? '',
+        generated_at: o.generated_at ?? '',
+        invoice_no: o.invoices?.invoice_no ?? '',
+        invoice_date: o.invoices?.invoice_date ?? '',
+        vendor: vendorOf(o),
+        contract: contractOf(o),
+        amount: o.invoices?.amount ?? 0,
+        status: o.status ?? '',
+      })),
+    )
+
+  const print = (order: PaymentOrder) => {
+    const inv = order.invoices
+    const vendor = inv?.contracts?.vendors?.[0]?.name ?? '—'
+    const contractNo = inv?.contracts?.contract_no ?? '—'
+    const win = window.open('', '_blank', 'width=800,height=900')
+    if (!win) return
+    win.document.write(`<!doctype html><html><head><title>PO ${order.serial_no}</title>
+      <style>
+        body{font-family:'Segoe UI',Arial,sans-serif;margin:48px;color:#111}
+        .head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #1e3a8a;padding-bottom:16px}
+        .head h1{margin:0;color:#1e3a8a;font-size:22px}
+        .sub{font-size:12px;color:#555}
+        .meta{margin:24px 0;display:flex;justify-content:space-between;font-size:14px}
+        table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
+        th,td{border:1px solid #ccc;padding:8px 10px;text-align:left}
+        th{background:#f1f5f9}
+        .amount{text-align:right}
+        .words{margin-top:24px;font-size:13px;color:#333}
+        .sign{margin-top:60px;display:flex;justify-content:space-between;font-size:13px}
+        .sign .box{border-top:1px solid #333;padding-top:6px;width:200px;text-align:center}
+      </style></head><body>
+      <div class="head">
+        <div><h1>Pakistan Refinery Limited</h1><div class="sub">Payment Order / Cheque Request</div></div>
+        <div><strong>PO No:</strong> ${order.serial_no ?? ''}<br/><span class="sub">${formatDateTime(order.generated_at)}</span></div>
+      </div>
+      <div class="meta">
+        <div><strong>Vendor:</strong> ${vendor}</div>
+        <div><strong>Contract:</strong> ${contractNo}</div>
+        <div><strong>Invoice:</strong> ${inv?.invoice_no ?? ''} (${formatDate(inv?.invoice_date)})</div>
+      </div>
+      <table>
+        <tr><th>Description</th><th class="amount">Amount (PKR)</th></tr>
+        <tr><td>Payment against invoice ${inv?.invoice_no ?? ''} — ${contractNo}</td><td class="amount"><strong>${formatMoney(inv?.amount ?? 0, 2)}</strong></td></tr>
+      </table>
+      <div class="words">In words: <strong>${formatAmountWords(inv?.amount ?? 0)}</strong></div>
+      <div class="sign">
+        <div class="box">Prepared By</div>
+        <div class="box">Approved By</div>
+        <div class="box">Accounts</div>
+      </div>
+      <script>window.print()</script>
+      </body></html>`)
+    win.document.close()
+  }
+
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        title="Payment Orders"
+        description="Generated payment orders for approved invoices."
+        actions={
+          <>
+            <Button variant="ghost" onClick={refresh} disabled={refreshing}>
+              <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} /> Refresh
+            </Button>
+            <span className="badge badge-info">
+              <Banknote size={13} /> {orders.length} issued
+            </span>
+          </>
+        }
+      />
+
+      <DataToolbar
+        search={{ value: search, onChange: setSearch, placeholder: 'Search PO, invoice, vendor…' }}
+        sort={{
+          columns: [
+            { key: 'generated_at', label: 'Generated' },
+            { key: 'serial_no', label: 'PO serial' },
+            { key: 'invoice_date', label: 'Invoice date' },
+            { key: 'vendor', label: 'Vendor' },
+            { key: 'amount', label: 'Amount' },
+          ],
+          value: sortBy,
+          direction: sortDir,
+          onValueChange: setSortBy,
+          onDirectionChange: setSortDir,
+        }}
+        onExport={exportCSV}
+        exportLabel="Export CSV"
+        resultsCount={sorted.length}
+      />
+
+      <GlassCard className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>PO Serial</th>
+                <th>Generated</th>
+                <th>Invoice</th>
+                <th>Invoice Date</th>
+                <th>Vendor</th>
+                <th>Contract</th>
+                <th className="text-right">Amount</th>
+                <th>Status</th>
+                <th className="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((o) => (
+                <tr key={o.id}>
+                  <td className="font-semibold">{o.serial_no ?? '—'}</td>
+                  <td className="text-xs">{formatDateTime(o.generated_at)}</td>
+                  <td>{o.invoices?.invoice_no ?? '—'}</td>
+                  <td>{formatDate(o.invoices?.invoice_date)}</td>
+                  <td>{vendorOf(o)}</td>
+                  <td className="text-xs">{contractOf(o)}</td>
+                  <td className="text-right font-semibold">{formatMoney(o.invoices?.amount ?? 0)}</td>
+                  <td><StatusBadge tone="ok">{o.status ?? 'Generated'}</StatusBadge></td>
+                  <td>
+                    <div className="flex justify-end">
+                      <Button variant="ghost" size="sm" onClick={() => print(o)}>
+                        <Printer size={14} /> Print
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!loading && sorted.length === 0 && (
+          <EmptyState
+            title={search ? 'No matching payment orders' : 'No payment orders yet'}
+            description={
+              search
+                ? 'Try a different search.'
+                : 'Approve an invoice and generate a payment order from the Invoices page.'
+            }
+          />
+        )}
+      </GlassCard>
+    </div>
+  )
+}
