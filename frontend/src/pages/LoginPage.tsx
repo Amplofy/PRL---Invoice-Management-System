@@ -219,45 +219,47 @@ export default function LoginPage() {
           }}
         />
 
-        <div className="relative z-10 flex flex-1 flex-col justify-center p-10 xl:p-14">
-          <div className="max-w-md">
-            <h2 className="text-[2rem] font-extrabold leading-[1.15] tracking-tight text-white xl:text-[2.4rem]">
-              Run refinery operations with{' '}
-              <span
-                style={{
-                  background: 'linear-gradient(120deg, #fcd34d, #f87171 55%, #6ee7b7)',
-                  WebkitBackgroundClip: 'text',
-                  backgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                }}
-              >
-                total clarity
-              </span>
-            </h2>
-            <p className="mt-4 text-[0.95rem] leading-relaxed text-white/65">
-              One cockpit for invoices, contracts, approvals and payment orders — built for the
-              pace and precision your finance team works at.
-            </p>
+        <div className="relative z-10 flex flex-1 flex-col p-10 xl:p-14">
+          <div className="flex flex-1 items-center">
+            <div className="max-w-md">
+              <h2 className="text-[2rem] font-extrabold leading-[1.15] tracking-tight text-white xl:text-[2.4rem]">
+                Run refinery operations with{' '}
+                <span
+                  style={{
+                    background: 'linear-gradient(120deg, #ffffff, #c7d2fe 60%, #a5b4fc)',
+                    WebkitBackgroundClip: 'text',
+                    backgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  }}
+                >
+                  total clarity
+                </span>
+              </h2>
+              <p className="mt-4 text-[0.95rem] leading-relaxed text-white/65">
+                One cockpit for invoices, contracts, approvals and payment orders — built for the
+                pace and precision your finance team works at.
+              </p>
 
-            <div className="mt-9 grid grid-cols-2 gap-x-6 gap-y-5">
-              {CAPABILITIES.map(({ icon: Icon, title, text }) => (
-                <div key={title} className="flex items-start gap-3">
-                  <span
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white"
-                    style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.85), rgba(139,92,246,0.85))' }}
-                  >
-                    <Icon size={15} />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-[0.8rem] font-bold text-white">{title}</span>
-                    <span className="mt-0.5 block text-[0.72rem] leading-snug text-white/50">{text}</span>
-                  </span>
-                </div>
-              ))}
+              <div className="mt-9 grid grid-cols-2 gap-x-6 gap-y-5">
+                {CAPABILITIES.map(({ icon: Icon, title, text }) => (
+                  <div key={title} className="flex items-start gap-3">
+                    <span
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white"
+                      style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.85), rgba(139,92,246,0.85))' }}
+                    >
+                      <Icon size={15} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[0.8rem] font-bold text-white">{title}</span>
+                      <span className="mt-0.5 block text-[0.72rem] leading-snug text-white/50">{text}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-4 pt-10 text-[0.7rem] text-white/50">
+          <div className="flex items-center justify-between gap-4 text-[0.7rem] text-white/50">
             <span>
               Built by <span className="font-semibold text-white/80">Abdul Moiz</span>
             </span>
