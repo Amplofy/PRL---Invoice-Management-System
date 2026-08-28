@@ -3,7 +3,6 @@ import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import {
   Search,
   Palette,
-  Bell,
   LogOut,
   User as UserIcon,
   Command,
@@ -12,11 +11,13 @@ import {
   FlaskConical,
   LayoutDashboard,
   Receipt,
-  GitBranch,
+  Kanban,
   FileCheck2,
   Banknote,
   FileText,
+  History,
   BarChart3,
+  ScrollText,
   Upload,
   Mail,
   GitCompareArrows,
@@ -25,6 +26,7 @@ import {
 } from 'lucide-react'
 import ThemePanel from './ThemePanel'
 import CommandPalette, { type CommandItem } from './ui/CommandPalette'
+import Notifications from './ui/Notifications'
 import { useAuth } from '../lib/auth'
 import { initials } from '../lib/format'
 import BrandLogo from './BrandLogo'
@@ -34,26 +36,30 @@ const TITLES: Record<string, string> = {
   '/': 'Overview',
   '/control-tower': 'Control Tower',
   '/invoices': 'Invoices',
-  '/workflow': 'Workflow',
+  '/workflow': 'Workflow Board',
   '/approvals': 'Approvals',
   '/payment-orders': 'Payment Orders',
+  '/po-history': 'PO History',
   '/contracts': 'Contracts',
   '/reports': 'Reports',
+  '/audit-log': 'Audit Log',
   '/import': 'Data Import',
   '/followups': 'Follow-ups',
   '/compare': 'Compare',
-  '/admin': 'Admin Panel',
+  '/admin': 'System Admin',
   '/users': 'Users & Roles',
 }
 
 const COMMAND_ITEMS: CommandItem[] = [
   { id: 'tower', label: 'Open Control Tower', icon: <LayoutDashboard size={16} />, path: '/control-tower' },
   { id: 'invoices', label: 'Browse Invoices', icon: <Receipt size={16} />, path: '/invoices' },
-  { id: 'workflow', label: 'Invoice Workspace', icon: <GitBranch size={16} />, path: '/workflow' },
+  { id: 'workflow', label: 'Workflow Board', icon: <Kanban size={16} />, path: '/workflow' },
   { id: 'approvals', label: 'Approve Invoices', icon: <FileCheck2 size={16} />, path: '/approvals' },
   { id: 'pos', label: 'Payment Orders', icon: <Banknote size={16} />, path: '/payment-orders' },
+  { id: 'po-history', label: 'PO History', icon: <History size={16} />, path: '/po-history' },
   { id: 'contracts', label: 'Manage Contracts', icon: <FileText size={16} />, path: '/contracts' },
   { id: 'reports', label: 'View Reports', icon: <BarChart3 size={16} />, path: '/reports' },
+  { id: 'audit-log', label: 'Audit Log', icon: <ScrollText size={16} />, path: '/audit-log' },
   { id: 'import', label: 'Import Data', icon: <Upload size={16} />, path: '/import' },
   { id: 'followups', label: 'Follow-up Emails', icon: <Mail size={16} />, path: '/followups' },
   { id: 'compare', label: 'Compare Files', icon: <GitCompareArrows size={16} />, path: '/compare' },
@@ -102,7 +108,9 @@ export default function Header() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const title = TITLES[location.pathname] ?? 'PRL-EOMS'
+  const title = location.pathname.startsWith('/invoices/')
+    ? 'Invoice Workspace'
+    : (TITLES[location.pathname] ?? 'PRL-EOMS')
 
   return (
     <>
@@ -149,10 +157,7 @@ export default function Header() {
           <button onClick={() => setThemeOpen((v) => !v)} className="btn btn-ghost !px-3" title="Theme">
             <Palette size={16} />
           </button>
-          <button className="btn btn-ghost relative !px-3" title="Notifications">
-            <Bell size={16} />
-            <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[var(--accent)]" />
-          </button>
+          <Notifications />
           <div className="relative">
             <button
               onClick={() => navigate('/control-tower')}

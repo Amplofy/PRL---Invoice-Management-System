@@ -2,11 +2,13 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
   Receipt,
-  GitBranch,
+  Kanban,
   FileCheck2,
   Banknote,
   FileText,
+  History,
   BarChart3,
+  ScrollText,
   Upload,
   Mail,
   GitCompareArrows,
@@ -31,32 +33,34 @@ interface NavGroup {
 
 export const NAV_GROUPS: NavGroup[] = [
   {
-    title: 'Overview',
+    title: 'Main',
     entries: [{ to: '/control-tower', label: 'Control Tower', icon: LayoutDashboard }],
   },
   {
     title: 'Operations',
     entries: [
       { to: '/invoices', label: 'Invoices', icon: Receipt },
-      { to: '/workflow', label: 'Workflow', icon: GitBranch },
+      { to: '/workflow', label: 'Workflow Board', icon: Kanban },
+      { to: '/contracts', label: 'Contracts', icon: FileText },
       { to: '/approvals', label: 'Approvals', icon: FileCheck2 },
       { to: '/payment-orders', label: 'Payment Orders', icon: Banknote },
-      { to: '/contracts', label: 'Contracts', icon: FileText },
+      { to: '/po-history', label: 'PO History', icon: History },
     ],
   },
   {
-    title: 'Intelligence',
+    title: 'Insights',
     entries: [
       { to: '/reports', label: 'Reports', icon: BarChart3 },
-      { to: '/import', label: 'Data Import', icon: Upload },
-      { to: '/followups', label: 'Follow-ups', icon: Mail },
+      { to: '/audit-log', label: 'Audit Log', icon: ScrollText },
       { to: '/compare', label: 'Compare', icon: GitCompareArrows },
+      { to: '/followups', label: 'Follow-ups', icon: Mail },
     ],
   },
   {
     title: 'Administration',
     entries: [
-      { to: '/admin', label: 'Admin Panel', icon: Settings, adminOnly: true },
+      { to: '/import', label: 'Data Import', icon: Upload },
+      { to: '/admin', label: 'System Admin', icon: Settings, adminOnly: true },
       { to: '/users', label: 'Users & Roles', icon: Users, adminOnly: true },
     ],
   },

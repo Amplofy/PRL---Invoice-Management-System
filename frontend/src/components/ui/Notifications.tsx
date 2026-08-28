@@ -1,0 +1,347 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Bell, X, CheckCircle2, AlertTriangle, XCircle, Info, CheckCheck } from 'lucide-react'
+import { apiGet } from '../../lib/api'
+import { subscribeAppEvents, type AppEvent } from '../../lib/notify'
+import { timeAgo } from '../../lib/format'
+
+type NotifType = 'ok' | 'warn' | 'err' | 'info'
+
+interface Notification {
+  id: string
+  type: NotifType
+  title: string
+  message: string
+  to?: string
+  at: number
+}
+
+const SEEN_KEY = 'prl-eoms-notif-seen'
+const MAX_ITEMS = 30
+
+const TYPE_STYLES: Record<NotifType, { grad: string; Icon: typeof Info }> = {
+  ok: { grad: 'from-emerald-400 to-teal-500', Icon: CheckCircle2 },
+  warn: { grad: 'from-amber-400 to-orange-500', Icon: AlertTriangle },
+  err: { grad: 'from-red-400 to-pink-500', Icon: XCircle },
+  info: { grad: 'from-blue-400 to-violet-500', Icon: Info },
+}
+
+function readSeen(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(SEEN_KEY)
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeSeen(seen: Set<string>) {
+  try {
+    sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen]))
+  } catch {
+    // storage unavailable — unread state stays in memory
+  }
+}
+
+interface ContractRow {
+  id: string
+  contract_no: string
+  value: number
+  end_date: string | null
+  vendors: Array<{ name: string | null }> | null
+}
+
+interface InvoiceRow {
+  id: string
+  amount: number
+  status: string
+  contract_id: string | null
+}
+
+interface AuditRow {
+  id: string
+  timestamp: string
+  action: string
+  summary: string | null
+}
+
+function auditType(action: string): NotifType {
+  const a = action.toLowerCase()
+  if (a === 'approve' || a === 'create') return 'ok'
+  if (a === 'reject' || a === 'delete') return 'err'
+  if (a === 'generatepo' || a === 'update' || a === 'import') return 'warn'
+  return 'info'
+}
+
+export default function Notifications() {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const [items, setItems] = useState<Notification[]>([])
+  const [seen, setSeen] = useState<Set<string>>(readSeen)
+  const lastAuditTs = useRef<string | null>(null)
+
+  const push = useCallback((n: Notification) => {
+    setItems((prev) => [n, ...prev.filter((p) => p.id !== n.id)].slice(0, MAX_ITEMS))
+  }, [])
+
+  // Session events pushed by app actions
+  useEffect(() => {
+    return subscribeAppEvents((e: AppEvent) => {
+      push({
+        id: e.id,
+        type: e.type,
+        title: e.title,
+        message: e.message,
+        to: e.to,
+        at: e.at,
+      })
+    })
+  }, [push])
+
+  // On mount: computed signals + audit-log baseline; then poll for new entries
+  useEffect(() => {
+    let alive = true
+
+    const buildSignals = async () => {
+      try {
+        const [c, i] = await Promise.all([
+          apiGet<{ contracts: ContractRow[] }>('/api/contracts'),
+          apiGet<{ invoices: InvoiceRow[] }>('/api/invoices'),
+        ])
+        if (!alive) return
+        const signals: Notification[] = []
+        const now = Date.now()
+
+        const pending = i.invoices.filter((x) => x.status === 'Pending')
+        if (pending.length > 0) {
+          signals.push({
+            id: 'sig-pending',
+            type: 'info',
+            title: 'Pending approvals waiting',
+            message: `${pending.length} invoice(s) await a decision (Rs ${pending
+              .reduce((s, x) => s + Number(x.amount || 0), 0)
+              .toLocaleString('en-PK')} total)`,
+            to: '/approvals',
+            at: now,
+          })
+        }
+
+        for (const contract of c.contracts) {
+          const used = i.invoices
+            .filter(
+              (x) =>
+                x.contract_id === contract.id &&
+                (x.status === 'Approved' || x.status === 'Accepted'),
+            )
+            .reduce((s, x) => s + Number(x.amount || 0), 0)
+          const value = Number(contract.value || 0)
+          const pct = value > 0 ? (used / value) * 100 : 0
+          if (pct > 95) {
+            signals.push({
+              id: `sig-util-${contract.id}`,
+              type: 'warn',
+              title: 'Contract near limit',
+              message: `${contract.contract_no} is ${pct.toFixed(1)}% utilized`,
+              to: '/contracts',
+              at: now,
+            })
+          }
+          if (contract.end_date) {
+            const days = Math.round((new Date(contract.end_date).getTime() - now) / 86400000)
+            if (days >= 0 && days <= 60) {
+              signals.push({
+                id: `sig-exp-${contract.id}`,
+                type: 'warn',
+                title: 'Contract expiring soon',
+                message: `${contract.contract_no} ends in ${days} day(s)`,
+                to: '/contracts',
+                at: now,
+              })
+            }
+          }
+        }
+        setItems(signals)
+      } catch {
+        // signals are best-effort
+      }
+    }
+
+    const pollAudit = async (initial = false) => {
+      try {
+        const d = await apiGet<{ auditLog: AuditRow[] }>('/api/audit-log')
+        if (!alive) return
+        const newest = d.auditLog[0]?.timestamp ?? null
+        if (initial) {
+          lastAuditTs.current = newest
+          return
+        }
+        if (newest && lastAuditTs.current && newest > lastAuditTs.current) {
+          const fresh = d.auditLog.filter((a) => a.timestamp > (lastAuditTs.current as string))
+          for (const a of fresh.slice(0, 5)) {
+            push({
+              id: `audit-${a.id}`,
+              type: auditType(a.action),
+              title: a.action.replace(/([a-z])([A-Z])/g, '$1 $2'),
+              message: a.summary ?? 'System activity recorded',
+              to: '/audit-log',
+              at: new Date(a.timestamp).getTime(),
+            })
+          }
+        }
+        lastAuditTs.current = newest
+      } catch {
+        // polling is best-effort
+      }
+    }
+
+    buildSignals()
+    pollAudit(true)
+    const t = setInterval(() => pollAudit(), 30000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [push])
+
+  // Escape closes the panel
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  const unread = useMemo(() => items.filter((n) => !seen.has(n.id)).length, [items, seen])
+
+  const markRead = (n: Notification) => {
+    setSeen((prev) => {
+      const next = new Set(prev)
+      next.add(n.id)
+      writeSeen(next)
+      return next
+    })
+    if (n.to) {
+      setOpen(false)
+      navigate(n.to)
+    }
+  }
+
+  const markAllRead = () => {
+    setSeen((prev) => {
+      const next = new Set(prev)
+      for (const n of items) next.add(n.id)
+      writeSeen(next)
+      return next
+    })
+  }
+
+  return (
+    <>
+      <button
+        className="btn btn-ghost relative !px-3"
+        title="Notifications"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Bell size={16} />
+        {unread > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[0.6rem] font-bold text-white"
+            style={{ background: 'var(--gradient-danger)' }}
+          >
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+
+      <div
+        className={`fixed inset-0 z-50 transition ${
+          open ? 'pointer-events-auto' : 'pointer-events-none'
+        }`}
+        aria-hidden={!open}
+      >
+        <div
+          className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity ${
+            open ? 'opacity-100' : 'opacity-0'
+          }`}
+          onClick={() => setOpen(false)}
+        />
+        <aside
+          className={`glass-strong absolute inset-y-0 right-0 flex w-full max-w-sm flex-col !rounded-none border-l border-[var(--border)] transition-transform duration-300 ease-out ${
+            open ? 'translate-x-0' : 'translate-x-full'
+          }`}
+          role="dialog"
+          aria-label="Notifications"
+        >
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3.5">
+            <div className="flex items-center gap-2">
+              <Bell size={16} className="text-[var(--accent)]" />
+              <span className="text-sm font-bold">Notifications</span>
+              {unread > 0 && <span className="badge badge-info !px-1.5 !py-0 text-[0.6rem]">{unread} new</span>}
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                className="btn btn-ghost !px-2 !py-1 text-[0.68rem]"
+                onClick={markAllRead}
+                title="Mark all as read"
+              >
+                <CheckCheck size={13} /> Mark all read
+              </button>
+              <button className="btn btn-ghost !px-2 !py-1.5" onClick={() => setOpen(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
+            {items.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-[var(--text-muted)]">
+                <Bell size={26} />
+                No notifications
+              </div>
+            ) : (
+              items.map((n) => {
+                const { grad, Icon } = TYPE_STYLES[n.type] ?? TYPE_STYLES.info
+                const isUnread = !seen.has(n.id)
+                return (
+                  <button
+                    key={n.id}
+                    className={`w-full rounded-xl border p-3 text-left transition hover:bg-[var(--surface-hover)] ${
+                      isUnread
+                        ? 'border-[var(--glass-border-strong)] bg-[var(--surface-hover)]'
+                        : 'border-[var(--border)] bg-transparent opacity-60'
+                    }`}
+                    onClick={() => markRead(n)}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${grad}`}
+                      >
+                        <Icon size={15} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="truncate text-xs font-bold">{n.title}</span>
+                          {isUnread && (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
+                          )}
+                        </span>
+                        <span className="mt-0.5 block text-[0.7rem] leading-snug text-[var(--text-dim)]">
+                          {n.message}
+                        </span>
+                        <span className="mt-1 block text-[0.62rem] text-[var(--text-muted)]">
+                          {timeAgo(new Date(n.at).toISOString())}
+                          {n.to ? ' · click to open' : ''}
+                        </span>
+                      </span>
+                    </div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </aside>
+      </div>
+    </>
+  )
+}
