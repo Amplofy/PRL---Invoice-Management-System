@@ -724,6 +724,22 @@ table.data-table {
 .data-table tbody tr:hover { background: var(--table-row-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
 
+/* ================= Subtotal / Grand-total rows ================= */
+tr.subtotal-row td {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-top: 1px solid var(--glass-border);
+  padding: 0.55rem 0.85rem;
+  position: sticky;
+  left: 0;
+}
+tr.grand-total-row td {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  border-top: 2px solid var(--accent);
+  padding: 0.65rem 0.85rem;
+  position: sticky;
+  left: 0;
+}
+
 /* ================= Kanban ================= */
 .kanban-scroll { scrollbar-width: thin; }
 .kanban-card {

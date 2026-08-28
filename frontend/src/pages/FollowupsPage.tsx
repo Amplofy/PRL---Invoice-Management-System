@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Mail, Send, Truck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
+import { Mail, Send, Truck, Layers } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -11,10 +11,12 @@ import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
+import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { groupRows } from '../lib/grouping'
 
 interface PendingFollowup {
   invoiceId: string
@@ -66,6 +68,7 @@ export default function FollowupsPage() {
   const [sortBy, setSortBy] = useState('invoiceDate')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [groupKey, setGroupKey] = useState<string | null>(null)
   const col = useColumnVisibility(
     'prl-eoms-cols-followups',
     FOLLOWUP_COLUMN_DEFS.map((c) => c.key),
@@ -120,6 +123,25 @@ export default function FollowupsPage() {
       ),
     [filtered, sortBy, sortDir],
   )
+
+  const GROUP_BY_FOLLOWUP = [
+    { key: 'vendorName', label: 'Vendor' },
+    { key: 'contractNo', label: 'Contract' },
+    { key: 'month', label: 'Month' },
+  ]
+
+  const followupGroupValue = (p: PendingFollowup, key: string): string | number | null => {
+    if (key === 'month') return p.invoiceDate ? p.invoiceDate.slice(0, 7) : null
+    return (p as unknown as Record<string, string | number | null>)[key] ?? null
+  }
+
+  const grouped = useMemo(
+    () => groupRows(sorted, groupKey, followupGroupValue, (p) => Number(p.amount ?? 0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sorted, groupKey],
+  )
+
+  const visibleColCount = FOLLOWUP_COLUMN_DEFS.filter((c) => col.show(c.key)).length + 1
 
   const exportCSV = () =>
     downloadCSV(
@@ -267,6 +289,7 @@ export default function FollowupsPage() {
           onReset={col.reset}
           hiddenCount={col.hiddenCount}
         />
+        <GroupByPicker options={GROUP_BY_FOLLOWUP} value={groupKey} onChange={setGroupKey} />
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
@@ -293,28 +316,73 @@ export default function FollowupsPage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((p) => (
-                <tr key={p.invoiceId} className={selected.has(p.invoiceId) ? 'bg-[rgba(96,165,250,0.05)]' : ''}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${p.invoiceNo}`}
-                      checked={selected.has(p.invoiceId)}
-                      onChange={() => toggle(p.invoiceId)}
-                      style={{ accentColor: 'var(--accent)' }}
-                    />
-                  </td>
-                  {col.show('invoice') && <td className="font-semibold">{p.invoiceNo}</td>}
-                  {col.show('date') && <td>{formatDate(p.invoiceDate)}</td>}
-                  {col.show('days_pending') && (
-                    <td className="text-right text-xs">{daysPending(p.invoiceDate) ?? '—'}</td>
-                  )}
-                  {col.show('vendor') && <td>{p.vendorName}</td>}
-                  {col.show('contract') && <td className="text-xs">{p.contractNo}</td>}
-                  {col.show('email') && <td className="text-xs text-[var(--accent)]">{p.email}</td>}
-                  {col.show('amount') && <td className="text-right font-semibold">{formatMoney(p.amount)}</td>}
-                </tr>
-              ))}
+              {(() => {
+                const renderRow = (p: PendingFollowup) => (
+                  <tr key={p.invoiceId} className={selected.has(p.invoiceId) ? 'bg-[rgba(96,165,250,0.05)]' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${p.invoiceNo}`}
+                        checked={selected.has(p.invoiceId)}
+                        onChange={() => toggle(p.invoiceId)}
+                        style={{ accentColor: 'var(--accent)' }}
+                      />
+                    </td>
+                    {col.show('invoice') && <td className="font-semibold">{p.invoiceNo}</td>}
+                    {col.show('date') && <td>{formatDate(p.invoiceDate)}</td>}
+                    {col.show('days_pending') && (
+                      <td className="text-right text-xs">{daysPending(p.invoiceDate) ?? '—'}</td>
+                    )}
+                    {col.show('vendor') && <td>{p.vendorName}</td>}
+                    {col.show('contract') && <td className="text-xs">{p.contractNo}</td>}
+                    {col.show('email') && <td className="text-xs text-[var(--accent)]">{p.email}</td>}
+                    {col.show('amount') && <td className="text-right font-semibold">{formatMoney(p.amount)}</td>}
+                  </tr>
+                )
+
+                const rows = grouped
+                  ? grouped.map((g) => (
+                      <Fragment key={`grp-${g.key}`}>
+                        <tr className="subtotal-row">
+                          <td colSpan={visibleColCount}>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="flex items-center gap-2 font-semibold">
+                                <Layers size={13} className="text-[var(--accent)]" />
+                                {groupKey === 'month' && /^\d{4}-\d{2}$/.test(g.key)
+                                  ? new Date(`${g.key}-01`).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+                                  : g.key}
+                              </span>
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {g.count} invoice{g.count === 1 ? '' : 's'} ·{' '}
+                                <b className="text-[var(--text)]">Rs {formatMoney(g.sum)}</b>
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {g.rows.map(renderRow)}
+                      </Fragment>
+                    ))
+                  : sorted.map(renderRow)
+
+                return (
+                  <>
+                    {rows}
+                    {sorted.length > 0 && (
+                      <tr className="grand-total-row">
+                        <td colSpan={visibleColCount}>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold uppercase tracking-wider">Grand Total</span>
+                            <span className="text-xs">
+                              {sorted.length} invoice{sorted.length === 1 ? '' : 's'} ·{' '}
+                              <b>Rs {formatMoney(totalPending)}</b>
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })()}
             </tbody>
           </table>
         </div>

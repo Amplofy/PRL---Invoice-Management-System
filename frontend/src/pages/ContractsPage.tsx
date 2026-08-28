@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, AlertTriangle, Banknote, Truck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
+import { Plus, Pencil, Trash2, AlertTriangle, Banknote, Truck, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -13,11 +13,13 @@ import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
+import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { groupRows } from '../lib/grouping'
 
 interface Vendor {
   id: string
@@ -76,6 +78,7 @@ export default function ContractsPage() {
   const [sortBy, setSortBy] = useState('end_date')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [groupKey, setGroupKey] = useState<string | null>(null)
   const col = useColumnVisibility(
     'prl-eoms-cols-contracts',
     CONTRACT_COLUMN_DEFS.map((c) => c.key),
@@ -168,6 +171,17 @@ export default function ContractsPage() {
   const totalValue = useMemo(() => filtered.reduce((s, c) => s + Number(c.value ?? 0), 0), [filtered])
   const vendorCount = useMemo(() => new Set(filtered.map((c) => vendorName(c))).size, [filtered])
 
+  const GROUP_BY_CONTRACT = [
+    { key: 'vendor', label: 'Vendor' },
+    { key: 'service', label: 'Service' },
+    { key: 'status', label: 'Status' },
+  ]
+
+  const contractGroupValue = (c: Contract, key: string): string | number | null => {
+    if (key === 'vendor') return vendorName(c)
+    return (c as unknown as Record<string, string | number | null>)[key] ?? null
+  }
+
   const sorted = useMemo(
     () =>
       sortRows(
@@ -187,6 +201,14 @@ export default function ContractsPage() {
       ),
     [filtered, sortBy, sortDir],
   )
+
+  const grouped = useMemo(
+    () => groupRows(sorted, groupKey, contractGroupValue, (c) => Number(c.value ?? 0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sorted, groupKey],
+  )
+
+  const visibleColCount = CONTRACT_COLUMN_DEFS.filter((c) => col.show(c.key)).length + (admin ? 1 : 0)
 
   const exportCSV = () =>
     downloadCSV(
@@ -277,6 +299,7 @@ export default function ContractsPage() {
           onReset={col.reset}
           hiddenCount={col.hiddenCount}
         />
+        <GroupByPicker options={GROUP_BY_CONTRACT} value={groupKey} onChange={setGroupKey} />
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
@@ -296,32 +319,75 @@ export default function ContractsPage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((c) => (
-                <tr key={c.id}>
-                  {col.show('contract_no') && <td className="font-semibold">{c.contract_no}</td>}
-                  {col.show('vendor') && <td>{vendorName(c)}</td>}
-                  {col.show('service') && <td className="text-xs">{c.service ?? '—'}</td>}
-                  {col.show('start_date') && <td>{formatDate(c.start_date)}</td>}
-                  {col.show('end_date') && <td>{formatDate(c.end_date)}</td>}
-                  {col.show('period_days') && (
-                    <td className="text-right text-xs">{contractPeriodDays(c) ?? '—'}</td>
-                  )}
-                  {col.show('value') && <td className="text-right font-semibold">{formatMoney(c.value)}</td>}
-                  {col.show('status') && <td>{expiryBadge(c)}</td>}
-                  {admin && (
-                    <td>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button className="btn btn-ghost !px-2.5 !py-1.5" title="Edit" onClick={() => setEditing(c)}>
-                          <Pencil size={14} />
-                        </button>
-                        <button className="btn btn-ghost !px-2.5 !py-1.5" title="Delete" onClick={() => remove(c)}>
-                          <Trash2 size={14} className="text-[var(--danger)]" />
-                        </button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
+              {(() => {
+                const renderRow = (c: Contract) => (
+                  <tr key={c.id}>
+                    {col.show('contract_no') && <td className="font-semibold">{c.contract_no}</td>}
+                    {col.show('vendor') && <td>{vendorName(c)}</td>}
+                    {col.show('service') && <td className="text-xs">{c.service ?? '—'}</td>}
+                    {col.show('start_date') && <td>{formatDate(c.start_date)}</td>}
+                    {col.show('end_date') && <td>{formatDate(c.end_date)}</td>}
+                    {col.show('period_days') && (
+                      <td className="text-right text-xs">{contractPeriodDays(c) ?? '—'}</td>
+                    )}
+                    {col.show('value') && <td className="text-right font-semibold">{formatMoney(c.value)}</td>}
+                    {col.show('status') && <td>{expiryBadge(c)}</td>}
+                    {admin && (
+                      <td>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button className="btn btn-ghost !px-2.5 !py-1.5" title="Edit" onClick={() => setEditing(c)}>
+                            <Pencil size={14} />
+                          </button>
+                          <button className="btn btn-ghost !px-2.5 !py-1.5" title="Delete" onClick={() => remove(c)}>
+                            <Trash2 size={14} className="text-[var(--danger)]" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                )
+
+                const rows = grouped
+                  ? grouped.map((g) => (
+                      <Fragment key={`grp-${g.key}`}>
+                        <tr className="subtotal-row">
+                          <td colSpan={visibleColCount}>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="flex items-center gap-2 font-semibold">
+                                <Layers size={13} className="text-[var(--accent)]" />
+                                {g.key}
+                              </span>
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {g.count} contract{g.count === 1 ? '' : 's'} ·{' '}
+                                <b className="text-[var(--text)]">Rs {formatMoney(g.sum)}</b>
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {g.rows.map(renderRow)}
+                      </Fragment>
+                    ))
+                  : sorted.map(renderRow)
+
+                return (
+                  <>
+                    {rows}
+                    {sorted.length > 0 && (
+                      <tr className="grand-total-row">
+                        <td colSpan={visibleColCount}>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold uppercase tracking-wider">Grand Total</span>
+                            <span className="text-xs">
+                              {sorted.length} contract{sorted.length === 1 ? '' : 's'} ·{' '}
+                              <b>Rs {formatMoney(totalValue)}</b>
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })()}
             </tbody>
           </table>
         </div>

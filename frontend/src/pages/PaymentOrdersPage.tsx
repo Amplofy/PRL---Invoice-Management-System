@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Printer, Banknote, RefreshCw, Truck, FileOutput } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
+import { Printer, Banknote, RefreshCw, Truck, FileOutput, Layers } from 'lucide-react'
 import { apiGet } from '../lib/api'
 import { formatMoney, formatDate, formatDateTime, formatAmountWords } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -11,10 +11,12 @@ import Button from '../components/ui/Button'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
+import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { groupRows } from '../lib/grouping'
 
 interface PaymentOrder {
   id: string
@@ -76,6 +78,7 @@ export default function PaymentOrdersPage() {
   const [sortBy, setSortBy] = useState('generated_at')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [groupKey, setGroupKey] = useState<string | null>(null)
   const col = useColumnVisibility('prl-eoms-cols-payment-orders', PO_COLUMN_KEYS, PO_DEFAULT_COLUMNS)
   const toast = useToast()
 
@@ -148,6 +151,27 @@ export default function PaymentOrdersPage() {
       ),
     [filtered, sortBy, sortDir],
   )
+
+  const GROUP_BY_PO = [
+    { key: 'vendor', label: 'Vendor' },
+    { key: 'contract', label: 'Contract' },
+    { key: 'month', label: 'Month of Invoice Date' },
+  ]
+
+  const poGroupValue = (o: PaymentOrder, key: string): string | number | null => {
+    if (key === 'vendor') return vendorOf(o)
+    if (key === 'contract') return contractOf(o)
+    if (key === 'month') return o.invoices?.invoice_date ? o.invoices.invoice_date.slice(0, 7) : null
+    return (o as unknown as Record<string, string | number | null>)[key] ?? null
+  }
+
+  const grouped = useMemo(
+    () => groupRows(sorted, groupKey, poGroupValue, (o) => Number(o.invoices?.amount ?? 0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sorted, groupKey],
+  )
+
+  const visibleColCount = PO_COLUMN_KEYS.filter((k) => col.show(k)).length + 1
 
   const exportCSV = () =>
     downloadCSV(
@@ -286,6 +310,7 @@ export default function PaymentOrdersPage() {
           onReset={col.reset}
           hiddenCount={col.hiddenCount}
         />
+        <GroupByPicker options={GROUP_BY_PO} value={groupKey} onChange={setGroupKey} />
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
@@ -306,26 +331,71 @@ export default function PaymentOrdersPage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((o) => (
-                <tr key={o.id}>
-                  {col.show('po_serial') && <td className="font-semibold">{o.serial_no ?? '—'}</td>}
-                  {col.show('generated_at') && <td className="text-xs">{formatDateTime(o.generated_at)}</td>}
-                  {col.show('generated_by') && <td className="text-xs">{o.generated_by ?? '—'}</td>}
-                  {col.show('invoice_no') && <td>{o.invoices?.invoice_no ?? '—'}</td>}
-                  {col.show('invoice_date') && <td>{formatDate(o.invoices?.invoice_date)}</td>}
-                  {col.show('vendor') && <td>{vendorOf(o)}</td>}
-                  {col.show('contract') && <td className="text-xs">{contractOf(o)}</td>}
-                  {col.show('amount') && <td className="text-right font-semibold">{formatMoney(o.invoices?.amount ?? 0)}</td>}
-                  {col.show('status') && <td><StatusBadge tone="ok">{o.status ?? 'Generated'}</StatusBadge></td>}
-                  <td>
-                    <div className="flex justify-end">
-                      <Button variant="ghost" size="sm" onClick={() => print(o)}>
-                        <Printer size={14} /> Print
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {(() => {
+                const renderRow = (o: PaymentOrder) => (
+                  <tr key={o.id}>
+                    {col.show('po_serial') && <td className="font-semibold">{o.serial_no ?? '—'}</td>}
+                    {col.show('generated_at') && <td className="text-xs">{formatDateTime(o.generated_at)}</td>}
+                    {col.show('generated_by') && <td className="text-xs">{o.generated_by ?? '—'}</td>}
+                    {col.show('invoice_no') && <td>{o.invoices?.invoice_no ?? '—'}</td>}
+                    {col.show('invoice_date') && <td>{formatDate(o.invoices?.invoice_date)}</td>}
+                    {col.show('vendor') && <td>{vendorOf(o)}</td>}
+                    {col.show('contract') && <td className="text-xs">{contractOf(o)}</td>}
+                    {col.show('amount') && <td className="text-right font-semibold">{formatMoney(o.invoices?.amount ?? 0)}</td>}
+                    {col.show('status') && <td><StatusBadge tone="ok">{o.status ?? 'Generated'}</StatusBadge></td>}
+                    <td>
+                      <div className="flex justify-end">
+                        <Button variant="ghost" size="sm" onClick={() => print(o)}>
+                          <Printer size={14} /> Print
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+
+                const rows = grouped
+                  ? grouped.map((g) => (
+                      <Fragment key={`grp-${g.key}`}>
+                        <tr className="subtotal-row">
+                          <td colSpan={visibleColCount}>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="flex items-center gap-2 font-semibold">
+                                <Layers size={13} className="text-[var(--accent)]" />
+                                {groupKey === 'month' && /^\d{4}-\d{2}$/.test(g.key)
+                                  ? new Date(`${g.key}-01`).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+                                  : g.key}
+                              </span>
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {g.count} PO{g.count === 1 ? '' : 's'} ·{' '}
+                                <b className="text-[var(--text)]">Rs {formatMoney(g.sum)}</b>
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {g.rows.map(renderRow)}
+                      </Fragment>
+                    ))
+                  : sorted.map(renderRow)
+
+                return (
+                  <>
+                    {rows}
+                    {sorted.length > 0 && (
+                      <tr className="grand-total-row">
+                        <td colSpan={visibleColCount}>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold uppercase tracking-wider">Grand Total</span>
+                            <span className="text-xs">
+                              {sorted.length} PO{sorted.length === 1 ? '' : 's'} ·{' '}
+                              <b>Rs {formatMoney(totalAmount)}</b>
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })()}
             </tbody>
           </table>
         </div>

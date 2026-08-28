@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages, Banknote, Clock } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
+import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages, Banknote, Clock, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
 import { contractUtilization, validateInvoice, nextSerialNo, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
@@ -21,7 +21,9 @@ import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { groupRows } from '../lib/grouping'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
+import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import { Link } from 'react-router-dom'
 
@@ -95,6 +97,7 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [groupKey, setGroupKey] = useState<string | null>(null)
   const [editing, setEditing] = useState<Invoice | null>(null)
   const [creating, setCreating] = useState(false)
   const [rejecting, setRejecting] = useState<Invoice | null>(null)
@@ -271,6 +274,31 @@ export default function InvoicesPage() {
   )
 
   const totalShown = useMemo(() => filtered.reduce((s, i) => s + Number(i.amount ?? 0), 0), [filtered])
+
+  const GROUP_BY_INVOICE = [
+    { key: 'vendor', label: 'Vendor' },
+    { key: 'contract', label: 'Contract' },
+    { key: 'status', label: 'Status' },
+    { key: 'item_no', label: 'Item' },
+    { key: 'cost_element', label: 'Cost Element' },
+    { key: 'month', label: 'Month' },
+  ]
+
+  const invoiceGroupValue = (inv: Invoice, key: string): string | number | null => {
+    if (key === 'vendor') return vendorOf(inv)
+    if (key === 'contract') return contractNoOf(inv)
+    if (key === 'month') return inv.invoice_date ? inv.invoice_date.slice(0, 7) : null
+    return (inv as unknown as Record<string, string | number | null>)[key] ?? null
+  }
+
+  const grouped = useMemo(
+    () => groupRows(sorted, groupKey, invoiceGroupValue, (i) => Number(i.amount ?? 0)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sorted, groupKey],
+  )
+
+  const visibleColCount = INVOICE_COLUMN_DEFS.filter((c) => col.show(c.key)).length + 1
+
   const pendingCount = useMemo(() => filtered.filter((i) => i.status === 'Pending').length, [filtered])
   const approvedCount = useMemo(
     () => filtered.filter((i) => i.status === 'Approved' || i.status === 'Submitted').length,
@@ -369,6 +397,7 @@ export default function InvoicesPage() {
           onReset={col.reset}
           hiddenCount={col.hiddenCount}
         />
+        <GroupByPicker options={GROUP_BY_INVOICE} value={groupKey} onChange={setGroupKey} />
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
@@ -395,7 +424,8 @@ export default function InvoicesPage() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((inv) => (
+              {(() => {
+                const renderRow = (inv: Invoice) => (
                 <tr key={inv.id}>
                   {col.show('invoice_no') && (
                     <td className="font-semibold">
@@ -491,10 +521,54 @@ export default function InvoicesPage() {
                           <Trash2 size={14} className="text-[var(--danger)]" />
                         </button>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                     </div>
+                   </td>
+                 </tr>
+                )
+
+                const rows = grouped
+                  ? grouped.map((g) => (
+                      <Fragment key={`grp-${g.key}`}>
+                        <tr className="subtotal-row">
+                          <td colSpan={visibleColCount}>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="flex items-center gap-2 font-semibold">
+                                <Layers size={13} className="text-[var(--accent)]" />
+                                {groupKey === 'month' && /^\d{4}-\d{2}$/.test(g.key)
+                                  ? new Date(`${g.key}-01`).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+                                  : g.key}
+                              </span>
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {g.count} invoice{g.count === 1 ? '' : 's'} ·{' '}
+                                <b className="text-[var(--text)]">Rs {formatMoney(g.sum)}</b>
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                        {g.rows.map(renderRow)}
+                      </Fragment>
+                    ))
+                  : sorted.map(renderRow)
+
+                return (
+                  <>
+                    {rows}
+                    {sorted.length > 0 && (
+                      <tr className="grand-total-row">
+                        <td colSpan={visibleColCount}>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-bold uppercase tracking-wider">Grand Total</span>
+                            <span className="text-xs">
+                              {sorted.length} invoice{sorted.length === 1 ? '' : 's'} ·{' '}
+                              <b>Rs {formatMoney(totalShown)}</b>
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })()}
             </tbody>
           </table>
         </div>
