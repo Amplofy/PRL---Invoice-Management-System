@@ -380,39 +380,63 @@ export default function ReportsPage() {
 
       {/* Filter command bar + active chips + analysis lens */}
       <div className="glass space-y-3 p-4 rise-in" style={{ animationDelay: '40ms' }}>
-        <FilterCommandBar suggestions={suggestions} dimMeta={DIM_META} activeKeys={activeKeys} onToggle={toggleChip} />
+        <FilterCommandBar
+          suggestions={suggestions}
+          dimMeta={DIM_META}
+          activeKeys={activeKeys}
+          onToggle={toggleChip}
+          activeCount={chips.length}
+        />
         {chips.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            {chips.map((ch) => {
-              const meta = DIM_META[ch.dim]
-              if (!meta) return null
-              const Icon = meta.icon
-              return (
-                <span
-                  key={`${ch.dim}:${ch.value}`}
-                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
-                  style={{ borderColor: `${meta.color}55`, background: `${meta.color}18` }}
-                >
-                  <Icon size={12} style={{ color: meta.color }} />
-                  {ch.dim === 'fy' || ch.dim === 'quarter' || ch.dim === 'status' ? null : (
-                    <span className="text-[var(--text-muted)]">{meta.label}</span>
-                  )}
-                  {ch.dim === 'contract'
-                    ? (contracts.find((cn) => cn.id === ch.value)?.contract_no ?? ch.value)
-                    : ch.value}
-                  <button
-                    className="ml-0.5 rounded-full p-0.5 hover:bg-white/10"
-                    onClick={() => setChips((prev) => prev.filter((c2) => !(c2.dim === ch.dim && c2.value === ch.value)))}
-                    aria-label={`Remove ${ch.value}`}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 text-[0.68rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                <Activity size={12} style={{ color: 'var(--accent)' }} /> Active filters
+              </span>
+              <span className="rounded-full bg-[var(--accent)] px-1.5 py-px text-[0.62rem] font-bold text-white">
+                {chips.length}
+              </span>
+              <button
+                className="ml-auto text-[0.7rem] font-semibold text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline"
+                onClick={() => setChips([])}
+              >
+                Clear all
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {chips.map((ch) => {
+                const meta = DIM_META[ch.dim]
+                if (!meta) return null
+                const Icon = meta.icon
+                return (
+                  <span
+                    key={`${ch.dim}:${ch.value}`}
+                    className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[0.8rem] font-semibold shadow-sm"
+                    style={{ borderColor: `${meta.color}88`, background: `${meta.color}26` }}
                   >
-                    <X size={12} />
-                  </button>
-                </span>
-              )
-            })}
-            <button className="btn btn-ghost !px-2 !py-1 text-xs" onClick={() => setChips([])}>
-              Clear all
-            </button>
+                    <span
+                      className="flex h-5 w-5 items-center justify-center rounded"
+                      style={{ background: meta.color, color: '#fff' }}
+                    >
+                      <Icon size={11} />
+                    </span>
+                    <span className="text-[0.65rem] font-bold uppercase tracking-wide opacity-70">{meta.label}</span>
+                    <span>
+                      {ch.dim === 'contract'
+                        ? (contracts.find((cn) => cn.id === ch.value)?.contract_no ?? ch.value)
+                        : ch.value}
+                    </span>
+                    <button
+                      className="rounded-full p-0.5 hover:bg-white/15"
+                      onClick={() => setChips((prev) => prev.filter((c2) => !(c2.dim === ch.dim && c2.value === ch.value)))}
+                      aria-label={`Remove ${ch.value}`}
+                    >
+                      <X size={13} />
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
           </div>
         )}
         <div className="flex flex-wrap items-center justify-end gap-x-8 border-t border-[var(--border)] pt-3">

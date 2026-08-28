@@ -19,11 +19,12 @@ interface Props {
   dimMeta: Record<string, FilterDimMeta>
   activeKeys: Set<string>
   onToggle: (s: FilterSuggestion) => void
+  activeCount: number
 }
 
 const PREVIEW_PER_DIM = 3
 
-export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onToggle }: Props) {
+export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onToggle, activeCount }: Props) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
@@ -104,6 +105,11 @@ export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onT
         style={{ borderColor: open ? 'var(--accent)' : 'var(--border)' }}
       >
         <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+        {activeCount > 0 && (
+          <span className="flex shrink-0 items-center gap-1 rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.65rem] font-bold text-white">
+            {activeCount} active
+          </span>
+        )}
         <input
           ref={inputRef}
           value={query}
@@ -113,7 +119,7 @@ export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onT
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Add a filter — try a vendor, quarter, cost element or status…"
+          placeholder={activeCount > 0 ? 'Add another filter…' : 'Add a filter — try a vendor, quarter, cost element or status…'}
           className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
         />
         {query && (
@@ -157,21 +163,33 @@ export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onT
                       <button
                         key={`${s.dim}:${s.value}`}
                         className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm ${
-                          idx === activeIdx ? 'bg-[var(--accent-faded,rgba(124,58,237,0.14))]' : 'hover:bg-[var(--bg)]'
+                          active
+                            ? 'font-semibold'
+                            : idx === activeIdx
+                              ? 'bg-[var(--bg)]'
+                              : 'hover:bg-[var(--bg)]'
                         }`}
+                        style={active ? { background: `${meta.color}1e` } : undefined}
                         onMouseEnter={() => setActiveIdx(idx)}
                         onClick={() => choose(s)}
                       >
                         {Icon && (
                           <span
                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-                            style={{ background: `${meta.color}22`, color: meta.color }}
+                            style={{
+                              background: active ? meta.color : `${meta.color}22`,
+                              color: active ? '#fff' : meta.color,
+                            }}
                           >
                             <Icon size={12} />
                           </span>
                         )}
                         <span className="flex-1 truncate">{s.label}</span>
-                        {active && <Check size={14} className="text-[var(--accent)]" />}
+                        {active && (
+                          <span className="flex items-center gap-1 text-[0.65rem] font-bold uppercase tracking-wide" style={{ color: meta.color }}>
+                            <Check size={13} /> Selected
+                          </span>
+                        )}
                       </button>
                     )
                   })}
