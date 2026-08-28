@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: prl-eoms-backend
+    runtime: node
+    plan: starter
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: EMAIL_FROM
+        value: PRL Finance <noreply@prl-eoms.com>
+      - key: RESEND_API_KEY
+        sync: false
