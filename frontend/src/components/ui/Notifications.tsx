@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Bell, BellOff, X, CheckCircle2, AlertTriangle, XCircle, Info, CheckCheck, ScrollText } from 'lucide-react'
 import { apiGet } from '../../lib/api'
@@ -260,12 +261,15 @@ export default function Notifications() {
         )}
       </button>
 
-      <div
-        className={`fixed inset-0 z-50 transition ${
-          open ? 'pointer-events-auto' : 'pointer-events-none'
-        }`}
-        aria-hidden={!open}
-      >
+      {/* Portal to body: the header's backdrop-filter makes it the containing
+          block for fixed descendants, which would squash this overlay. */}
+      {createPortal(
+        <div
+          className={`fixed inset-0 z-50 transition ${
+            open ? 'pointer-events-auto' : 'pointer-events-none'
+          }`}
+          aria-hidden={!open}
+        >
         <div
           className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity ${
             open ? 'opacity-100' : 'opacity-0'
@@ -354,7 +358,9 @@ export default function Notifications() {
             </button>
           </div>
         </aside>
-      </div>
+        </div>,
+        document.body,
+      )}
     </>
   )
 }

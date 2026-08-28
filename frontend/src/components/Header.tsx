@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import {
   Search,
@@ -202,69 +203,73 @@ export default function Header() {
         </div>
       </header>
 
-      {/* Mobile drawer */}
-      <div
-        className={`fixed inset-0 z-50 transition lg:hidden ${
-          mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'
-        }`}
-      >
+      {/* Mobile drawer — portal escapes the header's backdrop-filter containing block */}
+      {createPortal(
         <div
-          className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity ${mobileOpen ? 'opacity-100' : 'opacity-0'}`}
-          onClick={() => setMobileOpen(false)}
-        />
-        <div
-          className={`glass-strong flex w-72 flex-col transition-transform duration-300 ease-out ${
-            mobileOpen ? 'translate-x-0' : '-translate-x-full'
+          className={`fixed inset-0 z-50 transition lg:hidden ${
+            mobileOpen ? 'pointer-events-auto' : 'pointer-events-none'
           }`}
-          style={{ position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 0 }}
         >
-          <div className="flex items-center justify-between px-5 pb-4 pt-5">
-            <div className="flex items-center gap-3">
-              <BrandLogo />
-              <div>
-                <div className="text-[0.9rem] font-extrabold leading-none gradient-text">PRL-EOMS</div>
-                <div className="mt-1 text-[0.62rem] font-medium uppercase tracking-wider text-[var(--text-muted)]">
-                  Pakistan Refinery Ltd
+          <div
+            className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity ${mobileOpen ? 'opacity-100' : 'opacity-0'}`}
+            onClick={() => setMobileOpen(false)}
+          />
+          <div
+            className={`glass-strong absolute inset-y-0 left-0 flex w-72 flex-col !rounded-none transition-transform duration-300 ease-out ${
+              mobileOpen ? 'translate-x-0' : '-translate-x-full'
+            }`}
+          >
+            <div className="flex items-center justify-between px-5 pb-4 pt-5">
+              <div className="flex items-center gap-3">
+                <BrandLogo />
+                <div>
+                  <div className="text-[0.9rem] font-extrabold leading-none gradient-text">PRL-EOMS</div>
+                  <div className="mt-1 text-[0.62rem] font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                    Pakistan Refinery Ltd
+                  </div>
                 </div>
               </div>
+              <button onClick={() => setMobileOpen(false)} className="btn btn-ghost !px-2.5" aria-label="Close navigation">
+                <X size={18} />
+              </button>
             </div>
-            <button onClick={() => setMobileOpen(false)} className="btn btn-ghost !px-2.5" aria-label="Close navigation">
-              <X size={18} />
-            </button>
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <SidebarNav />
-          </div>
-          <div className="border-t border-[var(--border)] px-5 py-4">
-            <NavLink
-              to="/control-tower"
-              className="flex items-center gap-2 text-[0.7rem] font-medium text-[var(--text-muted)]"
-            >
-              <span className="font-semibold text-[var(--text-dim)]">{user?.name ?? user?.email}</span>
-              <span className="rounded-md px-1.5 py-0.5 text-[0.6rem] font-bold uppercase text-[var(--accent)]">
-                {user?.role}
-              </span>
-            </NavLink>
-            <div className="mt-0.5 text-[0.65rem] text-[var(--text-muted)]">
-              Built by Abdul Moiz · © {new Date().getFullYear()} PRL
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <SidebarNav />
+            </div>
+            <div className="border-t border-[var(--border)] px-5 py-4">
+              <NavLink
+                to="/control-tower"
+                className="flex items-center gap-2 text-[0.7rem] font-medium text-[var(--text-muted)]"
+              >
+                <span className="font-semibold text-[var(--text-dim)]">{user?.name ?? user?.email}</span>
+                <span className="rounded-md px-1.5 py-0.5 text-[0.6rem] font-bold uppercase text-[var(--accent)]">
+                  {user?.role}
+                </span>
+              </NavLink>
+              <div className="mt-0.5 text-[0.65rem] text-[var(--text-muted)]">
+                Built by Abdul Moiz · © {new Date().getFullYear()} PRL
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {themeOpen && (
-        <div
-          className="fixed inset-0 z-40"
-          onMouseDown={(e) => {
-            e.stopPropagation()
-            setThemeOpen(false)
-          }}
-        >
-          <div className="absolute right-4 top-16 md:right-6" onMouseDown={(e) => e.stopPropagation()}>
-            <ThemePanel onClose={() => setThemeOpen(false)} />
-          </div>
-        </div>
+        </div>,
+        document.body,
       )}
+
+      {themeOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-40"
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              setThemeOpen(false)
+            }}
+          >
+            <div className="absolute right-4 top-16 md:right-6" onMouseDown={(e) => e.stopPropagation()}>
+              <ThemePanel onClose={() => setThemeOpen(false)} />
+            </div>
+          </div>,
+          document.body,
+        )}
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={COMMAND_ITEMS} />
     </>

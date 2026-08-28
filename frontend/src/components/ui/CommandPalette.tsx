@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Search, CornerDownLeft } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
@@ -60,7 +61,9 @@ export default function CommandPalette({ open, onClose, items }: CommandPaletteP
 
   if (!open) return null
 
-  return (
+  // Portal to body: rendered inside the glass header whose backdrop-filter
+  // would otherwise become the containing block for this fixed backdrop.
+  return createPortal(
     <div
       className="modal-backdrop"
       style={{ alignItems: 'flex-start', paddingTop: '14vh' }}
@@ -106,6 +109,7 @@ export default function CommandPalette({ open, onClose, items }: CommandPaletteP
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

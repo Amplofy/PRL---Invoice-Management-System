@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2 } from 'lucide-react'
+import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
 import { contractUtilization, validateInvoice, nextSerialNo, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
@@ -15,7 +15,6 @@ import DataToolbar from '../components/ui/DataToolbar'
 import ServiceSelects from '../components/ui/ServiceSelects'
 import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
 import ValidationSummary from '../components/ui/ValidationSummary'
-import AmountWords from '../components/ui/AmountWords'
 import { emitAppEvent } from '../lib/notify'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
@@ -814,7 +813,6 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
             utilization={utilization}
             draftAmount={draftAmount}
           />
-          {draftAmount > 0 && <AmountWords amount={draftAmount} />}
           <ValidationSummary issues={issues} idle={!showErrors} />
 
           <div className="glass p-5">
@@ -842,6 +840,26 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           </div>
         </div>
       </div>
+
+      {/* Amount in words — full-width strip closing off the bottom of the form */}
+      {draftAmount > 0 && (
+        <div className="mt-4 flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white"
+            style={{ background: 'var(--gradient-primary)' }}
+          >
+            <Languages size={14} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+              Amount in words · Rs {formatMoney(draftAmount, 2)}
+            </span>
+            <span className="mt-0.5 block truncate text-sm font-semibold italic text-[var(--text-dim)]">
+              {formatAmountWords(draftAmount)}
+            </span>
+          </span>
+        </div>
+      )}
     </Modal>
   )
 }
