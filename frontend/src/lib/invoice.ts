@@ -213,3 +213,51 @@ export function validateInvoice(
 
   return issues
 }
+
+export interface SerialInvoiceLike {
+  id?: string
+  invoice_date?: string | null
+  serial_no?: string | null
+}
+
+/**
+ * Fiscal year tag (YY) for a date. Pakistan fiscal year runs July-June and is
+ * labelled by its ending year, e.g. 2026-08 -> FY 27 (ends June 2027).
+ */
+export function fiscalYearTag(dateStr: string | undefined | null): string {
+  const d = dateStr ? new Date(dateStr) : new Date()
+  const safe = Number.isNaN(d.getTime()) ? new Date() : d
+  const y = safe.getFullYear()
+  const fy = safe.getMonth() + 1 >= 7 ? y + 1 : y
+  return String(fy % 100).padStart(2, '0')
+}
+
+/**
+ * Next serial number in the "XXX - YY" format, where XXX is the running
+ * invoice count for the Gregorian year of the invoice date and YY is the
+ * fiscal-year tag. Picks up the highest existing ordinal so deleted rows
+ * cannot cause duplicates.
+ */
+export function nextSerialNo(
+  invoiceDate: string | undefined | null,
+  invoices: SerialInvoiceLike[],
+  excludeId?: string,
+): string {
+  const d = invoiceDate ? new Date(invoiceDate) : new Date()
+  const safe = Number.isNaN(d.getTime()) ? new Date() : d
+  const year = safe.getFullYear()
+
+  let maxOrdinal = 0
+  let count = 0
+  for (const i of invoices) {
+    if (excludeId && i.id === excludeId) continue
+    const idate = i.invoice_date ? new Date(i.invoice_date) : null
+    if (!idate || Number.isNaN(idate.getTime()) || idate.getFullYear() !== year) continue
+    count += 1
+    const m = (i.serial_no ?? '').trim().match(/^(\d+)/)
+    if (m) maxOrdinal = Math.max(maxOrdinal, Number(m[1]))
+  }
+
+  const ordinal = Math.max(maxOrdinal + 1, count + 1)
+  return `${String(ordinal).padStart(3, '0')} - ${fiscalYearTag(invoiceDate)}`
+}

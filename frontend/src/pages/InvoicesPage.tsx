@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2 } from 'lucide-react'
+import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
-import { contractUtilization, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice } from '../lib/invoice'
+import { contractUtilization, validateInvoice, nextSerialNo, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -485,6 +485,8 @@ function toContractLite(c: ContractFull): ContractLite {
 function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: InvoiceFormModalProps) {
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  /** Errors stay hidden until the user attempts to save; they then clear per-field as fixed. */
+  const [showErrors, setShowErrors] = useState(false)
   const [matrix, setMatrix] = useState<ServiceMatrixRow[]>([])
   const [allInvoices, setAllInvoices] = useState<UtilizationInvoice[]>([])
   const [fullContracts, setFullContracts] = useState<ContractFull[]>([])
@@ -495,6 +497,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
 
   useEffect(() => {
     if (!open) return
+    setShowErrors(false)
     setForm({
       serial_no: invoice?.serial_no ?? '',
       invoice_no: invoice?.invoice_no ?? '',
@@ -567,19 +570,39 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     return map
   }, [issues])
 
+  // Serial number is auto-generated: "XXX - YY" — running count for the Gregorian
+  // year of the invoice date + fiscal-year tag. Edit mode keeps the stored serial.
+  const generatedSerial = useMemo(
+    () =>
+      invoice?.serial_no ||
+      nextSerialNo(form.invoice_date || undefined, allInvoices as SerialInvoiceLike[], invoice?.id),
+    [invoice?.serial_no, form.invoice_date, allInvoices, invoice?.id],
+  )
+
+  const focusFirstIssue = () => {
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>('#invoice-form .invalid')
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
+        el.focus({ preventScroll: true })
+      }
+    })
+  }
+
   const submit = async () => {
-    if (!form.invoice_no.trim()) {
-      toast.error('Invoice number is required')
-      return
-    }
+    setShowErrors(true)
     if (issues.length > 0) {
-      toast.error(`Resolve ${issues.length} validation issue${issues.length > 1 ? 's' : ''} first`)
+      toast.error(
+        `Save blocked — ${issues.length} issue${issues.length > 1 ? 's' : ''} to fix`,
+        'Highlighted fields below need attention',
+      )
+      focusFirstIssue()
       return
     }
     setSaving(true)
     try {
       const body = {
-        serial_no: form.serial_no || null,
+        serial_no: generatedSerial || null,
         invoice_no: form.invoice_no.trim(),
         invoice_date: form.invoice_date || null,
         contract_id: form.contract_id || null,
@@ -640,53 +663,114 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       maxWidth="64rem"
       footer={
         <>
-          <span className="mr-auto text-xs text-[var(--text-muted)]">
-            {issues.length > 0
-              ? `${issues.length} validation issue${issues.length > 1 ? 's' : ''}`
-              : 'All checks passed'}
+          <span className="mr-auto flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)]">
+            {showErrors ? (
+              issues.length > 0 ? (
+                <>
+                  <AlertTriangle size={13} className="text-[var(--danger)]" />
+                  <span className="text-[var(--danger)]">
+                    {issues.length} issue{issues.length > 1 ? 's' : ''} blocking save
+                  </span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={13} className="text-[var(--accent-3)]" />
+                  <span className="text-[var(--accent-3)]">All checks passed</span>
+                </>
+              )
+            ) : (
+              <>
+                <Lock size={12} /> Checks run when you save
+              </>
+            )}
           </span>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={submit} disabled={saving || issues.length > 0}>
+          <Button variant="primary" onClick={submit} disabled={saving}>
             {saving ? 'Saving…' : 'Save invoice'}
           </Button>
         </>
       }
     >
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div id="invoice-form" className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <div className="glass p-5">
-            <div className="section-title">Invoice Information</div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Field label="Invoice No" required error={issueMap.invoice_no}>
-                <input className={`input ${issueMap.invoice_no ? 'invalid' : ''}`} value={form.invoice_no} onChange={set('invoice_no')} />
+            <div className="section-title">Invoice</div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-6">
+              {/* Auto-generated serial — read only */}
+              <div className="sm:col-span-2">
+                <span className="mb-1.5 flex items-center justify-between text-xs font-semibold text-[var(--text-dim)]">
+                  Serial No
+                  <span
+                    className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.58rem] font-bold uppercase tracking-wide text-[var(--accent)]"
+                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
+                  >
+                    <Wand2 size={9} /> auto
+                  </span>
+                </span>
+                <div
+                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] font-mono text-sm font-bold tracking-wide"
+                  title="Auto-generated: running number for the Gregorian year + fiscal-year tag"
+                >
+                  {generatedSerial || '—'}
+                  <Lock size={12} className="shrink-0 text-[var(--text-muted)]" />
+                </div>
+                <span className="mt-1 block text-[0.65rem] leading-snug text-[var(--text-muted)]">
+                  Count for {form.invoice_date ? form.invoice_date.slice(0, 4) : new Date().getFullYear()} + fiscal
+                  year tag
+                </span>
+              </div>
+              <Field label="Invoice No" required error={showErrors ? issueMap.invoice_no : undefined}>
+                <input
+                  className={`input ${showErrors && issueMap.invoice_no ? 'invalid' : ''}`}
+                  value={form.invoice_no}
+                  onChange={set('invoice_no')}
+                  placeholder="e.g. INV-2026-014"
+                />
               </Field>
-              <Field label="Serial No">
-                <input className="input" value={form.serial_no} onChange={set('serial_no')} />
+              <Field label="Invoice Date" required error={showErrors ? issueMap.invoice_date : undefined}>
+                <input
+                  type="date"
+                  className={`input ${showErrors && issueMap.invoice_date ? 'invalid' : ''}`}
+                  value={form.invoice_date}
+                  onChange={set('invoice_date')}
+                />
               </Field>
-              <Field label="Invoice Date" error={issueMap.invoice_date}>
-                <input type="date" className={`input ${issueMap.invoice_date ? 'invalid' : ''}`} value={form.invoice_date} onChange={set('invoice_date')} />
+
+              <Field label="Amount (Rs)" required error={showErrors ? issueMap.amount : undefined} hint={draftAmount > 0 ? formatAmountWords(draftAmount) : undefined}>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className={`input ${showErrors && issueMap.amount ? 'invalid' : ''}`}
+                  value={form.amount}
+                  onChange={set('amount')}
+                  placeholder="0.00"
+                />
               </Field>
-              <Field label="Contract" hint="Live utilization preview updates on the right">
-                <select className="input" value={form.contract_id} onChange={set('contract_id')}>
-                  <option value="">Select contract…</option>
-                  {(fullContracts.length > 0 ? fullContracts : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.contract_no}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <div className="sm:col-span-3">
+                <Field label="Contract" hint="Live utilization preview on the right">
+                  <select className="input" value={form.contract_id} onChange={set('contract_id')}>
+                    <option value="">Select contract…</option>
+                    {(fullContracts.length > 0
+                      ? fullContracts
+                      : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))
+                    ).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.contract_no}
+                        {c.vendors?.[0]?.name ? ` — ${c.vendors[0].name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
               <Field label="Item No">
                 <input className="input" value={form.item_no} onChange={set('item_no')} />
               </Field>
-              <Field label="Amount (Rs)" required error={issueMap.amount}>
-                <input type="number" min={0} className={`input ${issueMap.amount ? 'invalid' : ''}`} value={form.amount} onChange={set('amount')} />
-              </Field>
-              <div className="sm:col-span-3">
+              <div className="sm:col-span-6">
                 <Field label="Remarks">
-                  <textarea className="input min-h-16" value={form.remarks} onChange={set('remarks')} />
+                  <textarea className="input min-h-14" rows={2} value={form.remarks} onChange={set('remarks')} />
                 </Field>
               </div>
             </div>
@@ -694,7 +778,12 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
 
           <div className="glass p-5">
             <div className="section-title">Service Details</div>
-            <ServiceSelects matrix={matrix} value={serviceValue} onChange={patchService} issues={issueMap} />
+            <ServiceSelects
+              matrix={matrix}
+              value={serviceValue}
+              onChange={patchService}
+              issues={showErrors ? issueMap : {}}
+            />
           </div>
         </div>
 
@@ -704,21 +793,8 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
             utilization={utilization}
             draftAmount={draftAmount}
           />
-          <ValidationSummary issues={issues} />
-          <AmountWords amount={form.amount} />
-          {form.amount && (
-            <div className="glass p-5 text-center">
-              <div className="text-[0.68rem] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                Invoice Amount
-              </div>
-              <div className="mt-1 text-xl font-extrabold gradient-text">
-                Rs {formatMoney(draftAmount, 2)}
-              </div>
-              <div className="mt-1 text-[0.68rem] text-[var(--text-muted)]">
-                {formatAmountWords(draftAmount)}
-              </div>
-            </div>
-          )}
+          {draftAmount > 0 && <AmountWords amount={draftAmount} />}
+          <ValidationSummary issues={issues} idle={!showErrors} />
         </div>
       </div>
     </Modal>
