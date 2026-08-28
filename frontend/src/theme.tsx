@@ -26,7 +26,7 @@ function readStorage<T extends string>(key: string, fallback: T): T {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<Mode>(() => readStorage<Mode>(MODE_KEY, 'dark'))
+  const [mode, setModeState] = useState<Mode>(() => readStorage<Mode>(MODE_KEY, 'light'))
   const [theme, setThemeState] = useState<ThemeId>(() => readStorage<ThemeId>(THEME_KEY, 'default'))
 
   useEffect(() => {

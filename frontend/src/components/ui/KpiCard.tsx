@@ -81,6 +81,7 @@ export default function KpiCard({
 
   const onLeave = useCallback(() => setTilt(null), [])
 
+  const hasTrend = trend !== undefined && trend !== 0
   const up = (trend ?? 0) >= 0
   const isNumber = typeof value === 'number' && Number.isFinite(value)
   const animated = useCountUp(isNumber ? value : 0, inView)
@@ -113,13 +114,13 @@ export default function KpiCard({
       </div>
       <div className="mt-2 text-[1.75rem] font-bold leading-tight tracking-tight tabular-nums">{shown}</div>
       <div className="mt-1 flex items-center gap-2">
-        {trend !== undefined && (
+        {hasTrend && (
           <span
             className="flex items-center gap-1 text-[0.75rem] font-semibold"
             style={{ color: up ? 'var(--accent-3)' : 'var(--danger)' }}
           >
             {up ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-            {Math.abs(trend)}%
+            {Math.abs(trend ?? 0)}%
           </span>
         )}
         {sub && <span className="text-[0.75rem] text-[var(--text-muted)]">{sub}</span>}

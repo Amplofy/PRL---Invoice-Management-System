@@ -10,6 +10,8 @@ import {
   BadgeCheck,
   FolderOpen,
   Activity,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react'
 import {
   Chart as ChartJS,
@@ -27,7 +29,6 @@ import { Bar, Line, Doughnut } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
 import { formatMoney, formatDate, timeAgo } from '../lib/format'
 import { useThemeColors } from '../lib/themeColors'
-import { useToast } from '../components/ui/Toast'
 import KpiCard from '../components/ui/KpiCard'
 import GlassCard from '../components/ui/GlassCard'
 import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
@@ -67,6 +68,16 @@ interface DashboardData {
   utilization: Array<{ contractNo: string; value: number; used: number; remaining: number; pct: number }>
 }
 
+function withAlpha(color: string, alpha: number): string {
+  if (color.startsWith('#')) {
+    const hex = color.slice(1)
+    const full = hex.length === 3 ? hex.split('').map((ch) => ch + ch).join('') : hex
+    const n = parseInt(full, 16)
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+  }
+  return color
+}
+
 function DashboardSkeleton() {
   return (
     <div className="space-y-5" aria-busy="true" aria-label="Loading dashboard">
@@ -94,33 +105,62 @@ function DashboardSkeleton() {
   )
 }
 
+function DashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <GlassCard className="flex flex-col items-center justify-center gap-3 p-12 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[color-mix(in_srgb,var(--danger)_14%,transparent)] text-[var(--danger)]">
+        <AlertTriangle size={22} />
+      </span>
+      <div className="text-base font-bold">Dashboard unavailable</div>
+      <div className="max-w-md text-sm text-[var(--text-muted)]">{message}</div>
+      <button className="btn btn-primary mt-2" onClick={onRetry}>
+        <RotateCcw size={14} /> Retry
+      </button>
+    </GlassCard>
+  )
+}
+
+function greeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [allInvoices, setAllInvoices] = useState<Array<Record<string, unknown>>>([])
   const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[] } | null>(null)
-  const toast = useToast()
   const c = useThemeColors()
+
+  const load = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const d = await apiGet<DashboardData>('/api/reports/dashboard')
+      setData(d)
+      const inv = await apiGet<{ invoices: Array<Record<string, unknown>> }>('/api/invoices')
+      setAllInvoices(inv.invoices)
+    } catch (e) {
+      setError((e as Error).message || 'Something went wrong while loading the dashboard.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     let alive = true
-    const load = async () => {
-      try {
-        const d = await apiGet<DashboardData>('/api/reports/dashboard')
-        if (alive) setData(d)
-        const inv = await apiGet<{ invoices: Array<Record<string, unknown>> }>('/api/invoices')
-        if (alive) setAllInvoices(inv.invoices)
-      } catch (e) {
-        toast.error('Failed to load dashboard', (e as Error).message)
-      } finally {
-        if (alive) setLoading(false)
-      }
+    const run = async () => {
+      await load()
+      if (!alive) return
     }
-    load()
+    run()
     return () => {
       alive = false
     }
-  }, [toast])
+  }, [])
 
   const recent = useMemo(() => allInvoices.slice(0, 6), [allInvoices])
 
@@ -171,6 +211,7 @@ export default function DashboardPage() {
     })
   }
 
+  if (error && !data) return <DashboardError message={error} onRetry={load} />
   if (loading && !data) return <DashboardSkeleton />
 
   const k = data?.kpis
@@ -178,8 +219,15 @@ export default function DashboardPage() {
 
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
+  const lineGradient = (area: { top: number; bottom: number }, ctx: CanvasRenderingContext2D) => {
+    const g = ctx.createLinearGradient(0, area.top, 0, area.bottom)
+    g.addColorStop(0, withAlpha(c.accent, 0.3))
+    g.addColorStop(1, withAlpha(c.accent, 0.01))
+    return g
+  }
+
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-[1440px] space-y-5">
       {/* Spotlight strip */}
       <Reveal>
         <div className="ring-card glass-hover glass relative overflow-hidden rounded-2xl px-5 py-4 md:px-7">
@@ -190,7 +238,7 @@ export default function DashboardPage() {
           <div className="relative flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-lg font-extrabold tracking-tight">
-                Good day, <span className="gradient-text">Control Tower</span>
+                {greeting()}, <span className="gradient-text">Control Tower</span>
               </div>
               <div className="mt-0.5 text-sm text-[var(--text-muted)]">{today}</div>
             </div>
@@ -224,7 +272,6 @@ export default function DashboardPage() {
           value={`Rs ${formatMoney(k.totalValue)}`}
           icon={<Banknote size={18} className="text-white" />}
           tone="ok"
-          trend={0}
           sub="cumulative"
           delay={60}
         />
@@ -286,13 +333,18 @@ export default function DashboardPage() {
                       label: 'Value (Rs)',
                       data: trendData.totals,
                       borderColor: c.accent,
-                      backgroundColor: c.chartBg,
+                      backgroundColor: (context: { chart: ChartJS }) => {
+                        const { chartArea, ctx } = context.chart
+                        if (!chartArea) return 'transparent'
+                        return lineGradient(chartArea, ctx)
+                      },
                       fill: true,
                       tension: 0.42,
                       pointBackgroundColor: c.accent2,
-                      pointBorderColor: c.accent2,
-                      pointRadius: 3,
-                      pointHoverRadius: 6,
+                      pointBorderColor: '#fff',
+                      pointBorderWidth: 1.5,
+                      pointRadius: 3.5,
+                      pointHoverRadius: 6.5,
                     },
                   ],
                 }}
@@ -302,7 +354,7 @@ export default function DashboardPage() {
                   onClick: onTrendClick,
                   plugins: { legend: { display: false } },
                   scales: {
-                    x: { grid: { color: c.grid }, ticks: { color: c.ticks } },
+                    x: { grid: { display: false }, ticks: { color: c.ticks } },
                     y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
                   },
                 }}
@@ -327,12 +379,14 @@ export default function DashboardPage() {
                       backgroundColor: [c.accent3, c.warn, c.err],
                       borderWidth: 0,
                       hoverOffset: 10,
+                      borderRadius: 4,
                     },
                   ],
                 }}
                 options={{
                   responsive: true,
                   maintainAspectRatio: false,
+                  cutout: '72%',
                   onClick: onStatusClick,
                   plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 14 } } },
                 }}
@@ -388,9 +442,17 @@ export default function DashboardPage() {
                     {
                       label: 'Invoices',
                       data: trendData.counts.slice(-6),
-                      backgroundColor: c.accent2 + 'B3',
+                      backgroundColor: (context: { chart: ChartJS }) => {
+                        const { chartArea, ctx } = context.chart
+                        if (!chartArea) return withAlpha(c.accent2, 0.7)
+                        const g = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top)
+                        g.addColorStop(0, withAlpha(c.accent2, 0.25))
+                        g.addColorStop(1, withAlpha(c.accent2, 0.85))
+                        return g
+                      },
                       borderRadius: 8,
                       borderSkipped: false,
+                      maxBarThickness: 34,
                     },
                   ],
                 }}
