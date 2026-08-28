@@ -11,8 +11,10 @@ import Button from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
+import ColumnsButton from '../components/ui/ColumnsButton'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
+import { useColumnVisibility } from '../lib/columns'
 
 interface Vendor {
   id: string
@@ -31,6 +33,26 @@ interface Contract {
   vendors: Vendor[] | null
 }
 
+const CONTRACT_COLUMN_DEFS = [
+  { key: 'contract_no', label: 'Contract No' },
+  { key: 'vendor', label: 'Vendor' },
+  { key: 'service', label: 'Service' },
+  { key: 'start_date', label: 'Start' },
+  { key: 'end_date', label: 'End' },
+  { key: 'period_days', label: 'Period (days)' },
+  { key: 'value', label: 'Value' },
+  { key: 'status', label: 'Status' },
+]
+
+const CONTRACT_DEFAULT_COLUMNS = ['contract_no', 'vendor', 'service', 'start_date', 'end_date', 'value', 'status']
+
+function contractPeriodDays(c: Contract): number | null {
+  if (!c.start_date || !c.end_date) return null
+  const ms = new Date(c.end_date).getTime() - new Date(c.start_date).getTime()
+  if (Number.isNaN(ms) || ms < 0) return null
+  return Math.round(ms / 86400000)
+}
+
 export default function ContractsPage() {
   const [contracts, setContracts] = useState<Contract[]>([])
   const [vendors, setVendors] = useState<Vendor[]>([])
@@ -40,6 +62,11 @@ export default function ContractsPage() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('end_date')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
+  const col = useColumnVisibility(
+    'prl-eoms-cols-contracts',
+    CONTRACT_COLUMN_DEFS.map((c) => c.key),
+    CONTRACT_DEFAULT_COLUMNS,
+  )
   const toast = useToast()
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
@@ -126,13 +153,14 @@ export default function ContractsPage() {
     downloadCSV(
       `contracts-${new Date().toISOString().slice(0, 10)}.csv`,
       sorted.map((c) => ({
-        contract_no: c.contract_no,
-        vendor: vendorName(c),
-        service: c.service ?? '',
-        start_date: c.start_date ?? '',
-        end_date: c.end_date ?? '',
-        value: c.value ?? 0,
-        status: c.status ?? '',
+        ...(col.show('contract_no') ? { contract_no: c.contract_no } : {}),
+        ...(col.show('vendor') ? { vendor: vendorName(c) } : {}),
+        ...(col.show('service') ? { service: c.service ?? '' } : {}),
+        ...(col.show('start_date') ? { start_date: c.start_date ?? '' } : {}),
+        ...(col.show('end_date') ? { end_date: c.end_date ?? '' } : {}),
+        ...(col.show('period_days') ? { period_days: contractPeriodDays(c) ?? '' } : {}),
+        ...(col.show('value') ? { value: c.value ?? 0 } : {}),
+        ...(col.show('status') ? { status: c.status ?? '' } : {}),
       })),
     )
 
@@ -175,33 +203,45 @@ export default function ContractsPage() {
         onExport={exportCSV}
         exportLabel="Export CSV"
         resultsCount={sorted.length}
-      />
+      >
+        <ColumnsButton
+          columns={CONTRACT_COLUMN_DEFS}
+          isVisible={col.show}
+          onToggle={col.toggle}
+          onReset={col.reset}
+          hiddenCount={col.hiddenCount}
+        />
+      </DataToolbar>
 
       <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Contract No</th>
-                <th>Vendor</th>
-                <th>Service</th>
-                <th>Start</th>
-                <th>End</th>
-                <th className="text-right">Value</th>
-                <th>Status</th>
+                {col.show('contract_no') && <th>Contract No</th>}
+                {col.show('vendor') && <th>Vendor</th>}
+                {col.show('service') && <th>Service</th>}
+                {col.show('start_date') && <th>Start</th>}
+                {col.show('end_date') && <th>End</th>}
+                {col.show('period_days') && <th className="text-right">Period (days)</th>}
+                {col.show('value') && <th className="text-right">Value</th>}
+                {col.show('status') && <th>Status</th>}
                 {admin && <th className="text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {sorted.map((c) => (
                 <tr key={c.id}>
-                  <td className="font-semibold">{c.contract_no}</td>
-                  <td>{vendorName(c)}</td>
-                  <td className="text-xs">{c.service ?? '—'}</td>
-                  <td>{formatDate(c.start_date)}</td>
-                  <td>{formatDate(c.end_date)}</td>
-                  <td className="text-right font-semibold">{formatMoney(c.value)}</td>
-                  <td>{expiryBadge(c)}</td>
+                  {col.show('contract_no') && <td className="font-semibold">{c.contract_no}</td>}
+                  {col.show('vendor') && <td>{vendorName(c)}</td>}
+                  {col.show('service') && <td className="text-xs">{c.service ?? '—'}</td>}
+                  {col.show('start_date') && <td>{formatDate(c.start_date)}</td>}
+                  {col.show('end_date') && <td>{formatDate(c.end_date)}</td>}
+                  {col.show('period_days') && (
+                    <td className="text-right text-xs">{contractPeriodDays(c) ?? '—'}</td>
+                  )}
+                  {col.show('value') && <td className="text-right font-semibold">{formatMoney(c.value)}</td>}
+                  {col.show('status') && <td>{expiryBadge(c)}</td>}
                   {admin && (
                     <td>
                       <div className="flex items-center justify-end gap-1.5">

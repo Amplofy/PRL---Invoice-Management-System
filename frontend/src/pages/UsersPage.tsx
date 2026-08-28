@@ -11,7 +11,9 @@ import { Field } from '../components/ui/Field'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
+import ColumnsButton from '../components/ui/ColumnsButton'
 import { downloadCSV, sortRows, type SortDirection } from '../lib/export'
+import { useColumnVisibility } from '../lib/columns'
 
 interface Role {
   id: string
@@ -35,11 +37,26 @@ interface Permission {
   category: string | null
 }
 
+const USER_COLUMN_DEFS = [
+  { key: 'username', label: 'Username' },
+  { key: 'full_name', label: 'Full Name' },
+  { key: 'email', label: 'Email' },
+  { key: 'role', label: 'Role' },
+  { key: 'status', label: 'Status' },
+]
+
+const USER_DEFAULT_COLUMNS = ['username', 'full_name', 'email', 'role', 'status']
+
 export default function UsersPage() {
   const [tab, setTab] = useTab('users')
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
+  const col = useColumnVisibility(
+    'prl-eoms-cols-users',
+    USER_COLUMN_DEFS.map((c) => c.key),
+    USER_DEFAULT_COLUMNS,
+  )
   const [editing, setEditing] = useState<User | null>(null)
   const [creating, setCreating] = useState(false)
   const [search, setSearch] = useState('')
@@ -112,11 +129,11 @@ export default function UsersPage() {
     downloadCSV(
       `users-${new Date().toISOString().slice(0, 10)}.csv`,
       sortedUsers.map((u) => ({
-        username: u.username,
-        full_name: u.full_name ?? '',
-        email: u.email ?? '',
-        role: u.roles?.name ?? '',
-        status: u.status ?? '',
+        ...(col.show('username') ? { username: u.username } : {}),
+        ...(col.show('full_name') ? { full_name: u.full_name ?? '' } : {}),
+        ...(col.show('email') ? { email: u.email ?? '' } : {}),
+        ...(col.show('role') ? { role: u.roles?.name ?? '' } : {}),
+        ...(col.show('status') ? { status: u.status ?? '' } : {}),
       })),
     )
 
@@ -160,32 +177,44 @@ export default function UsersPage() {
             onExport={exportUsers}
             exportLabel="Export CSV"
             resultsCount={sortedUsers.length}
-          />
+          >
+            <ColumnsButton
+              columns={USER_COLUMN_DEFS}
+              isVisible={col.show}
+              onToggle={col.toggle}
+              onReset={col.reset}
+              hiddenCount={col.hiddenCount}
+            />
+          </DataToolbar>
           <GlassCard className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="data-table">
               <thead>
                 <tr>
-                  <th>Username</th>
-                  <th>Full Name</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Status</th>
+                  {col.show('username') && <th>Username</th>}
+                  {col.show('full_name') && <th>Full Name</th>}
+                  {col.show('email') && <th>Email</th>}
+                  {col.show('role') && <th>Role</th>}
+                  {col.show('status') && <th>Status</th>}
                   <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedUsers.map((u) => (
                   <tr key={u.id}>
-                    <td className="font-semibold">{u.username}</td>
-                    <td>{u.full_name ?? '—'}</td>
-                    <td className="text-xs">{u.email ?? '—'}</td>
-                    <td>
-                      <span className="badge badge-purple">{u.roles?.name ?? '—'}</span>
-                    </td>
-                    <td>
-                      <StatusBadge tone={u.status === 'active' ? 'ok' : 'neutral'}>{u.status ?? '—'}</StatusBadge>
-                    </td>
+                    {col.show('username') && <td className="font-semibold">{u.username}</td>}
+                    {col.show('full_name') && <td>{u.full_name ?? '—'}</td>}
+                    {col.show('email') && <td className="text-xs">{u.email ?? '—'}</td>}
+                    {col.show('role') && (
+                      <td>
+                        <span className="badge badge-purple">{u.roles?.name ?? '—'}</span>
+                      </td>
+                    )}
+                    {col.show('status') && (
+                      <td>
+                        <StatusBadge tone={u.status === 'active' ? 'ok' : 'neutral'}>{u.status ?? '—'}</StatusBadge>
+                      </td>
+                    )}
                     <td>
                       <div className="flex items-center justify-end gap-1.5">
                         <button className="btn btn-ghost !px-2.5 !py-1.5" onClick={() => setEditing(u)}>

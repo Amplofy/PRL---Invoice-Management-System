@@ -9,7 +9,9 @@ import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
+import ColumnsButton from '../components/ui/ColumnsButton'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { useColumnVisibility } from '../lib/columns'
 
 interface PendingFollowup {
   invoiceId: string
@@ -22,6 +24,25 @@ interface PendingFollowup {
   email: string
 }
 
+const FOLLOWUP_COLUMN_DEFS = [
+  { key: 'invoice', label: 'Invoice' },
+  { key: 'date', label: 'Date' },
+  { key: 'days_pending', label: 'Days Pending' },
+  { key: 'vendor', label: 'Vendor' },
+  { key: 'contract', label: 'Contract' },
+  { key: 'email', label: 'Email' },
+  { key: 'amount', label: 'Amount' },
+]
+
+const FOLLOWUP_DEFAULT_COLUMNS = ['invoice', 'date', 'vendor', 'contract', 'email', 'amount']
+
+function daysPending(dateStr: string | null): number | null {
+  if (!dateStr) return null
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return null
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000))
+}
+
 export default function FollowupsPage() {
   const [pending, setPending] = useState<PendingFollowup[]>([])
   const [loading, setLoading] = useState(true)
@@ -32,6 +53,11 @@ export default function FollowupsPage() {
   const [result, setResult] = useState<{ sent: string[]; failed: Array<{ invoiceId: string; reason: string }> } | null>(null)
   const [sortBy, setSortBy] = useState('invoiceDate')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
+  const col = useColumnVisibility(
+    'prl-eoms-cols-followups',
+    FOLLOWUP_COLUMN_DEFS.map((c) => c.key),
+    FOLLOWUP_DEFAULT_COLUMNS,
+  )
   const toast = useToast()
 
   const load = useCallback(async () => {
@@ -81,12 +107,13 @@ export default function FollowupsPage() {
     downloadCSV(
       `followups-${new Date().toISOString().slice(0, 10)}.csv`,
       sorted.map((p) => ({
-        invoice_no: p.invoiceNo,
-        invoice_date: p.invoiceDate ?? '',
-        vendor: p.vendorName,
-        contract: p.contractNo,
-        email: p.email,
-        amount: p.amount,
+        ...(col.show('invoice') ? { invoice_no: p.invoiceNo } : {}),
+        ...(col.show('date') ? { invoice_date: p.invoiceDate ?? '' } : {}),
+        ...(col.show('days_pending') ? { days_pending: daysPending(p.invoiceDate) ?? '' } : {}),
+        ...(col.show('vendor') ? { vendor: p.vendorName } : {}),
+        ...(col.show('contract') ? { contract: p.contractNo } : {}),
+        ...(col.show('email') ? { email: p.email } : {}),
+        ...(col.show('amount') ? { amount: p.amount } : {}),
       })),
     )
 
@@ -185,6 +212,13 @@ export default function FollowupsPage() {
         <div className="text-sm text-[var(--text-dim)]">
           {selected.size} selected · <b className="text-[var(--text)]">Rs {formatMoney(totalSelected)}</b>
         </div>
+        <ColumnsButton
+          columns={FOLLOWUP_COLUMN_DEFS}
+          isVisible={col.show}
+          onToggle={col.toggle}
+          onReset={col.reset}
+          hiddenCount={col.hiddenCount}
+        />
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
@@ -201,12 +235,13 @@ export default function FollowupsPage() {
                     style={{ accentColor: 'var(--accent)' }}
                   />
                 </th>
-                <th>Invoice</th>
-                <th>Date</th>
-                <th>Vendor</th>
-                <th>Contract</th>
-                <th>Email</th>
-                <th className="text-right">Amount</th>
+                {col.show('invoice') && <th>Invoice</th>}
+                {col.show('date') && <th>Date</th>}
+                {col.show('days_pending') && <th className="text-right">Days Pending</th>}
+                {col.show('vendor') && <th>Vendor</th>}
+                {col.show('contract') && <th>Contract</th>}
+                {col.show('email') && <th>Email</th>}
+                {col.show('amount') && <th className="text-right">Amount</th>}
               </tr>
             </thead>
             <tbody>
@@ -221,12 +256,15 @@ export default function FollowupsPage() {
                       style={{ accentColor: 'var(--accent)' }}
                     />
                   </td>
-                  <td className="font-semibold">{p.invoiceNo}</td>
-                  <td>{formatDate(p.invoiceDate)}</td>
-                  <td>{p.vendorName}</td>
-                  <td className="text-xs">{p.contractNo}</td>
-                  <td className="text-xs text-[var(--accent)]">{p.email}</td>
-                  <td className="text-right font-semibold">{formatMoney(p.amount)}</td>
+                  {col.show('invoice') && <td className="font-semibold">{p.invoiceNo}</td>}
+                  {col.show('date') && <td>{formatDate(p.invoiceDate)}</td>}
+                  {col.show('days_pending') && (
+                    <td className="text-right text-xs">{daysPending(p.invoiceDate) ?? '—'}</td>
+                  )}
+                  {col.show('vendor') && <td>{p.vendorName}</td>}
+                  {col.show('contract') && <td className="text-xs">{p.contractNo}</td>}
+                  {col.show('email') && <td className="text-xs text-[var(--accent)]">{p.email}</td>}
+                  {col.show('amount') && <td className="text-right font-semibold">{formatMoney(p.amount)}</td>}
                 </tr>
               ))}
             </tbody>

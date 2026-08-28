@@ -12,12 +12,14 @@ import Button from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
+import ColumnsButton from '../components/ui/ColumnsButton'
 import ServiceSelects from '../components/ui/ServiceSelects'
 import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
 import ValidationSummary from '../components/ui/ValidationSummary'
 import { emitAppEvent } from '../lib/notify'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
+import { useColumnVisibility } from '../lib/columns'
 import { Link } from 'react-router-dom'
 
 interface VendorRef {
@@ -59,9 +61,34 @@ interface Contract {
 
 const STATUSES = ['all', 'Pending', 'Approved', 'Rejected', 'Submitted']
 
+const INVOICE_COLUMN_DEFS = [
+  { key: 'invoice_no', label: 'Invoice No' },
+  { key: 'serial', label: 'Serial' },
+  { key: 'date', label: 'Date' },
+  { key: 'processing_date', label: 'Processing Date' },
+  { key: 'vendor', label: 'Vendor' },
+  { key: 'contract', label: 'Contract' },
+  { key: 'item', label: 'Item' },
+  { key: 'service', label: 'Service' },
+  { key: 'tanker', label: 'Tanker' },
+  { key: 'trips', label: 'Trips' },
+  { key: 'cost_element', label: 'Cost Element' },
+  { key: 'service_period', label: 'Service Period' },
+  { key: 'amount', label: 'Amount' },
+  { key: 'status', label: 'Status' },
+  { key: 'remarks', label: 'Remarks' },
+]
+
+const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 'item', 'amount', 'status']
+
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
+  const col = useColumnVisibility(
+    'prl-eoms-cols-invoices',
+    INVOICE_COLUMN_DEFS.map((c) => c.key),
+    INVOICE_DEFAULT_COLUMNS,
+  )
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState('all')
   const [contract, setContract] = useState('all')
@@ -211,16 +238,16 @@ export default function InvoicesPage() {
     downloadCSV(
       `invoices-${new Date().toISOString().slice(0, 10)}.csv`,
       sorted.map((i) => ({
-        invoice_no: i.invoice_no ?? '',
-        serial_no: i.serial_no ?? '',
-        invoice_date: i.invoice_date ?? '',
-        vendor: vendorOf(i),
-        contract: contractNoOf(i),
-        item_no: i.item_no ?? '',
-        cost_element: i.cost_element ?? '',
-        amount: i.amount,
-        status: i.status,
-        remarks: i.remarks ?? '',
+        ...(col.show('invoice_no') ? { invoice_no: i.invoice_no ?? '' } : {}),
+        ...(col.show('serial') ? { serial_no: i.serial_no ?? '' } : {}),
+        ...(col.show('date') ? { invoice_date: i.invoice_date ?? '' } : {}),
+        ...(col.show('vendor') ? { vendor: vendorOf(i) } : {}),
+        ...(col.show('contract') ? { contract: contractNoOf(i) } : {}),
+        ...(col.show('item') ? { item_no: i.item_no ?? '' } : {}),
+        ...(col.show('cost_element') ? { cost_element: i.cost_element ?? '' } : {}),
+        ...(col.show('amount') ? { amount: i.amount } : {}),
+        ...(col.show('status') ? { status: i.status } : {}),
+        ...(col.show('remarks') ? { remarks: i.remarks ?? '' } : {}),
       })),
     )
 
@@ -278,45 +305,87 @@ export default function InvoicesPage() {
         onExport={exportCSV}
         exportLabel="Export CSV"
         resultsCount={sorted.length}
-      />
+      >
+        <ColumnsButton
+          columns={INVOICE_COLUMN_DEFS}
+          isVisible={col.show}
+          onToggle={col.toggle}
+          onReset={col.reset}
+          hiddenCount={col.hiddenCount}
+        />
+      </DataToolbar>
 
       <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Invoice No</th>
-                <th>Serial</th>
-                <th>Date</th>
-                <th>Vendor</th>
-                <th>Contract</th>
-                <th>Item</th>
-                <th className="text-right">Amount</th>
-                <th>Status</th>
+                {col.show('invoice_no') && <th>Invoice No</th>}
+                {col.show('serial') && <th>Serial</th>}
+                {col.show('date') && <th>Date</th>}
+                {col.show('processing_date') && <th>Processing</th>}
+                {col.show('vendor') && <th>Vendor</th>}
+                {col.show('contract') && <th>Contract</th>}
+                {col.show('item') && <th>Item</th>}
+                {col.show('service') && <th>Service</th>}
+                {col.show('tanker') && <th>Tanker</th>}
+                {col.show('trips') && <th className="text-right">Trips</th>}
+                {col.show('cost_element') && <th>Cost Element</th>}
+                {col.show('service_period') && <th>Service Period</th>}
+                {col.show('amount') && <th className="text-right">Amount</th>}
+                {col.show('status') && <th>Status</th>}
+                {col.show('remarks') && <th>Remarks</th>}
                 <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((inv) => (
                 <tr key={inv.id}>
-                  <td className="font-semibold">
-                    <Link
-                      to={`/invoices/${inv.id}`}
-                      className="text-[var(--accent)] underline-offset-4 transition hover:underline"
-                      title="Open invoice workspace"
-                    >
-                      {inv.invoice_no ?? '—'}
-                    </Link>
-                  </td>
-                  <td className="text-xs text-[var(--text-muted)]">{inv.serial_no ?? '—'}</td>
-                  <td>{formatDate(inv.invoice_date)}</td>
-                  <td>{vendorOf(inv)}</td>
-                  <td className="text-xs">{contractNoOf(inv)}</td>
-                  <td className="text-xs">{inv.item_no ?? '—'}</td>
-                  <td className="text-right font-semibold">{formatMoney(inv.amount)}</td>
-                  <td>
-                    <StatusBadge tone={statusTone(inv.status)}>{inv.status}</StatusBadge>
-                  </td>
+                  {col.show('invoice_no') && (
+                    <td className="font-semibold">
+                      <Link
+                        to={`/invoices/${inv.id}`}
+                        className="text-[var(--accent)] underline-offset-4 transition hover:underline"
+                        title="Open invoice workspace"
+                      >
+                        {inv.invoice_no ?? '—'}
+                      </Link>
+                    </td>
+                  )}
+                  {col.show('serial') && <td className="text-xs text-[var(--text-muted)]">{inv.serial_no ?? '—'}</td>}
+                  {col.show('date') && <td>{formatDate(inv.invoice_date)}</td>}
+                  {col.show('processing_date') && (
+                    <td className="text-xs text-[var(--text-muted)]">{formatDate(inv.processing_date)}</td>
+                  )}
+                  {col.show('vendor') && <td>{vendorOf(inv)}</td>}
+                  {col.show('contract') && <td className="text-xs">{contractNoOf(inv)}</td>}
+                  {col.show('item') && <td className="text-xs">{inv.item_no ?? '—'}</td>}
+                  {col.show('service') && (
+                    <td className="max-w-[11rem] truncate text-xs" title={[inv.t1, inv.t2, inv.t3].filter(Boolean).join(' → ')}>
+                      {[inv.t1, inv.t2, inv.t3].filter(Boolean).join(' → ') || '—'}
+                    </td>
+                  )}
+                  {col.show('tanker') && <td className="text-xs">{inv.tanker_name ?? '—'}</td>}
+                  {col.show('trips') && <td className="text-right text-xs">{inv.trips ?? '—'}</td>}
+                  {col.show('cost_element') && <td className="text-xs">{inv.cost_element ?? '—'}</td>}
+                  {col.show('service_period') && (
+                    <td className="text-xs">
+                      {inv.service_from || inv.service_to
+                        ? `${formatDate(inv.service_from)} – ${formatDate(inv.service_to)}`
+                        : '—'}
+                    </td>
+                  )}
+                  {col.show('amount') && <td className="text-right font-semibold">{formatMoney(inv.amount)}</td>}
+                  {col.show('status') && (
+                    <td>
+                      <StatusBadge tone={statusTone(inv.status)}>{inv.status}</StatusBadge>
+                    </td>
+                  )}
+                  {col.show('remarks') && (
+                    <td className="max-w-[10rem] truncate text-xs text-[var(--text-muted)]" title={inv.remarks ?? undefined}>
+                      {inv.remarks ?? '—'}
+                    </td>
+                  )}
                   <td>
                     <div className="flex items-center justify-end gap-1.5">
                       <button className="btn btn-ghost !px-2.5 !py-1.5" title="Edit" onClick={() => setEditing(inv)}>

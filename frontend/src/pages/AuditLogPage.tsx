@@ -7,6 +7,8 @@ import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
+import ColumnsButton from '../components/ui/ColumnsButton'
+import { useColumnVisibility } from '../lib/columns'
 
 interface AuditEntry {
   id: string
@@ -17,6 +19,18 @@ interface AuditEntry {
   entity_id: string | null
   summary: string | null
 }
+
+const AUDIT_COLUMN_DEFS = [
+  { key: 'action', label: 'Action' },
+  { key: 'entity', label: 'Entity' },
+  { key: 'entity_id', label: 'Entity ID' },
+  { key: 'summary', label: 'Summary' },
+  { key: 'user', label: 'User' },
+  { key: 'when', label: 'When' },
+  { key: 'exact_time', label: 'Exact Time' },
+]
+
+const AUDIT_DEFAULT_COLUMNS = ['action', 'entity', 'summary', 'user', 'when']
 
 const ACTION_TONES: Record<string, string> = {
   create: 'badge-ok',
@@ -41,6 +55,11 @@ export default function AuditLogPage() {
   const [search, setSearch] = useState('')
   const [action, setAction] = useState('all')
   const [entityType, setEntityType] = useState('all')
+  const col = useColumnVisibility(
+    'prl-eoms-cols-audit-log',
+    AUDIT_COLUMN_DEFS.map((c) => c.key),
+    AUDIT_DEFAULT_COLUMNS,
+  )
   const toast = useToast()
 
   useEffect(() => {
@@ -113,40 +132,52 @@ export default function AuditLogPage() {
           },
         ]}
         resultsCount={filtered.length}
-      />
+      >
+        <ColumnsButton
+          columns={AUDIT_COLUMN_DEFS}
+          isVisible={col.show}
+          onToggle={col.toggle}
+          onReset={col.reset}
+          hiddenCount={col.hiddenCount}
+        />
+      </DataToolbar>
 
       <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Action</th>
-                <th>Entity</th>
-                <th>Summary</th>
-                <th>User</th>
-                <th className="text-right">When</th>
+                {col.show('action') && <th>Action</th>}
+                {col.show('entity') && <th>Entity</th>}
+                {col.show('entity_id') && <th>Entity ID</th>}
+                {col.show('summary') && <th>Summary</th>}
+                {col.show('user') && <th>User</th>}
+                {col.show('when') && <th className="text-right">When</th>}
+                {col.show('exact_time') && <th className="text-right">Exact Time</th>}
               </tr>
             </thead>
             <tbody>
               {filtered.map((e) => (
                 <tr key={e.id}>
-                  <td>
-                    <span className={`badge ${actionBadge(e.action)}`}>{e.action}</span>
-                  </td>
-                  <td className="text-xs">
-                    {e.entity_type ?? '—'}
-                    {e.entity_id && (
-                      <span className="ml-1.5 font-mono text-[0.65rem] text-[var(--text-muted)]">
-                        {e.entity_id.slice(0, 8)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="cell-wrap max-w-md">{e.summary ?? '—'}</td>
-                  <td className="text-xs">{e.user_email ?? 'system'}</td>
-                  <td className="text-right">
-                    <div className="text-xs font-semibold">{timeAgo(e.timestamp)}</div>
-                    <div className="text-[0.65rem] text-[var(--text-muted)]">{formatDateTime(e.timestamp)}</div>
-                  </td>
+                  {col.show('action') && (
+                    <td>
+                      <span className={`badge ${actionBadge(e.action)}`}>{e.action}</span>
+                    </td>
+                  )}
+                  {col.show('entity') && <td className="text-xs">{e.entity_type ?? '—'}</td>}
+                  {col.show('entity_id') && (
+                    <td className="font-mono text-[0.65rem]">{e.entity_id ? e.entity_id.slice(0, 8) : '—'}</td>
+                  )}
+                  {col.show('summary') && <td className="cell-wrap max-w-md">{e.summary ?? '—'}</td>}
+                  {col.show('user') && <td className="text-xs">{e.user_email ?? 'system'}</td>}
+                  {col.show('when') && (
+                    <td className="text-right text-xs font-semibold">{timeAgo(e.timestamp)}</td>
+                  )}
+                  {col.show('exact_time') && (
+                    <td className="text-right text-[0.65rem] text-[var(--text-muted)]">
+                      {formatDateTime(e.timestamp)}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
