@@ -1,29 +1,32 @@
-import { useRef, useState } from 'react'
-import { Upload, FileSpreadsheet, FileText, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight } from 'lucide-react'
-import { apiUpload, apiPost } from '../lib/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Upload, FileSpreadsheet, FileText, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight,
+  Table2, Wand2, EyeOff, Copy, History,
+} from 'lucide-react'
+import { apiPost, apiGet } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import Button from '../components/ui/Button'
+import MappingTable from '../components/ui/MappingTable'
 import { useAuth, isAdmin } from '../lib/auth'
+import {
+  readWorkbook, detectHeaderRow, buildColumns, dataRows, type ParsedWorkbook, type SourceColumn,
+} from '../lib/importParser'
+import {
+  IMPORT_SCHEMAS, autoMap, applyMapping, loadTemplate, saveTemplate, norm,
+  signatureOf, type ImportType, type MappingState,
+} from '../lib/importMapping'
 
-type ImportType = 'invoices' | 'contracts' | 'vendors'
+type Step = 1 | 2 | 3 | 4 | 5
 
-interface PreviewRow {
-  index: number
-  valid: boolean
-  errors: string[]
-  data: Record<string, unknown>
-}
-
-interface ParseResult {
-  type: ImportType
-  fileName: string
-  preview: PreviewRow[]
-  issues: Array<{ row: number; message: string }>
-  totalRows: number
-  validRows: number
-}
+const STEPS: Array<{ id: Step; label: string }> = [
+  { id: 1, label: 'Upload' },
+  { id: 2, label: 'Sheets' },
+  { id: 3, label: 'Map' },
+  { id: 4, label: 'Review' },
+  { id: 5, label: 'Confirm' },
+]
 
 const TYPES: Array<{ id: ImportType; label: string; hint: string }> = [
   { id: 'invoices', label: 'Invoices', hint: 'Invoice numbers, dates, amounts, contract refs' },
@@ -31,38 +34,103 @@ const TYPES: Array<{ id: ImportType; label: string; hint: string }> = [
   { id: 'vendors', label: 'Vendors', hint: 'Vendor names and emails' },
 ]
 
-const ACCEPT = '.csv,.xlsx,.xls,.pdf'
+const ACCEPT = '.csv,.xlsx,.xls'
+
+interface CanonicalRow {
+  index: number
+  data: Record<string, string | number | null>
+  errors: string[]
+}
+
+interface DemoInvoice { id: string; invoice_no: string | null }
+interface DemoContract { id: string; contract_no: string }
 
 export default function ImportPage() {
   const [type, setType] = useState<ImportType>('invoices')
-  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [step, setStep] = useState<Step>(1)
   const [dragOver, setDragOver] = useState(false)
-  const [result, setResult] = useState<ParseResult | null>(null)
+  const [parsing, setParsing] = useState(false)
+  const [wb, setWb] = useState<ParsedWorkbook | null>(null)
+  const [fileName, setFileName] = useState('')
+  const [sheetIdx, setSheetIdx] = useState(0)
+  const [headerRowIdx, setHeaderRowIdx] = useState(0)
+  const [columns, setColumns] = useState<SourceColumn[]>([])
+  const [rows, setRows] = useState<Record<string, unknown>[]>([])
+  const [mapping, setMapping] = useState<MappingState>({})
+  const [templateNote, setTemplateNote] = useState<string | null>(null)
+  const [canonical, setCanonical] = useState<CanonicalRow[]>([])
+  const [showInvalidOnly, setShowInvalidOnly] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null)
+  const [demoInvoices, setDemoInvoices] = useState<DemoInvoice[]>([])
+  const [demoContracts, setDemoContracts] = useState<DemoContract[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const toast = useToast()
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
+  const schema = IMPORT_SCHEMAS[type]
+
+  useEffect(() => {
+    apiGet<{ invoices: DemoInvoice[] }>('/api/invoices')
+      .then((d) => setDemoInvoices(d.invoices))
+      .catch(() => undefined)
+    apiGet<{ contracts: DemoContract[] }>('/api/contracts')
+      .then((d) => setDemoContracts(d.contracts))
+      .catch(() => undefined)
+  }, [])
+
+  const aliasSet = useMemo(() => {
+    const s = new Set<string>()
+    for (const el of schema) for (const a of el.aliases) s.add(norm(a))
+    return s
+  }, [schema])
+
+  const initMapping = (wbk: ParsedWorkbook, idx: number) => {
+    const sheet = wbk.sheets[idx]
+    if (!sheet || sheet.matrix.length === 0) {
+      toast.error('Empty sheet', 'No readable rows found in the selected sheet.')
+      return
+    }
+    const hr = detectHeaderRow(sheet.matrix, aliasSet)
+    const cols = buildColumns(sheet.matrix, hr, sheet.hiddenCols)
+    setSheetIdx(idx)
+    setHeaderRowIdx(hr)
+    setColumns(cols)
+    setRows(dataRows(sheet.matrix, hr))
+    const sig = signatureOf(cols)
+    const tpl = loadTemplate(type, sig)
+    if (tpl) {
+      setMapping(tpl)
+      setTemplateNote(`Applied your saved mapping template for this layout.`)
+    } else {
+      setMapping(autoMap(cols, schema))
+      setTemplateNote(null)
+    }
+    setStep(3)
+  }
 
   const upload = async (file: File) => {
-    setStep(2)
-    setResult(null)
+    setParsing(true)
     setImportResult(null)
-    const form = new FormData()
-    form.append('file', file)
-    form.append('type', type)
+    setWb(null)
+    setFileName(file.name)
     try {
-      const d = await apiUpload<ParseResult>('/api/import/parse', form)
-      setResult(d)
-      if (d.validRows === d.totalRows) {
-        setStep(3)
+      const parsed = await readWorkbook(file)
+      setWb(parsed)
+      const usable = parsed.sheets.filter((s) => s.matrix.length > 0)
+      if (usable.length === 0) {
+        toast.error('Nothing to import', 'The workbook contains no readable rows.')
+        return
+      }
+      if (parsed.sheets.length > 1) {
+        setStep(2)
       } else {
-        toast.warning('Some rows need attention', `${d.totalRows - d.validRows} rows have validation issues`)
+        initMapping(parsed, 0)
       }
     } catch (e) {
-      toast.error('Import failed', (e as Error).message)
-      setStep(1)
+      toast.error('Could not read file', (e as Error).message)
+    } finally {
+      setParsing(false)
     }
   }
 
@@ -71,17 +139,79 @@ export default function ImportPage() {
     if (f) upload(f)
   }
 
+  const changeHeaderRow = (newIdx: number) => {
+    if (!wb) return
+    const sheet = wb.sheets[sheetIdx]
+    const cols = buildColumns(sheet.matrix, newIdx, sheet.hiddenCols)
+    setHeaderRowIdx(newIdx)
+    setColumns(cols)
+    setRows(dataRows(sheet.matrix, newIdx))
+    setMapping(autoMap(cols, schema))
+    setTemplateNote(null)
+  }
+
+  const requiredMissing = schema.filter((el) => el.required && !mapping[el.key]?.columnKey)
+
+  const buildCanonical = () => {
+    const mapped = applyMapping(rows, columns, schema, mapping)
+    const seenInvoice = new Set<string>()
+    const invoiceNos = new Set(demoInvoices.map((i) => i.invoice_no ?? '').filter(Boolean))
+    const contractNos = new Set(demoContracts.map((c) => c.contract_no))
+    const out: CanonicalRow[] = mapped.map((r, i) => {
+      const errors: string[] = []
+      for (const el of schema) {
+        const v = r[el.key]
+        if (el.required && (v === null || v === '')) errors.push(`${el.label} is missing`)
+        if (v !== null && r[`${el.key}__warn`]) errors.push(String(r[`${el.key}__warn`]))
+        if (el.type === 'number' && v !== null && (typeof v !== 'number' || !Number.isFinite(v))) {
+          errors.push(`${el.label} is not a valid number`)
+        }
+      }
+      if (type === 'invoices') {
+        const no = String(r.invoice_no ?? '').trim()
+        if (no) {
+          if (invoiceNos.has(no)) errors.push(`Invoice ${no} already exists in the system`)
+          if (seenInvoice.has(no)) errors.push(`Duplicate invoice ${no} inside this file`)
+          seenInvoice.add(no)
+        }
+        const cn = String(r.contract_no ?? '').trim()
+        if (cn && contractNos.size > 0 && !contractNos.has(cn)) errors.push(`Contract ${cn} not found`)
+        const amount = r.amount
+        if (typeof amount === 'number' && amount <= 0) errors.push('Amount must be positive')
+      }
+      if (type === 'contracts') {
+        const start = r.start_date
+        const end = r.end_date
+        if (typeof start === 'string' && typeof end === 'string' && start > end) {
+          errors.push('End date is before start date')
+        }
+      }
+      const clean: Record<string, string | number | null> = {}
+      for (const el of schema) clean[el.key] = (r[el.key] ?? null) as string | number | null
+      return { index: i + 1, data: clean, errors }
+    })
+    return out
+  }
+
+  const continueFromMap = () => {
+    const built = buildCanonical()
+    setCanonical(built)
+    saveTemplate(type, signatureOf(columns), mapping)
+    setStep(4)
+  }
+
   const confirm = async () => {
-    if (!result) return
+    const validRows = canonical.filter((r) => r.errors.length === 0).map((r) => r.data)
+    if (validRows.length === 0) return
     setConfirming(true)
     try {
       const d = await apiPost<{ imported: number; skipped: number; type: ImportType }>('/api/import/confirm', {
-        type: result.type,
-        rows: result.preview.filter((r) => r.valid).map((r) => r.data),
+        type,
+        rows: validRows,
       })
       setImportResult({ imported: d.imported, skipped: d.skipped })
       toast.success('Import committed', `${d.imported} rows imported`)
-      setStep(3)
+      setStep(5)
     } catch (e) {
       toast.error('Confirm failed', (e as Error).message)
     } finally {
@@ -89,36 +219,46 @@ export default function ImportPage() {
     }
   }
 
-  const previewCols = (): string[] => {
-    if (!result?.preview.length) return []
-    const keys = new Set<string>()
-    for (const row of result.preview.slice(0, 20)) for (const k of Object.keys(row.data)) keys.add(k)
-    return Array.from(keys)
+  const reset = () => {
+    setStep(1)
+    setWb(null)
+    setFileName('')
+    setColumns([])
+    setRows([])
+    setMapping({})
+    setCanonical([])
+    setImportResult(null)
+    setTemplateNote(null)
+    setShowInvalidOnly(false)
   }
+
+  const validCount = canonical.filter((r) => r.errors.length === 0).length
+  const shown = showInvalidOnly ? canonical.filter((r) => r.errors.length > 0) : canonical
+  const hiddenCols = columns.filter((c) => c.hidden)
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Data Import"
-        description="Upload CSV, Excel or PDF files and commit them to the database after an admin review."
+        description="Upload your spreadsheet, map its columns to EOMS fields, review and commit."
         actions={
-          <div className="flex items-center gap-2">
-            {[1, 2, 3].map((s) => (
-              <span
-                key={s}
-                className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
-                style={{
-                  background: step >= s ? 'var(--gradient-primary)' : 'var(--surface)',
-                  color: step >= s ? '#fff' : 'var(--text-muted)',
-                  border: step >= s ? 'none' : '1px solid var(--border)',
-                }}
-              >
-                {s}
+          <div className="flex items-center gap-1.5">
+            {STEPS.map((s, i) => (
+              <span key={s.id} className="flex items-center gap-1.5">
+                {i > 0 && <span className="h-px w-4 bg-[var(--border)]" />}
+                <span
+                  className="flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-bold"
+                  style={{
+                    background: step >= s.id ? 'var(--gradient-primary)' : 'var(--surface)',
+                    color: step >= s.id ? '#fff' : 'var(--text-muted)',
+                    border: step >= s.id ? 'none' : '1px solid var(--border)',
+                  }}
+                >
+                  {s.id}
+                  <span className="hidden lg:inline">{s.label}</span>
+                </span>
               </span>
             ))}
-            <span className="text-xs font-semibold text-[var(--text-dim)]">
-              {step === 1 ? 'Upload' : step === 2 ? 'Review' : 'Confirm'}
-            </span>
           </div>
         }
       />
@@ -163,12 +303,14 @@ export default function ImportPage() {
                 dragOver ? 'border-[var(--accent)] bg-[var(--surface-hover)]' : 'border-[var(--border)]'
               }`}
             >
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--surface)] border border-[var(--border)]">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
                 <Upload size={26} className="text-[var(--accent)]" />
               </div>
-              <div className="text-sm font-semibold">Drag &amp; drop your file here</div>
+              <div className="text-sm font-semibold">
+                {parsing ? 'Reading workbook…' : 'Drag & drop your file here'}
+              </div>
               <div className="text-xs text-[var(--text-muted)]">
-                or click to browse · CSV, XLSX, XLS, PDF · up to 20 MB
+                or click to browse · CSV, XLSX, XLS · any column layout, we map it
               </div>
               <Button variant="ghost" size="sm">
                 <FileSpreadsheet size={15} /> Choose file
@@ -185,64 +327,157 @@ export default function ImportPage() {
         </div>
       )}
 
-      {step === 2 && result && (
+      {step === 2 && wb && (
+        <GlassCard className="p-5">
+          <div className="section-title">
+            <Table2 size={15} className="mr-1.5 inline text-[var(--accent)]" />
+            Select worksheet · {fileName}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {wb.sheets.map((s, i) => (
+              <button
+                key={s.name}
+                disabled={s.matrix.length === 0}
+                onClick={() => initMapping(wb, i)}
+                className="rounded-xl border border-[var(--border)] p-4 text-left transition hover:border-[var(--accent)] hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <div className="text-sm font-bold">{s.name}</div>
+                <div className="mt-1 text-xs text-[var(--text-muted)]">
+                  {s.matrix.length} rows{s.hiddenCols.length > 0 ? ` · ${s.hiddenCols.length} hidden cols` : ''}
+                </div>
+              </button>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      {step === 3 && (
+        <GlassCard className="p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="section-title">
+              <Wand2 size={15} className="mr-1.5 inline text-[var(--accent)]" />
+              Map columns · {fileName}
+            </div>
+            <div className="flex items-center gap-2.5 text-xs text-[var(--text-muted)]">
+              <span>{rows.length} data rows</span>
+              <span>·</span>
+              <label className="flex items-center gap-1.5">
+                Header row
+                <select
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-xs"
+                  value={headerRowIdx}
+                  onChange={(e) => changeHeaderRow(Number(e.target.value))}
+                >
+                  {Array.from({ length: Math.min(10, (wb?.sheets[sheetIdx].matrix.length ?? 1)) }, (_, i) => (
+                    <option key={i} value={i}>
+                      Row {i + 1}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {templateNote && (
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-[rgba(124,58,237,0.3)] bg-[rgba(124,58,237,0.08)] px-4 py-2.5 text-xs font-semibold text-[var(--text)]">
+              <History size={14} className="text-[var(--accent)]" /> {templateNote} Adjust below if needed — continuing will
+              update the template.
+            </div>
+          )}
+
+          {hiddenCols.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-xs text-[var(--text-muted)]">
+              <EyeOff size={13} /> Hidden columns detected:{' '}
+              {hiddenCols.map((c) => (
+                <span key={c.key} className="rounded-md bg-[var(--bg)] px-1.5 py-0.5 font-semibold">
+                  {c.header} ({c.letter})
+                </span>
+              ))}
+            </div>
+          )}
+
+          <MappingTable
+            schema={schema}
+            columns={columns}
+            mapping={mapping}
+            detectedRow={headerRowIdx}
+            onChange={(elKey, colKey) =>
+              setMapping((prev) => ({ ...prev, [elKey]: { columnKey: colKey, confidence: 'manual' } }))
+            }
+          />
+
+          {requiredMissing.length > 0 && (
+            <div className="mt-4 flex items-center gap-2 rounded-xl border border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] px-4 py-2.5 text-xs font-semibold text-[var(--err)]">
+              <AlertTriangle size={14} /> Map these required fields to continue:{' '}
+              {requiredMissing.map((el) => el.label).join(', ')}
+            </div>
+          )}
+
+          <div className="mt-5 flex gap-2.5">
+            <Button variant="ghost" onClick={() => setStep(wb && wb.sheets.length > 1 ? 2 : 1)}>
+              <ArrowLeft size={15} /> Back
+            </Button>
+            <Button variant="primary" onClick={continueFromMap} disabled={requiredMissing.length > 0}>
+              Continue <ArrowRight size={15} />
+            </Button>
+          </div>
+        </GlassCard>
+      )}
+
+      {step === 4 && (
         <GlassCard className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
             <div className="flex items-center gap-3">
               <FileText size={20} className="text-[var(--accent)]" />
               <div>
-                <div className="text-sm font-bold">{result.fileName}</div>
-                <div className="text-xs text-[var(--text-muted)]">{result.totalRows} rows · {result.validRows} valid</div>
+                <div className="text-sm font-bold">{fileName}</div>
+                <div className="text-xs text-[var(--text-muted)]">
+                  {canonical.length} rows · {validCount} valid · {canonical.length - validCount} with issues
+                </div>
               </div>
             </div>
             <div className="flex gap-2.5">
-              <Button variant="ghost" size="sm" onClick={() => setStep(1)}>
-                <ArrowLeft size={15} /> Back
+              <Button variant="ghost" size="sm" onClick={() => setStep(3)}>
+                <ArrowLeft size={15} /> Mapping
               </Button>
-              <Button variant="primary" size="sm" onClick={() => setStep(3)}>
-                Continue <ArrowRight size={15} />
+              <Button
+                variant={showInvalidOnly ? 'primary' : 'ghost'}
+                size="sm"
+                onClick={() => setShowInvalidOnly((v) => !v)}
+              >
+                <AlertTriangle size={15} /> Issues only
               </Button>
             </div>
           </div>
 
-          {result.issues.length > 0 && (
-            <div className="mx-5 mt-4 rounded-xl border border-[rgba(251,191,36,0.3)] bg-[rgba(251,191,36,0.08)] p-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-[var(--warn)]">
-                <AlertTriangle size={16} /> {result.issues.length} rows need attention
-              </div>
-              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
-                {result.issues.slice(0, 50).map((i) => (
-                  <div key={i.row}>
-                    Row {i.row}: {i.message}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" style={{ maxHeight: '26rem', overflowY: 'auto' }}>
             <table className="data-table">
               <thead>
                 <tr>
                   <th>Row</th>
-                  {previewCols().map((c) => (
-                    <th key={c}>{c}</th>
+                  {schema.map((el) => (
+                    <th key={el.key}>{el.label}</th>
                   ))}
                   <th>Validation</th>
                 </tr>
               </thead>
               <tbody>
-                {result.preview.slice(0, 30).map((row) => (
-                  <tr key={row.index} className={!row.valid ? 'bg-[rgba(239,68,68,0.04)]' : ''}>
+                {shown.map((row) => (
+                  <tr key={row.index} className={row.errors.length > 0 ? 'bg-[rgba(239,68,68,0.04)]' : ''}>
                     <td className="text-xs text-[var(--text-muted)]">{row.index}</td>
-                    {previewCols().map((c) => (
-                      <td key={c} className="text-xs">{String(row.data[c] ?? '')}</td>
+                    {schema.map((el) => (
+                      <td key={el.key} className="text-xs">
+                        {row.data[el.key] === null || row.data[el.key] === '' ? '—' : String(row.data[el.key])}
+                      </td>
                     ))}
                     <td>
-                      {row.valid ? (
+                      {row.errors.length === 0 ? (
                         <span className="badge badge-ok"><CheckCircle2 size={12} /> Valid</span>
                       ) : (
-                        <span className="badge badge-err cell-wrap"><AlertTriangle size={12} /> {row.errors[0]}</span>
+                        <span className="badge badge-err cell-wrap" title={row.errors.join('; ')}>
+                          <AlertTriangle size={12} /> {row.errors[0]}
+                          {row.errors.length > 1 && ` +${row.errors.length - 1}`}
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -250,49 +485,28 @@ export default function ImportPage() {
               </tbody>
             </table>
           </div>
-        </GlassCard>
-      )}
 
-      {step === 3 && result && !importResult && (
-        <GlassCard className="p-6">
-          <div className="section-title">Confirm import</div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-4">
+            <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
               {admin ? (
-                <CheckCircle2 size={18} className="text-[var(--accent-3)]" />
+                <CheckCircle2 size={15} className="text-[var(--accent-3)]" />
               ) : (
-                <AlertTriangle size={18} className="text-[var(--warn)]" />
+                <AlertTriangle size={15} className="text-[var(--warn)]" />
               )}
-              <span>
-                <b>{result.validRows}</b> of <b>{result.totalRows}</b> rows are valid and will be written to the{' '}
-                <b>{result.type}</b> table.
-              </span>
+              {admin
+                ? `${validCount} valid rows will be committed to the ${type} table.`
+                : 'Admin rights are required to confirm this import.'}
             </div>
-            {result.totalRows - result.validRows > 0 && (
-              <div className="mt-1.5 text-xs text-[var(--text-dim)]">
-                {result.totalRows - result.validRows} invalid rows will be skipped.
-              </div>
-            )}
-            {!admin && (
-              <div className="mt-2 text-xs font-semibold text-[var(--warn)]">
-                Admin rights are required to confirm this import.
-              </div>
-            )}
-          </div>
-          <div className="mt-5 flex gap-2.5">
-            <Button variant="ghost" onClick={() => setStep(1)}>
-              <ArrowLeft size={15} /> Start over
-            </Button>
             {admin && (
-              <Button variant="success" onClick={confirm} disabled={confirming || result.validRows === 0}>
-                <CheckCircle2 size={15} /> {confirming ? 'Committing…' : 'Confirm & commit'}
+              <Button variant="success" onClick={confirm} disabled={confirming || validCount === 0}>
+                <CheckCircle2 size={15} /> {confirming ? 'Committing…' : `Confirm & commit ${validCount} rows`}
               </Button>
             )}
           </div>
         </GlassCard>
       )}
 
-      {importResult && (
+      {step === 5 && importResult && (
         <GlassCard className="p-6 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[rgba(16,185,129,0.12)]">
             <CheckCircle2 size={30} className="text-[var(--accent-3)]" />
@@ -301,8 +515,11 @@ export default function ImportPage() {
           <div className="mt-1 text-sm text-[var(--text-dim)]">
             <b>{importResult.imported}</b> rows imported · <b>{importResult.skipped}</b> skipped
           </div>
+          <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-[var(--text-muted)]">
+            <Copy size={11} /> Mapping saved as template for this layout.
+          </div>
           <div className="mt-5 flex justify-center gap-2.5">
-            <Button variant="primary" onClick={() => { setStep(1); setResult(null); setImportResult(null) }}>
+            <Button variant="primary" onClick={reset}>
               Import another file
             </Button>
           </div>

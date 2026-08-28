@@ -389,71 +389,60 @@ function pendingFollowups(): { pending: unknown[]; total: number } {
   return { pending: list, total: list.length }
 }
 
-function importPreview(type: string): { type: string; fileName: string; preview: unknown[]; issues: unknown[]; totalRows: number; validRows: number } {
-  if (type === 'contracts') {
-    const rows = [
-      { index: 1, valid: true, errors: [], data: { contract_no: 'BH-LD-27', vendor_id: V_ABDUL, service: 'Surveying', start_date: '2027-01-01', end_date: '2027-12-31', value: 5500000 } },
-      { index: 2, valid: true, errors: [], data: { contract_no: 'TH-15-27', vendor_id: V_KARACHI, service: 'Tanker Handling', start_date: '2027-01-01', end_date: '2027-12-31', value: 9000000 } },
-      { index: 3, valid: false, errors: ['Contract number is required'], data: { contract_no: '', vendor_id: V_DELTA, service: 'Stock Measurement', start_date: '2027-01-01', end_date: '2027-12-31', value: 3600000 } },
-    ]
-    return { type, fileName: 'sample_contracts.xlsx', preview: rows, issues: [{ row: 3, message: 'Contract number is required' }], totalRows: 3, validRows: 2 }
-  }
-  if (type === 'vendors') {
-    const rows = [
-      { index: 1, valid: true, errors: [], data: { name: 'M/s Coastal Surveyors', email: 'coastal@example.com' } },
-      { index: 2, valid: true, errors: [], data: { name: 'M/s North Terminal Services', email: 'north@example.com' } },
-    ]
-    return { type, fileName: 'sample_vendors.csv', preview: rows, issues: [], totalRows: 2, validRows: 2 }
-  }
-  const rows = [
-    { index: 1, valid: true, errors: [], data: { invoice_no: 'INV-2026-0101', invoice_date: '2026-08-01', amount: 450000, contract_id: C_BH, t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey' } },
-    { index: 2, valid: true, errors: [], data: { invoice_no: 'INV-2026-0102', invoice_date: '2026-08-03', amount: 720000, contract_id: C_TH, t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading' } },
-    { index: 3, valid: false, errors: ['Invoice number is missing'], data: { invoice_no: '', invoice_date: '2026-08-04', amount: 300000, contract_id: C_SM } },
-    { index: 4, valid: true, errors: [], data: { invoice_no: 'INV-2026-0103', invoice_date: '2026-08-06', amount: 190000, contract_id: C_SM, t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping' } },
-  ]
-  return { type, fileName: 'sample_invoices.csv', preview: rows, issues: [{ row: 3, message: 'Invoice number is missing' }], totalRows: 4, validRows: 3 }
-}
-
+/**
+ * Rows arrive already mapped + normalized by the client wizard:
+ * canonical schema keys (see lib/importMapping.ts IMPORT_SCHEMAS).
+ */
 function confirmImport(type: string, rows: Record<string, unknown>[]): { imported: number; skipped: number; type: string } {
   let imported = 0
   if (type === 'vendors') {
     for (const r of rows) {
-      if (!r.name) continue
-      vendors.push({ id: uid(), name: String(r.name), email: (r.email as string) ?? null, created_at: nowIso(), updated_at: nowIso() })
+      const name = String(r.name ?? '').trim()
+      if (!name) continue
+      vendors.push({ id: uid(), name, email: (r.email as string) ?? null, created_at: nowIso(), updated_at: nowIso() })
       imported += 1
     }
   } else if (type === 'contracts') {
     for (const r of rows) {
-      if (!r.contract_no || !r.vendor_id) continue
+      const contractNo = String(r.contract_no ?? '').trim()
+      const vendorName = String(r.vendor ?? '').trim()
+      if (!contractNo || !vendorName) continue
+      let vendor = vendors.find((x) => x.name.toLowerCase() === vendorName.toLowerCase())
+      if (!vendor) {
+        vendor = { id: uid(), name: vendorName, email: null, created_at: nowIso(), updated_at: nowIso() }
+        vendors.push(vendor)
+      }
       contracts.push({
         id: uid(),
-        contract_no: String(r.contract_no),
-        vendor_id: String(r.vendor_id),
+        contract_no: contractNo,
+        vendor_id: vendor.id,
         service: (r.service as string) ?? null,
         start_date: (r.start_date as string) ?? null,
         end_date: (r.end_date as string) ?? null,
         value: Number(r.value ?? 0),
         status: 'Open',
-        vendors: (() => {
-          const v = vendors.find((x) => x.id === r.vendor_id)
-          return v ? [{ name: v.name, email: v.email }] : null
-        })(),
+        vendors: [{ name: vendor.name, email: vendor.email }],
       })
       imported += 1
     }
   } else {
     for (const r of rows) {
-      if (!r.invoice_no) continue
+      const invoiceNo = String(r.invoice_no ?? '').trim()
+      if (!invoiceNo) continue
+      const contractNo = String(r.contract_no ?? '').trim()
+      const contract = contractNo ? contracts.find((c) => c.contract_no === contractNo) : undefined
       const inv = makeInvoice({
-        serial_no: r.serial_no as string | null,
-        invoice_no: String(r.invoice_no),
+        serial_no: null,
+        invoice_no: invoiceNo,
         invoice_date: (r.invoice_date as string) ?? null,
-        contract_id: (r.contract_id as string) ?? null,
+        contract_id: contract?.id ?? null,
         t1: (r.t1 as string) ?? null,
         t2: (r.t2 as string) ?? null,
         t3: (r.t3 as string) ?? null,
         amount: Number(r.amount ?? 0),
       })
+      if (r.processing_date) inv.processing_date = String(r.processing_date)
+      if (r.tanker_name) inv.tanker_name = String(r.tanker_name)
       inv.contracts = embedContract(contractById(inv.contract_id))
       invoices.unshift(inv)
       imported += 1
@@ -785,7 +774,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   }
 
   if (m === 'POST' && path === '/api/import/parse') {
-    return importPreview(formType) as T
+    return { type: formType || 'invoices', fileName: 'upload.xlsx', preview: [], issues: [], totalRows: 0, validRows: 0 } as T
   }
   if (m === 'POST' && path === '/api/import/confirm') {
     const b = (body ?? {}) as { type?: string; rows?: Record<string, unknown>[] }
