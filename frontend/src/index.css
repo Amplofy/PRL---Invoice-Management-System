@@ -740,6 +740,40 @@ tr.grand-total-row td {
   left: 0;
 }
 
+/* ================= Report animations ================= */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes growY {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes growX {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.rise-in {
+  opacity: 0;
+  animation: fadeUp 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.report-bar {
+  transform-origin: bottom;
+  animation: growY 0.85s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.report-fill {
+  transform-origin: left;
+  animation: growX 0.9s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.report-card {
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.report-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-border));
+  box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 /* ================= Kanban ================= */
 .kanban-scroll { scrollbar-width: thin; }
 .kanban-card {
