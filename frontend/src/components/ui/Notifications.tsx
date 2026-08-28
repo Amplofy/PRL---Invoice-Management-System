@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bell, X, CheckCircle2, AlertTriangle, XCircle, Info, CheckCheck } from 'lucide-react'
+import { Bell, BellOff, X, CheckCircle2, AlertTriangle, XCircle, Info, CheckCheck, ScrollText } from 'lucide-react'
 import { apiGet } from '../../lib/api'
 import { subscribeAppEvents, type AppEvent } from '../../lib/notify'
 import { timeAgo } from '../../lib/format'
@@ -213,7 +213,9 @@ export default function Notifications() {
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  const unread = useMemo(() => items.filter((n) => !seen.has(n.id)).length, [items, seen])
+  const unreadItems = useMemo(() => items.filter((n) => !seen.has(n.id)), [items, seen])
+  const readItems = useMemo(() => items.filter((n) => seen.has(n.id)), [items, seen])
+  const unread = unreadItems.length
 
   const markRead = (n: Notification) => {
     setSeen((prev) => {
@@ -267,7 +269,7 @@ export default function Notifications() {
           onClick={() => setOpen(false)}
         />
         <aside
-          className={`glass-strong absolute inset-y-0 right-0 flex w-full max-w-sm flex-col !rounded-none border-l border-[var(--border)] transition-transform duration-300 ease-out ${
+          className={`glass-strong !absolute inset-y-0 right-0 flex w-full max-w-sm flex-col !rounded-none transition-transform duration-300 ease-out ${
             open ? 'translate-x-0' : 'translate-x-full'
           }`}
           role="dialog"
@@ -275,18 +277,27 @@ export default function Notifications() {
         >
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3.5">
             <div className="flex items-center gap-2">
-              <Bell size={16} className="text-[var(--accent)]" />
-              <span className="text-sm font-bold">Notifications</span>
-              {unread > 0 && <span className="badge badge-info !px-1.5 !py-0 text-[0.6rem]">{unread} new</span>}
+              <span className="relative flex h-8 w-8 items-center justify-center rounded-xl text-white" style={{ background: 'var(--gradient-primary)' }}>
+                <Bell size={14} />
+                {unread > 0 && <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-[0.55rem] font-bold text-white" style={{ background: 'var(--danger)' }}>{unread > 9 ? '9+' : unread}</span>}
+              </span>
+              <span>
+                <span className="block text-sm font-bold leading-none">Notifications</span>
+                <span className="mt-1 block text-[0.65rem] text-[var(--text-muted)]">
+                  {unread > 0 ? `${unread} unread update${unread > 1 ? 's' : ''}` : 'All caught up'}
+                </span>
+              </span>
             </div>
             <div className="flex items-center gap-1">
-              <button
-                className="btn btn-ghost !px-2 !py-1 text-[0.68rem]"
-                onClick={markAllRead}
-                title="Mark all as read"
-              >
-                <CheckCheck size={13} /> Mark all read
-              </button>
+              {unread > 0 && (
+                <button
+                  className="btn btn-ghost !px-2 !py-1 text-[0.68rem]"
+                  onClick={markAllRead}
+                  title="Mark all as read"
+                >
+                  <CheckCheck size={13} /> Mark all read
+                </button>
+              )}
               <button className="btn btn-ghost !px-2 !py-1.5" onClick={() => setOpen(false)} aria-label="Close">
                 <X size={16} />
               </button>
@@ -295,53 +306,91 @@ export default function Notifications() {
 
           <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
             {items.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-[var(--text-muted)]">
-                <Bell size={26} />
-                No notifications
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+                <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] text-[var(--text-muted)]">
+                  <BellOff size={22} />
+                </span>
+                <span className="text-sm font-bold">You're all caught up</span>
+                <span className="text-xs leading-relaxed text-[var(--text-muted)]">
+                  Approvals, contract limits and system activity will show up here as they happen.
+                </span>
               </div>
             ) : (
-              items.map((n) => {
-                const { grad, Icon } = TYPE_STYLES[n.type] ?? TYPE_STYLES.info
-                const isUnread = !seen.has(n.id)
-                return (
-                  <button
-                    key={n.id}
-                    className={`w-full rounded-xl border p-3 text-left transition hover:bg-[var(--surface-hover)] ${
-                      isUnread
-                        ? 'border-[var(--glass-border-strong)] bg-[var(--surface-hover)]'
-                        : 'border-[var(--border)] bg-transparent opacity-60'
-                    }`}
-                    onClick={() => markRead(n)}
-                  >
-                    <div className="flex items-start gap-2.5">
-                      <span
-                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${grad}`}
-                      >
-                        <Icon size={15} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="truncate text-xs font-bold">{n.title}</span>
-                          {isUnread && (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />
-                          )}
-                        </span>
-                        <span className="mt-0.5 block text-[0.7rem] leading-snug text-[var(--text-dim)]">
-                          {n.message}
-                        </span>
-                        <span className="mt-1 block text-[0.62rem] text-[var(--text-muted)]">
-                          {timeAgo(new Date(n.at).toISOString())}
-                          {n.to ? ' · click to open' : ''}
-                        </span>
-                      </span>
-                    </div>
-                  </button>
-                )
-              })
+              <>
+                {unreadItems.length > 0 && (
+                  <div className="px-1 pb-0.5 pt-1 text-[0.6rem] font-bold uppercase tracking-wider text-[var(--accent)]">
+                    New · {unreadItems.length}
+                  </div>
+                )}
+                {unreadItems.map((n) => (
+                  <NotifRow key={n.id} n={n} isUnread onOpen={markRead} />
+                ))}
+                {readItems.length > 0 && (
+                  <div className="px-1 pb-0.5 pt-2 text-[0.6rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                    Earlier
+                  </div>
+                )}
+                {readItems.map((n) => (
+                  <NotifRow key={n.id} n={n} isUnread={false} onOpen={markRead} />
+                ))}
+              </>
             )}
+          </div>
+
+          <div className="border-t border-[var(--border)] px-4 py-2.5">
+            <button
+              className="flex w-full items-center justify-center gap-1.5 text-[0.7rem] font-semibold text-[var(--text-muted)] transition hover:text-[var(--accent)]"
+              onClick={() => {
+                setOpen(false)
+                navigate('/audit-log')
+              }}
+            >
+              <ScrollText size={12} /> View full audit trail
+            </button>
           </div>
         </aside>
       </div>
     </>
+  )
+}
+
+function NotifRow({
+  n,
+  isUnread,
+  onOpen,
+}: {
+  n: Notification
+  isUnread: boolean
+  onOpen: (n: Notification) => void
+}) {
+  const { grad, Icon } = TYPE_STYLES[n.type] ?? TYPE_STYLES.info
+  return (
+    <button
+      className={`w-full rounded-xl border p-3 text-left transition hover:bg-[var(--surface-hover)] ${
+        isUnread
+          ? 'border-[var(--glass-border-strong)] bg-[var(--surface-hover)]'
+          : 'border-[var(--border)] bg-transparent opacity-60'
+      }`}
+      onClick={() => onOpen(n)}
+    >
+      <div className="flex items-start gap-2.5">
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${grad}`}
+        >
+          <Icon size={15} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center justify-between gap-2">
+            <span className="truncate text-xs font-bold">{n.title}</span>
+            {isUnread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />}
+          </span>
+          <span className="mt-0.5 block text-[0.7rem] leading-snug text-[var(--text-dim)]">{n.message}</span>
+          <span className="mt-1 block text-[0.62rem] text-[var(--text-muted)]">
+            {timeAgo(new Date(n.at).toISOString())}
+            {n.to ? ' · click to open' : ''}
+          </span>
+        </span>
+      </div>
+    </button>
   )
 }

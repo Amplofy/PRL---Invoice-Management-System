@@ -10,6 +10,8 @@ import {
   BadgeCheck,
   FolderOpen,
   Activity,
+  PieChart,
+  BarChart3,
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react'
@@ -127,6 +129,18 @@ function greeting(): string {
   return 'Good evening'
 }
 
+function ChartEmpty({ icon: Icon, title, hint }: { icon: typeof Activity; title: string; hint: string }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2.5 px-6 text-center">
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] text-[var(--text-muted)]">
+        <Icon size={20} />
+      </span>
+      <span className="text-sm font-bold">{title}</span>
+      <span className="max-w-[240px] text-xs leading-relaxed text-[var(--text-muted)]">{hint}</span>
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -216,6 +230,10 @@ export default function DashboardPage() {
 
   const k = data?.kpis
   if (!k) return <DashboardSkeleton />
+
+  const hasTrendData = trendData.totals.length > 0 && trendData.totals.some((v) => v > 0)
+  const statusTotal = data.statusBreakdown.approved + data.statusBreakdown.pending + data.statusBreakdown.rejected
+  const hasVolumeData = trendData.counts.slice(-6).some((v) => v > 0)
 
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
@@ -308,40 +326,48 @@ export default function DashboardPage() {
               <span className="badge badge-neutral">click a point</span>
             </div>
             <div className="h-[300px]">
-              <Line
-                data={{
-                  labels: trendData.labels,
-                  datasets: [
-                    {
-                      label: 'Value (Rs)',
-                      data: trendData.totals,
-                      borderColor: c.accent,
-                      backgroundColor: (context: { chart: ChartJS }) => {
-                        const { chartArea, ctx } = context.chart
-                        if (!chartArea) return 'transparent'
-                        return lineGradient(chartArea, ctx)
+              {hasTrendData ? (
+                <Line
+                  data={{
+                    labels: trendData.labels,
+                    datasets: [
+                      {
+                        label: 'Value (Rs)',
+                        data: trendData.totals,
+                        borderColor: c.accent,
+                        backgroundColor: (context: { chart: ChartJS }) => {
+                          const { chartArea, ctx } = context.chart
+                          if (!chartArea) return 'transparent'
+                          return lineGradient(chartArea, ctx)
+                        },
+                        fill: true,
+                        tension: 0.42,
+                        pointBackgroundColor: c.accent2,
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 1.5,
+                        pointRadius: 3.5,
+                        pointHoverRadius: 6.5,
                       },
-                      fill: true,
-                      tension: 0.42,
-                      pointBackgroundColor: c.accent2,
-                      pointBorderColor: '#fff',
-                      pointBorderWidth: 1.5,
-                      pointRadius: 3.5,
-                      pointHoverRadius: 6.5,
+                    ],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    onClick: onTrendClick,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                      x: { grid: { display: false }, ticks: { color: c.ticks } },
+                      y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
                     },
-                  ],
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  onClick: onTrendClick,
-                  plugins: { legend: { display: false } },
-                  scales: {
-                    x: { grid: { display: false }, ticks: { color: c.ticks } },
-                    y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
-                  },
-                }}
-              />
+                  }}
+                />
+              ) : (
+                <ChartEmpty
+                  icon={Activity}
+                  title="No invoice activity yet"
+                  hint="Once invoices are recorded, their monthly value trend will appear here."
+                />
+              )}
             </div>
           </GlassCard>
         </Reveal>
@@ -353,27 +379,35 @@ export default function DashboardPage() {
               <span className="badge badge-neutral">click a slice</span>
             </div>
             <div className="h-[300px]">
-              <Doughnut
-                data={{
-                  labels: ['Approved', 'Pending', 'Rejected'],
-                  datasets: [
-                    {
-                      data: [data.statusBreakdown.approved, data.statusBreakdown.pending, data.statusBreakdown.rejected],
-                      backgroundColor: [c.accent3, c.warn, c.err],
-                      borderWidth: 0,
-                      hoverOffset: 10,
-                      borderRadius: 4,
-                    },
-                  ],
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  cutout: '72%',
-                  onClick: onStatusClick,
-                  plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 14 } } },
-                }}
-              />
+              {statusTotal > 0 ? (
+                <Doughnut
+                  data={{
+                    labels: ['Approved', 'Pending', 'Rejected'],
+                    datasets: [
+                      {
+                        data: [data.statusBreakdown.approved, data.statusBreakdown.pending, data.statusBreakdown.rejected],
+                        backgroundColor: [c.accent3, c.warn, c.err],
+                        borderWidth: 0,
+                        hoverOffset: 10,
+                        borderRadius: 4,
+                      },
+                    ],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '72%',
+                    onClick: onStatusClick,
+                    plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 14 } } },
+                  }}
+                />
+              ) : (
+                <ChartEmpty
+                  icon={PieChart}
+                  title="No statuses to break down"
+                  hint="Invoice status distribution shows up here once invoices exist."
+                />
+              )}
             </div>
           </GlassCard>
         </Reveal>
@@ -405,7 +439,11 @@ export default function DashboardPage() {
                 </div>
               ))}
               {(data?.utilization.length ?? 0) === 0 && (
-                <EmptyState title="No contracts yet" description="Import or create contracts to see utilization." />
+                <EmptyState
+                  icon={<FolderOpen size={28} />}
+                  title="No contracts yet"
+                  description="Import or create contracts to see utilization."
+                />
               )}
             </div>
           </GlassCard>
@@ -418,37 +456,45 @@ export default function DashboardPage() {
               <Activity size={15} className="text-[var(--text-muted)]" />
             </div>
             <div className="h-[300px]">
-              <Bar
-                data={{
-                  labels: trendData.labels.slice(-6),
-                  datasets: [
-                    {
-                      label: 'Invoices',
-                      data: trendData.counts.slice(-6),
-                      backgroundColor: (context: { chart: ChartJS }) => {
-                        const { chartArea, ctx } = context.chart
-                        if (!chartArea) return withAlpha(c.accent2, 0.7)
-                        const g = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top)
-                        g.addColorStop(0, withAlpha(c.accent2, 0.25))
-                        g.addColorStop(1, withAlpha(c.accent2, 0.85))
-                        return g
+              {hasVolumeData ? (
+                <Bar
+                  data={{
+                    labels: trendData.labels.slice(-6),
+                    datasets: [
+                      {
+                        label: 'Invoices',
+                        data: trendData.counts.slice(-6),
+                        backgroundColor: (context: { chart: ChartJS }) => {
+                          const { chartArea, ctx } = context.chart
+                          if (!chartArea) return withAlpha(c.accent2, 0.7)
+                          const g = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top)
+                          g.addColorStop(0, withAlpha(c.accent2, 0.25))
+                          g.addColorStop(1, withAlpha(c.accent2, 0.85))
+                          return g
+                        },
+                        borderRadius: 8,
+                        borderSkipped: false,
+                        maxBarThickness: 34,
                       },
-                      borderRadius: 8,
-                      borderSkipped: false,
-                      maxBarThickness: 34,
+                    ],
+                  }}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                      x: { grid: { display: false }, ticks: { color: c.ticks } },
+                      y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
                     },
-                  ],
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: { legend: { display: false } },
-                  scales: {
-                    x: { grid: { display: false }, ticks: { color: c.ticks } },
-                    y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
-                  },
-                }}
-              />
+                  }}
+                />
+              ) : (
+                <ChartEmpty
+                  icon={BarChart3}
+                  title="No monthly volume yet"
+                  hint="The number of invoices raised each month will chart here."
+                />
+              )}
             </div>
           </GlassCard>
         </Reveal>

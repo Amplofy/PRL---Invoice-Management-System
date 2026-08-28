@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import {
   Search,
-  Palette,
   LogOut,
   User as UserIcon,
   Command,
@@ -25,6 +24,7 @@ import {
   Users,
 } from 'lucide-react'
 import ThemePanel from './ThemePanel'
+import { THEME_META, useTheme } from '../theme'
 import CommandPalette, { type CommandItem } from './ui/CommandPalette'
 import Notifications from './ui/Notifications'
 import { useAuth } from '../lib/auth'
@@ -87,6 +87,7 @@ function LiveClock() {
 
 export default function Header() {
   const { user, signOut, demo } = useAuth()
+  const { theme } = useTheme()
   const location = useLocation()
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -111,6 +112,8 @@ export default function Header() {
   const title = location.pathname.startsWith('/invoices/')
     ? 'Invoice Workspace'
     : (TITLES[location.pathname] ?? 'PRL-EOMS')
+
+  const activeSwatch = THEME_META.find((t) => t.id === theme)?.swatch ?? 'var(--gradient-primary)'
 
   return (
     <>
@@ -154,8 +157,22 @@ export default function Header() {
           <button onClick={() => setPaletteOpen(true)} className="btn btn-ghost !px-3 md:hidden" aria-label="Search">
             <Search size={16} />
           </button>
-          <button onClick={() => setThemeOpen((v) => !v)} className="btn btn-ghost !px-3" title="Theme">
-            <Palette size={16} />
+          <button
+            onClick={() => setThemeOpen((v) => !v)}
+            className="btn btn-ghost !px-2.5"
+            title="Appearance"
+            aria-label="Appearance settings"
+          >
+            <span className="relative flex h-6 w-6 items-center justify-center">
+              <span
+                className="h-5 w-5 rounded-full border border-white/25 shadow-sm"
+                style={{ background: activeSwatch }}
+              />
+              <span
+                className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--surface)]"
+                style={{ background: 'var(--accent)' }}
+              />
+            </span>
           </button>
           <Notifications />
           <div className="relative">
@@ -196,7 +213,7 @@ export default function Header() {
           onClick={() => setMobileOpen(false)}
         />
         <div
-          className={`glass-strong absolute inset-y-0 left-0 flex w-72 flex-col !rounded-none transition-transform duration-300 ease-out ${
+          className={`glass-strong !absolute inset-y-0 left-0 flex w-72 flex-col !rounded-none transition-transform duration-300 ease-out ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
@@ -243,7 +260,7 @@ export default function Header() {
           }}
         >
           <div className="absolute right-4 top-16 md:right-6" onMouseDown={(e) => e.stopPropagation()}>
-            <ThemePanel />
+            <ThemePanel onClose={() => setThemeOpen(false)} />
           </div>
         </div>
       )}
