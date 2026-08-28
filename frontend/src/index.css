@@ -971,7 +971,7 @@ table.data-table {
 /* ================= PRL flame loader ================= */
 .prl-flame {
   filter: drop-shadow(0 10px 24px rgba(208, 52, 44, 0.35));
-  transform-origin: 50% 92%;
+  animation: flame3d 3.2s ease-in-out infinite alternate;
 }
 .prl-flame .prl-flame-shell {
   transform-origin: 32px 72px;
@@ -981,9 +981,21 @@ table.data-table {
   transform-origin: 32px 64px;
   animation: flameFlicker 0.95s ease-in-out infinite alternate;
 }
+.prl-flame .prl-flame-tip {
+  transform-origin: 32px 29px;
+  animation: flameTipWave 0.85s ease-in-out infinite alternate;
+}
 .prl-flame .prl-flame-core {
   transform-origin: 32px 60px;
   animation: flameCore 0.55s ease-in-out infinite alternate;
+}
+.prl-flame .prl-flame-sheen {
+  transform-origin: 32px 72px;
+  animation: flameSheen 3s ease-in-out infinite alternate;
+}
+@keyframes flame3d {
+  0% { transform: perspective(520px) rotateY(-14deg) rotateZ(-1.6deg); }
+  100% { transform: perspective(520px) rotateY(14deg) rotateZ(1.6deg); }
 }
 @keyframes flameSway {
   0% { transform: rotate(-2.6deg) scaleY(0.985); }
@@ -995,14 +1007,26 @@ table.data-table {
   70% { transform: scaleY(0.97) scaleX(1.01) skewX(1.6deg); }
   100% { transform: scaleY(1.04) scaleX(0.99) skewX(-1.6deg); opacity: 0.96; }
 }
+@keyframes flameTipWave {
+  0% { transform: rotate(-6deg) skewX(-7deg) scaleX(0.92); }
+  50% { transform: rotate(1deg) skewX(1deg) scaleX(1); }
+  100% { transform: rotate(6deg) skewX(7deg) scaleX(0.92); }
+}
 @keyframes flameCore {
   0% { transform: scale(0.88); opacity: 0.72; }
   100% { transform: scale(1.12); opacity: 1; }
 }
+@keyframes flameSheen {
+  0% { opacity: 0.55; transform: translateX(-1.5px); }
+  100% { opacity: 1; transform: translateX(1.5px); }
+}
 @media (prefers-reduced-motion: reduce) {
+  .prl-flame,
   .prl-flame .prl-flame-shell,
   .prl-flame .prl-flame-mid,
-  .prl-flame .prl-flame-core { animation: none; }
+  .prl-flame .prl-flame-tip,
+  .prl-flame .prl-flame-core,
+  .prl-flame .prl-flame-sheen { animation: none; }
 }
 
 /* ================= Boot screen ================= */

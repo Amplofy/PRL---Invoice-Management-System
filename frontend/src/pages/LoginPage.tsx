@@ -208,39 +208,33 @@ export default function LoginPage() {
       <div className="bg-orb orb-2" />
       <div className="bg-orb orb-3" />
 
-      {/* Brand panel — fixed dark surface, independent of mode */}
+      {/* Brand panel — fixed dark surface with refinery imagery, independent of mode */}
       <aside className="relative hidden w-[44%] flex-col overflow-hidden lg:flex">
+        <img
+          src="/brand/prl-refinery.jpg"
+          alt="Pakistan Refinery Ltd facility"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
         <div
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(155deg, #0b1023 0%, #111636 42%, #1a1440 78%, #0d0f26 100%)',
+              'linear-gradient(160deg, rgba(9,13,32,0.88) 0%, rgba(13,17,44,0.82) 45%, rgba(10,10,30,0.93) 100%)',
           }}
         />
         <div
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              'radial-gradient(at 82% 10%, rgba(99,102,241,0.28) 0, transparent 46%), radial-gradient(at 8% 92%, rgba(52,211,153,0.14) 0, transparent 42%), radial-gradient(at 92% 88%, rgba(244,114,182,0.12) 0, transparent 40%)',
-          }}
-        />
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.05]"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)',
-            backgroundSize: '44px 44px',
+              'radial-gradient(at 82% 10%, rgba(99,102,241,0.22) 0, transparent 46%), radial-gradient(at 8% 92%, rgba(52,211,153,0.12) 0, transparent 42%), radial-gradient(at 92% 88%, rgba(244,114,182,0.1) 0, transparent 40%)',
           }}
         />
 
         <div className="relative z-10 flex flex-1 flex-col justify-between p-10 xl:p-14">
-          <div className="flex items-center gap-3.5">
-            <BrandLogo size={54} variant="mono" />
-            <div>
-              <div className="text-lg font-extrabold leading-none tracking-tight text-white">PRL-EOMS</div>
-              <div className="mt-1.5 text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-white/50">
-                Pakistan Refinery Ltd
-              </div>
+          <div>
+            <div className="text-xl font-extrabold leading-none tracking-tight text-white">PRL-EOMS</div>
+            <div className="mt-2 text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-white/50">
+              Pakistan Refinery Ltd
             </div>
           </div>
 
