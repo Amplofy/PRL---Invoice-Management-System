@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge } from 'lucide-react'
+import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, CalendarRange, CalendarDays, Building2, FileText, Layers, Activity, X } from 'lucide-react'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -23,7 +23,7 @@ import { fiscalOf, fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, type FiscalQ
 import { downloadCSV } from '../lib/export'
 import { useCountUp } from '../lib/useCountUp'
 import PillSelect from '../components/ui/PillSelect'
-import MultiSlicer from '../components/ui/MultiSlicer'
+import FilterCommandBar, { type FilterSuggestion, type FilterDimMeta } from '../components/ui/FilterCommandBar'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler)
 
@@ -56,6 +56,22 @@ const METRIC_LABELS: Record<Metric, string> = {
   approved: 'Approved',
 }
 
+interface FilterChip {
+  dim: string
+  value: string
+}
+
+const DIM_META: Record<string, FilterDimMeta> = {
+  fy: { label: 'Fiscal Year', icon: CalendarRange, color: '#a78bfa' },
+  quarter: { label: 'Quarter', icon: CalendarDays, color: '#60a5fa' },
+  vendor: { label: 'Vendor', icon: Building2, color: '#34d399' },
+  contract: { label: 'Contract', icon: FileText, color: '#fbbf24' },
+  cost: { label: 'Cost Element', icon: Layers, color: '#22d3ee' },
+  status: { label: 'Status', icon: Activity, color: '#f87171' },
+}
+
+const STATUS_OPTIONS = ['Pending', 'Submitted', 'Approved', 'Rejected']
+
 type Tone = 'primary' | 'ok' | 'warn' | 'err' | 'purple'
 
 const TONE_ACCENT: Record<Tone, string> = {
@@ -75,12 +91,7 @@ export default function ReportsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const [loading, setLoading] = useState(true)
-  const [fy, setFy] = useState(ALL)
-  const [quarter, setQuarter] = useState(ALL)
-  const [vendors, setVendors] = useState<Set<string>>(new Set())
-  const [contractIds, setContractIds] = useState<Set<string>>(new Set())
-  const [costElements, setCostElements] = useState<Set<string>>(new Set())
-  const [statuses, setStatuses] = useState<Set<string>>(new Set())
+  const [chips, setChips] = useState<FilterChip[]>([])
   const [metric, setMetric] = useState<Metric>('spend')
   const [qOrder, setQOrder] = useState<QOrder>('chrono')
   const toast = useToast()
@@ -118,6 +129,36 @@ export default function ReportsPage() {
     () => Array.from(new Set(invoices.map((i) => i.cost_element ?? '').filter(Boolean))).sort(),
     [invoices],
   )
+
+  const fy = chips.find((ch) => ch.dim === 'fy')?.value ?? ALL
+  const quarter = chips.find((ch) => ch.dim === 'quarter')?.value ?? ALL
+  const vendors = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'vendor').map((ch) => ch.value)), [chips])
+  const contractIds = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'contract').map((ch) => ch.value)), [chips])
+  const costElements = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'cost').map((ch) => ch.value)), [chips])
+  const statuses = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'status').map((ch) => ch.value)), [chips])
+
+  const toggleChip = (s: FilterSuggestion) => {
+    setChips((prev) => {
+      const idx = prev.findIndex((ch) => ch.dim === s.dim && ch.value === s.value)
+      if (idx >= 0) return prev.filter((_, i) => i !== idx)
+      if (s.dim === 'fy' || s.dim === 'quarter') return [...prev.filter((ch) => ch.dim !== s.dim), { dim: s.dim, value: s.value }]
+      return [...prev, { dim: s.dim, value: s.value }]
+    })
+  }
+
+  const suggestions = useMemo<FilterSuggestion[]>(
+    () => [
+      ...fyOptions.map((f) => ({ dim: 'fy', value: f, label: f })),
+      ...QUARTERS.map((q) => ({ dim: 'quarter', value: q, label: q })),
+      ...vendorOptions.map((v) => ({ dim: 'vendor', value: v, label: v })),
+      ...contracts.map((cn) => ({ dim: 'contract', value: cn.id, label: cn.contract_no || cn.id })),
+      ...costElementOptions.map((ce) => ({ dim: 'cost', value: ce, label: ce })),
+      ...STATUS_OPTIONS.map((s) => ({ dim: 'status', value: s, label: s })),
+    ],
+    [fyOptions, vendorOptions, costElementOptions, contracts],
+  )
+
+  const activeKeys = useMemo(() => new Set(chips.map((ch) => `${ch.dim}:${ch.value}`)), [chips])
 
   const scoped = useMemo(
     () =>
@@ -337,75 +378,63 @@ export default function ReportsPage() {
         }
       />
 
-      {/* Control deck: pill slicers + multi-select dimensions + analysis lens */}
+      {/* Filter command bar + active chips + analysis lens */}
       <div className="glass space-y-3 p-4 rise-in" style={{ animationDelay: '40ms' }}>
-        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-          <PillSelect
-            label="Fiscal Year"
-            value={fy}
-            onChange={setFy}
-            options={[{ value: ALL, label: 'All' }, ...fyOptions.map((f) => ({ value: f, label: f }))]}
-          />
-          <PillSelect
-            label="Quarter"
-            value={quarter}
-            onChange={setQuarter}
-            options={[{ value: ALL, label: 'All' }, ...QUARTERS.map((q) => ({ value: q, label: q }))]}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
-          <MultiSlicer
-            label="Vendor"
-            options={vendorOptions.map((v) => ({ value: v, label: v }))}
-            selected={vendors}
-            onChange={setVendors}
-          />
-          <MultiSlicer
-            label="Contract"
-            options={contracts.map((cn) => ({ value: cn.id, label: cn.contract_no }))}
-            selected={contractIds}
-            onChange={setContractIds}
-          />
-          <MultiSlicer
-            label="Cost Element"
-            options={costElementOptions.map((ce) => ({ value: ce, label: ce }))}
-            selected={costElements}
-            onChange={setCostElements}
-          />
-          <MultiSlicer
-            label="Status"
-            options={['Pending', 'Approved', 'Rejected', 'Submitted'].map((s) => ({ value: s, label: s }))}
-            selected={statuses}
-            onChange={setStatuses}
-          />
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-            <PillSelect
-              label="Lens"
-              value={metric}
-              onChange={(v) => setMetric(v as Metric)}
-              options={(Object.keys(METRIC_LABELS) as Metric[]).map((m) => ({ value: m, label: METRIC_LABELS[m] }))}
-            />
-            <PillSelect
-              label="Order"
-              value={qOrder}
-              onChange={(v) => setQOrder(v as QOrder)}
-              options={[
-                { value: 'chrono', label: 'Timeline' },
-                { value: 'top', label: 'Highest first' },
-              ]}
-            />
+        <FilterCommandBar suggestions={suggestions} dimMeta={DIM_META} activeKeys={activeKeys} onToggle={toggleChip} />
+        {chips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {chips.map((ch) => {
+              const meta = DIM_META[ch.dim]
+              if (!meta) return null
+              const Icon = meta.icon
+              return (
+                <span
+                  key={`${ch.dim}:${ch.value}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
+                  style={{ borderColor: `${meta.color}55`, background: `${meta.color}18` }}
+                >
+                  <Icon size={12} style={{ color: meta.color }} />
+                  {ch.dim === 'fy' || ch.dim === 'quarter' || ch.dim === 'status' ? null : (
+                    <span className="text-[var(--text-muted)]">{meta.label}</span>
+                  )}
+                  {ch.dim === 'contract'
+                    ? (contracts.find((cn) => cn.id === ch.value)?.contract_no ?? ch.value)
+                    : ch.value}
+                  <button
+                    className="ml-0.5 rounded-full p-0.5 hover:bg-white/10"
+                    onClick={() => setChips((prev) => prev.filter((c2) => !(c2.dim === ch.dim && c2.value === ch.value)))}
+                    aria-label={`Remove ${ch.value}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              )
+            })}
+            <button className="btn btn-ghost !px-2 !py-1 text-xs" onClick={() => setChips([])}>
+              Clear all
+            </button>
           </div>
+        )}
+        <div className="flex flex-wrap items-center justify-end gap-x-8 border-t border-[var(--border)] pt-3">
+          <PillSelect
+            label="Lens"
+            value={metric}
+            onChange={(v) => setMetric(v as Metric)}
+            options={(Object.keys(METRIC_LABELS) as Metric[]).map((m) => ({ value: m, label: METRIC_LABELS[m] }))}
+          />
+          <PillSelect
+            label="Order"
+            value={qOrder}
+            onChange={(v) => setQOrder(v as QOrder)}
+            options={[
+              { value: 'chrono', label: 'Timeline' },
+              { value: 'top', label: 'Highest first' },
+            ]}
+          />
           <button
             className="btn btn-ghost !px-3"
             onClick={() => {
-              setFy(ALL)
-              setQuarter(ALL)
-              setVendors(new Set())
-              setContractIds(new Set())
-              setCostElements(new Set())
-              setStatuses(new Set())
+              setChips([])
               setMetric('spend')
               setQOrder('chrono')
             }}

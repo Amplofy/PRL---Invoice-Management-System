@@ -52,35 +52,61 @@ export function timeAgo(value: string | Date | null | undefined): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-const units: Array<[number, string]> = [
-  [1_00_00_000, 'crore'],
-  [1_00_000, 'lakh'],
-  [1_000, 'thousand'],
-  [1, ''],
+const ONES = [
+  '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+  'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+  'Seventeen', 'Eighteen', 'Nineteen',
 ]
+const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
 
+function below100(n: number): string {
+  if (n < 20) return ONES[n]
+  const t = Math.floor(n / 10)
+  const o = n % 10
+  return o === 0 ? TENS[t] : `${TENS[t]}-${ONES[o]}`
+}
+
+function below1000(n: number): string {
+  if (n < 100) return below100(n)
+  const h = Math.floor(n / 100)
+  const rest = n % 100
+  return rest === 0 ? `${ONES[h]} Hundred` : `${ONES[h]} Hundred ${below100(rest)}`
+}
+
+/**
+ * South-Asian numbering (lakh / crore) as used in Pakistan.
+ * Recursion keeps the crore segment correct for values beyond 99 crore.
+ */
 export function numberToWords(value: number): string {
+  if (!Number.isFinite(value)) return ''
   if (value === 0) return 'Zero'
   const sign = value < 0 ? 'Minus ' : ''
   let num = Math.abs(Math.floor(value))
+  if (num === 0) return 'Zero'
   const parts: string[] = []
-  for (const [div, suffix] of units) {
-    if (num >= div) {
-      const whole = Math.floor(num / div)
-      const remainder = num % div
-      parts.push(`${whole}${suffix ? ` ${suffix}` : ''}`)
-      num = remainder
-      if (remainder > 0 && div === 1_000) parts.push(`${remainder}`)
-    }
-  }
-  return sign + parts.join(' and ').replace(/\s+/g, ' ').trim()
+  const crore = Math.floor(num / 1_00_00_000)
+  num %= 1_00_00_000
+  const lakh = Math.floor(num / 1_00_000)
+  num %= 1_00_000
+  const thousand = Math.floor(num / 1000)
+  const rest = num % 1000
+  if (crore > 0) parts.push(`${numberToWords(crore)} Crore`)
+  if (lakh > 0) parts.push(`${below100(lakh)} Lakh`)
+  if (thousand > 0) parts.push(`${below100(thousand)} Thousand`)
+  if (rest > 0) parts.push(below1000(rest))
+  return sign + parts.join(' ')
 }
 
 export function formatAmountWords(value: number | string | null | undefined): string {
   if (value === null || value === undefined || value === '') return ''
   const num = typeof value === 'string' ? Number(value) : value
   if (Number.isNaN(num)) return ''
-  return `Rupees ${numberToWords(num)} only`
+  const whole = Math.floor(Math.abs(num))
+  const paise = Math.round((Math.abs(num) - whole) * 100)
+  const sign = num < 0 ? 'Minus ' : ''
+  let text = `Rupees ${sign}${numberToWords(whole)}`
+  if (paise > 0) text += ` and ${below100(paise)} Paise`
+  return `${text} only`
 }
 
 export function truncate(text: string, len = 40): string {
