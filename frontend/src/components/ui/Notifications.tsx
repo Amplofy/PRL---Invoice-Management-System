@@ -273,9 +273,10 @@ export default function Notifications() {
           onClick={() => setOpen(false)}
         />
         <aside
-          className={`glass-strong !absolute inset-y-0 right-0 flex w-full flex-col !rounded-none transition-transform duration-300 ease-out ${panelWidth} ${
+          className={`glass-strong flex w-full flex-col transition-transform duration-300 ease-out ${panelWidth} ${
             open ? 'translate-x-0' : 'translate-x-full'
           }`}
+          style={{ position: 'absolute', top: 0, bottom: 0, right: 0, borderRadius: 0 }}
           role="dialog"
           aria-label="Notifications"
         >

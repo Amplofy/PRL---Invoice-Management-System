@@ -694,48 +694,14 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       }
     >
       <div id="invoice-form" className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        {/* Main column — clean 2-column field rhythm */}
+        {/* Main column — fields follow the order they are filled in */}
         <div className="space-y-4 lg:col-span-3">
           <div className="glass p-5">
             <div className="section-title">Invoice Details</div>
             <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
-              <Field label="Invoice No" required error={showErrors ? issueMap.invoice_no : undefined}>
-                <input
-                  className={`input ${showErrors && issueMap.invoice_no ? 'invalid' : ''}`}
-                  value={form.invoice_no}
-                  onChange={set('invoice_no')}
-                  placeholder="e.g. INV-2026-014"
-                />
-              </Field>
-              <Field label="Invoice Date" required error={showErrors ? issueMap.invoice_date : undefined}>
-                <input
-                  type="date"
-                  className={`input ${showErrors && issueMap.invoice_date ? 'invalid' : ''}`}
-                  value={form.invoice_date}
-                  onChange={set('invoice_date')}
-                />
-              </Field>
-              <Field
-                label="Amount (Rs)"
-                required
-                error={showErrors ? issueMap.amount : undefined}
-                hint={draftAmount > 0 ? formatAmountWords(draftAmount) : undefined}
-              >
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  className={`input ${showErrors && issueMap.amount ? 'invalid' : ''}`}
-                  value={form.amount}
-                  onChange={set('amount')}
-                  placeholder="0.00"
-                />
-              </Field>
-              <Field label="Item No">
-                <input className="input" value={form.item_no} onChange={set('item_no')} />
-              </Field>
+              {/* 1 — contract sets the context for everything below */}
               <div className="sm:col-span-2">
-                <Field label="Contract" hint="Live utilization preview on the right">
+                <Field label="Contract" required hint="Live utilization preview on the right">
                   <select className="input" value={form.contract_id} onChange={set('contract_id')}>
                     <option value="">Select contract…</option>
                     {(fullContracts.length > 0
@@ -750,11 +716,52 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                   </select>
                 </Field>
               </div>
-              <div className="sm:col-span-2">
-                <Field label="Remarks">
-                  <textarea className="input min-h-14" rows={2} value={form.remarks} onChange={set('remarks')} />
-                </Field>
+
+              {/* 2 — invoice identity, copied from the paper invoice */}
+              <Field label="Invoice No" required error={showErrors ? issueMap.invoice_no : undefined}>
+                <input
+                  className={`input ${showErrors && issueMap.invoice_no ? 'invalid' : ''}`}
+                  value={form.invoice_no}
+                  onChange={set('invoice_no')}
+                  placeholder="e.g. INV-2026-014"
+                />
+              </Field>
+              <Field
+                label="Invoice Date"
+                required
+                error={showErrors ? issueMap.invoice_date : undefined}
+                hint="Drives the serial number"
+              >
+                <input
+                  type="date"
+                  className={`input ${showErrors && issueMap.invoice_date ? 'invalid' : ''}`}
+                  value={form.invoice_date}
+                  onChange={set('invoice_date')}
+                />
+              </Field>
+
+              {/* 3 — serial is derived, shown compactly next to the reference fields */}
+              <div>
+                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-dim)]">
+                  Serial No
+                  <span
+                    className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[0.55rem] font-bold uppercase tracking-wide text-[var(--accent)]"
+                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
+                  >
+                    <Wand2 size={8} /> auto
+                  </span>
+                </span>
+                <div
+                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] font-mono text-sm font-bold tracking-wide"
+                  title="Auto-generated: running count for the Gregorian year + fiscal-year tag (Jul–Jun)"
+                >
+                  {generatedSerial || '···· - ··'}
+                  <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
+                </div>
               </div>
+              <Field label="Item No">
+                <input className="input" value={form.item_no} onChange={set('item_no')} />
+              </Field>
             </div>
           </div>
 
@@ -766,41 +773,42 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
               onChange={patchService}
               issues={showErrors ? issueMap : {}}
             />
-          </div>
-        </div>
 
-        {/* Side column — serial banner, live contract math, validation */}
-        <div className="space-y-4 lg:col-span-2">
-          <div className="glass relative overflow-hidden p-5">
-            <div
-              className="pointer-events-none absolute -right-10 -top-14 h-36 w-36 rounded-full opacity-20 blur-2xl"
-              style={{ background: 'radial-gradient(circle, var(--accent), transparent 70%)' }}
-            />
-            <div className="relative">
-              <div className="flex items-center justify-between">
-                <div className="section-title !mb-0">Serial Number</div>
-                <span
-                  className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--accent)]"
-                  style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
+            <div className="my-4 border-t border-dashed border-[var(--border)]" />
+
+            {/* 4 — amount, once the service scope is known */}
+            <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Field
+                  label="Amount (Rs)"
+                  required
+                  error={showErrors ? issueMap.amount : undefined}
+                  hint={draftAmount > 0 ? formatAmountWords(draftAmount) : undefined}
                 >
-                  <Wand2 size={10} /> auto
-                </span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    className={`input ${showErrors && issueMap.amount ? 'invalid' : ''}`}
+                    value={form.amount}
+                    onChange={set('amount')}
+                    placeholder="0.00"
+                  />
+                </Field>
               </div>
-              <div className="mt-3 flex items-center gap-2">
-                <span className="font-mono text-[1.7rem] font-extrabold leading-none tracking-wider gradient-text">
-                  {generatedSerial || '···· - ··'}
-                </span>
-                <Lock size={13} className="shrink-0 text-[var(--text-muted)]" />
-              </div>
-              <div className="mt-2.5 text-[0.68rem] leading-relaxed text-[var(--text-muted)]">
-                <b className="text-[var(--text-dim)]">XXX</b> = running count of invoices in{' '}
-                {form.invoice_date ? form.invoice_date.slice(0, 4) : new Date().getFullYear()} ·{' '}
-                <b className="text-[var(--text-dim)]">YY</b> = fiscal year (Jul–Jun). Regenerates as the
-                invoice date changes.
+
+              {/* 5 — optional remarks last */}
+              <div className="sm:col-span-2">
+                <Field label="Remarks">
+                  <textarea className="input min-h-14" rows={2} value={form.remarks} onChange={set('remarks')} />
+                </Field>
               </div>
             </div>
           </div>
+        </div>
 
+        {/* Side column — live contract math and validation */}
+        <div className="flex flex-col gap-4 lg:col-span-2">
           <ContractSummaryPanel
             contract={selectedContract ? toContractLite(selectedContract) : null}
             utilization={utilization}
@@ -808,6 +816,30 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           />
           {draftAmount > 0 && <AmountWords amount={draftAmount} />}
           <ValidationSummary issues={issues} idle={!showErrors} />
+
+          <div className="glass p-5">
+            <div className="section-title">Enforced Rules</div>
+            <ul className="space-y-2.5 text-xs leading-relaxed">
+              <li className="flex items-start gap-2 text-[var(--text-dim)]">
+                <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-[var(--accent-3)]" />
+                Duplicate invoice numbers are rejected per contract
+              </li>
+              <li className="flex items-start gap-2 text-[var(--text-dim)]">
+                <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-[var(--accent-3)]" />
+                {maxInvoiceAmount !== undefined
+                  ? `Amounts above Rs ${formatMoney(maxInvoiceAmount)} are rejected`
+                  : 'No maximum amount limit configured'}
+              </li>
+              <li className="flex items-start gap-2 text-[var(--text-dim)]">
+                <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-[var(--accent-3)]" />
+                {futureDateAllowed ? 'Future invoice dates are allowed' : 'Future invoice dates are rejected'}
+              </li>
+              <li className="flex items-start gap-2 text-[var(--text-dim)]">
+                <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-[var(--accent-3)]" />
+                Amounts cannot exceed the remaining contract balance
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
     </Modal>

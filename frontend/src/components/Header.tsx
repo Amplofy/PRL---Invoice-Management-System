@@ -213,9 +213,10 @@ export default function Header() {
           onClick={() => setMobileOpen(false)}
         />
         <div
-          className={`glass-strong !absolute inset-y-0 left-0 flex w-72 flex-col !rounded-none transition-transform duration-300 ease-out ${
+          className={`glass-strong flex w-72 flex-col transition-transform duration-300 ease-out ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
+          style={{ position: 'absolute', top: 0, bottom: 0, left: 0, borderRadius: 0 }}
         >
           <div className="flex items-center justify-between px-5 pb-4 pt-5">
             <div className="flex items-center gap-3">
