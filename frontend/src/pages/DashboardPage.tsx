@@ -250,21 +250,27 @@ export default function DashboardPage() {
                 <Clock size={13} className="text-[var(--warn)]" /> {k.pendingCount} pending
               </span>
               <span className="chip !cursor-default">
+                <FileX2 size={13} className="text-[var(--danger)]" /> {k.rejectedCount} rejected
+              </span>
+              <span className="chip !cursor-default">
                 <FolderOpen size={13} className="text-[var(--accent)]" /> {k.openContracts} contracts
+              </span>
+              <span className="chip !cursor-default">
+                <Users size={13} className="text-[var(--accent-2)]" /> {k.activeUsers} users
               </span>
             </div>
           </div>
         </div>
       </Reveal>
 
-      {/* KPI bento (Fibonacci auto-fit grid) */}
-      <div className="kpi-grid">
+      {/* KPI row — even 4-column rhythm */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Total Invoices"
           value={k.totalInvoices}
           icon={<Receipt size={18} className="text-white" />}
           tone="info"
-          sub={`${formatMoney(k.avgInvoice)} avg`}
+          sub={`${formatMoney(k.avgInvoice)} avg value`}
           delay={0}
         />
         <KpiCard
@@ -272,7 +278,7 @@ export default function DashboardPage() {
           value={`Rs ${formatMoney(k.totalValue)}`}
           icon={<Banknote size={18} className="text-white" />}
           tone="ok"
-          sub="cumulative"
+          sub="cumulative across all contracts"
           delay={60}
         />
         <KpiCard
@@ -280,39 +286,16 @@ export default function DashboardPage() {
           value={k.pendingCount}
           icon={<Clock size={18} className="text-white" />}
           tone="warn"
-          sub={`Rs ${formatMoney(k.pendingValue)}`}
+          sub={`Rs ${formatMoney(k.pendingValue)} awaiting decision`}
           delay={120}
-        />
-        <KpiCard
-          label="Rejected"
-          value={k.rejectedCount}
-          icon={<FileX2 size={18} className="text-white" />}
-          tone="err"
-          sub={`Rs ${formatMoney(k.rejectedValue)}`}
-          delay={180}
         />
         <KpiCard
           label="Approved Value"
           value={`Rs ${formatMoney(k.approvedValue)}`}
           icon={<BadgeCheck size={18} className="text-white" />}
-          tone="ok"
-          sub={`${k.approvedCount} approved`}
-          delay={40}
-        />
-        <KpiCard
-          label="Open Contracts"
-          value={k.openContracts}
-          icon={<FolderOpen size={18} className="text-white" />}
-          tone="info"
-          sub={`${k.expiringContracts} expiring ≤ 60d`}
-          delay={100}
-        />
-        <KpiCard
-          label="Active Users"
-          value={k.activeUsers}
-          icon={<Users size={18} className="text-white" />}
           tone="purple"
-          delay={160}
+          sub={`${k.approvedCount} invoices approved`}
+          delay={180}
         />
       </div>
 
@@ -324,7 +307,7 @@ export default function DashboardPage() {
               <div className="section-title !mb-0">Invoice Value Trend</div>
               <span className="badge badge-neutral">click a point</span>
             </div>
-            <div className="h-64">
+            <div className="h-[300px]">
               <Line
                 data={{
                   labels: trendData.labels,
@@ -369,7 +352,7 @@ export default function DashboardPage() {
               <div className="section-title !mb-0">Status Breakdown</div>
               <span className="badge badge-neutral">click a slice</span>
             </div>
-            <div className="h-64">
+            <div className="h-[300px]">
               <Doughnut
                 data={{
                   labels: ['Approved', 'Pending', 'Rejected'],
@@ -406,7 +389,7 @@ export default function DashboardPage() {
                 View all <ArrowUpRight size={14} />
               </Link>
             </div>
-            <div className="space-y-4">
+            <div className="flex min-h-[300px] flex-col justify-center space-y-4">
               {data?.utilization.slice(0, 6).map((u) => (
                 <div key={u.contractNo} className="flex items-center gap-3">
                   <div className="w-24 truncate text-sm font-medium md:w-40">{u.contractNo}</div>
@@ -434,7 +417,7 @@ export default function DashboardPage() {
               <div className="section-title !mb-0">Monthly Volume</div>
               <Activity size={15} className="text-[var(--text-muted)]" />
             </div>
-            <div className="h-56">
+            <div className="h-[300px]">
               <Bar
                 data={{
                   labels: trendData.labels.slice(-6),
