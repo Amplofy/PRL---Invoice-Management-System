@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
-import { formatMoney, formatDate } from '../lib/format'
+import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
+import { contractUtilization, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -11,6 +12,11 @@ import Button from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
+import ServiceSelects from '../components/ui/ServiceSelects'
+import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
+import ValidationSummary from '../components/ui/ValidationSummary'
+import AmountWords from '../components/ui/AmountWords'
+import { emitAppEvent } from '../lib/notify'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
 import { Link } from 'react-router-dom'
@@ -103,6 +109,7 @@ export default function InvoicesPage() {
     try {
       await apiDelete(`/api/invoices/${inv.id}`)
       toast.success('Invoice deleted')
+      emitAppEvent('warn', 'Invoice deleted', `${inv.invoice_no ?? 'Invoice'} was removed`)
       reload()
     } catch (e) {
       toast.error('Delete failed', (e as Error).message)
@@ -115,8 +122,15 @@ export default function InvoicesPage() {
       if (res.po) {
         setPoReady((m) => ({ ...m, [inv.id]: true }))
         toast.success('Invoice approved', 'Payment order generated automatically')
+        emitAppEvent(
+          'ok',
+          'Invoice approved + PO generated',
+          `${inv.invoice_no ?? 'Invoice'} approved — payment order ready`,
+          '/payment-orders',
+        )
       } else {
         toast.success('Invoice approved')
+        emitAppEvent('ok', 'Invoice approved', `${inv.invoice_no ?? 'Invoice'} approved`, `/invoices/${inv.id}`)
       }
       reload()
     } catch (e) {
@@ -133,6 +147,7 @@ export default function InvoicesPage() {
     try {
       await apiPost(`/api/invoices/${rejecting.id}/reject`, { reason: rejectReason })
       toast.success('Invoice rejected')
+      emitAppEvent('err', 'Invoice rejected', `${rejecting.invoice_no ?? 'Invoice'} — ${rejectReason}`, `/invoices/${rejecting.id}`)
       setRejecting(null)
       setRejectReason('')
       reload()
@@ -147,6 +162,12 @@ export default function InvoicesPage() {
       await apiPost(`/api/invoices/${generatingPo.id}/po`, {})
       setPoReady((m) => ({ ...m, [generatingPo.id]: true }))
       toast.success('Payment order generated')
+      emitAppEvent(
+        'ok',
+        'Payment order generated',
+        `PO created for ${generatingPo.invoice_no ?? 'invoice'}`,
+        '/payment-orders',
+      )
       setGeneratingPo(null)
     } catch (e) {
       toast.error('PO generation failed', (e as Error).message)
@@ -278,7 +299,15 @@ export default function InvoicesPage() {
             <tbody>
               {sorted.map((inv) => (
                 <tr key={inv.id}>
-                  <td className="font-semibold">{inv.invoice_no ?? '—'}</td>
+                  <td className="font-semibold">
+                    <Link
+                      to={`/invoices/${inv.id}`}
+                      className="text-[var(--accent)] underline-offset-4 transition hover:underline"
+                      title="Open invoice workspace"
+                    >
+                      {inv.invoice_no ?? '—'}
+                    </Link>
+                  </td>
                   <td className="text-xs text-[var(--text-muted)]">{inv.serial_no ?? '—'}</td>
                   <td>{formatDate(inv.invoice_date)}</td>
                   <td>{vendorOf(inv)}</td>
@@ -431,9 +460,37 @@ interface InvoiceFormModalProps {
   onSaved: () => void
 }
 
+interface ContractFull {
+  id: string
+  contract_no: string
+  service: string | null
+  value: number
+  start_date: string | null
+  end_date: string | null
+  vendors: VendorRef[] | null
+}
+
+function toContractLite(c: ContractFull): ContractLite {
+  return {
+    id: c.id,
+    contract_no: c.contract_no,
+    value: Number(c.value ?? 0),
+    start_date: c.start_date,
+    end_date: c.end_date,
+    vendor: c.vendors?.[0]?.name ?? null,
+    service: c.service ?? null,
+  }
+}
+
 function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: InvoiceFormModalProps) {
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const [matrix, setMatrix] = useState<ServiceMatrixRow[]>([])
+  const [allInvoices, setAllInvoices] = useState<UtilizationInvoice[]>([])
+  const [fullContracts, setFullContracts] = useState<ContractFull[]>([])
+  const [duplicateCheck, setDuplicateCheck] = useState(true)
+  const [maxInvoiceAmount, setMaxInvoiceAmount] = useState<number | undefined>()
+  const [futureDateAllowed, setFutureDateAllowed] = useState(false)
   const toast = useToast()
 
   useEffect(() => {
@@ -455,14 +512,68 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       amount: invoice?.amount?.toString() ?? '',
       remarks: invoice?.remarks ?? '',
     })
+    Promise.all([
+      apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
+      apiGet<{ invoices: UtilizationInvoice[] }>('/api/invoices'),
+      apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
+      apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
+    ])
+      .then(([m, i, c, s]) => {
+        setMatrix(m.serviceMatrix)
+        setAllInvoices(i.invoices)
+        setFullContracts(c.contracts)
+        for (const { key, value } of s.settings) {
+          if (key === 'duplicate_check') setDuplicateCheck(value === 'true')
+          if (key === 'maximum_invoice_amount') setMaxInvoiceAmount(Number(value) || undefined)
+          if (key === 'future_date_allowed') setFutureDateAllowed(value === 'true')
+        }
+      })
+      .catch(() => {
+        // supporting data is optional — core form still works
+      })
   }, [open, invoice])
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
 
+  const selectedContract = useMemo(
+    () => fullContracts.find((c) => c.id === form.contract_id) ?? null,
+    [fullContracts, form.contract_id],
+  )
+  const utilization = useMemo(
+    () =>
+      selectedContract
+        ? contractUtilization(allInvoices, toContractLite(selectedContract), selectedContract.id, invoice?.id)
+        : null,
+    [allInvoices, selectedContract, invoice?.id],
+  )
+  const draftAmount = Number(form.amount) || 0
+  const issues = useMemo(
+    () =>
+      validateInvoice(form, {
+        matrix,
+        contracts: fullContracts.map(toContractLite),
+        allInvoices,
+        excludeInvoiceId: invoice?.id,
+        duplicateCheck,
+        maxInvoiceAmount,
+        futureDateAllowed,
+      }),
+    [form, matrix, fullContracts, allInvoices, invoice?.id, duplicateCheck, maxInvoiceAmount, futureDateAllowed],
+  )
+  const issueMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const i of issues) if (!map[i.field]) map[i.field] = i.message
+    return map
+  }, [issues])
+
   const submit = async () => {
     if (!form.invoice_no.trim()) {
       toast.error('Invoice number is required')
+      return
+    }
+    if (issues.length > 0) {
+      toast.error(`Resolve ${issues.length} validation issue${issues.length > 1 ? 's' : ''} first`)
       return
     }
     setSaving(true)
@@ -487,9 +598,11 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       if (invoice) {
         await apiPut(`/api/invoices/${invoice.id}`, body)
         toast.success('Invoice updated')
+        emitAppEvent('info', 'Invoice updated', `${form.invoice_no} was saved`)
       } else {
         await apiPost('/api/invoices', body)
         toast.success('Invoice created')
+        emitAppEvent('ok', 'Invoice created', `${form.invoice_no} entered for processing`, '/invoices')
       }
       onSaved()
     } catch (e) {
@@ -499,77 +612,113 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     }
   }
 
+  const serviceValue = {
+    t1: form.t1 ?? '',
+    t2: form.t2 ?? '',
+    t3: form.t3 ?? '',
+    tanker_name: form.tanker_name ?? '',
+    trips: form.trips ?? '',
+    cost_element: form.cost_element ?? '',
+    service_from: form.service_from ?? '',
+    service_to: form.service_to ?? '',
+  }
+  const patchService = (patch: Partial<typeof serviceValue>) =>
+    setForm((f) => {
+      const next = { ...f, ...patch }
+      const row = matrix.find(
+        (m) => m.t1 === next.t1 && (m.t2 ?? '') === next.t2 && (m.t3 ?? '') === next.t3,
+      )
+      if (row) next.cost_element = row.cost_element ?? ''
+      return next
+    })
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={invoice ? `Edit invoice ${invoice.invoice_no ?? ''}` : 'New invoice'}
-      maxWidth="52rem"
+      maxWidth="64rem"
       footer={
         <>
+          <span className="mr-auto text-xs text-[var(--text-muted)]">
+            {issues.length > 0
+              ? `${issues.length} validation issue${issues.length > 1 ? 's' : ''}`
+              : 'All checks passed'}
+          </span>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={submit} disabled={saving}>
+          <Button variant="primary" onClick={submit} disabled={saving || issues.length > 0}>
             {saving ? 'Saving…' : 'Save invoice'}
           </Button>
         </>
       }
     >
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Invoice No" required>
-          <input className="input" value={form.invoice_no} onChange={set('invoice_no')} />
-        </Field>
-        <Field label="Serial No">
-          <input className="input" value={form.serial_no} onChange={set('serial_no')} />
-        </Field>
-        <Field label="Invoice Date">
-          <input type="date" className="input" value={form.invoice_date} onChange={set('invoice_date')} />
-        </Field>
-        <Field label="Contract">
-          <select className="input" value={form.contract_id} onChange={set('contract_id')}>
-            <option value="">—</option>
-            {contracts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.contract_no}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="T1">
-          <input className="input" value={form.t1} onChange={set('t1')} />
-        </Field>
-        <Field label="T2">
-          <input className="input" value={form.t2} onChange={set('t2')} />
-        </Field>
-        <Field label="T3">
-          <input className="input" value={form.t3} onChange={set('t3')} />
-        </Field>
-        <Field label="Tanker Name">
-          <input className="input" value={form.tanker_name} onChange={set('tanker_name')} />
-        </Field>
-        <Field label="Trips">
-          <input type="number" className="input" value={form.trips} onChange={set('trips')} />
-        </Field>
-        <Field label="Item No">
-          <input className="input" value={form.item_no} onChange={set('item_no')} />
-        </Field>
-        <Field label="Cost Element">
-          <input className="input" value={form.cost_element} onChange={set('cost_element')} />
-        </Field>
-        <Field label="Amount (Rs)">
-          <input type="number" className="input" value={form.amount} onChange={set('amount')} />
-        </Field>
-        <Field label="Service From">
-          <input type="date" className="input" value={form.service_from} onChange={set('service_from')} />
-        </Field>
-        <Field label="Service To">
-          <input type="date" className="input" value={form.service_to} onChange={set('service_to')} />
-        </Field>
-        <div className="sm:col-span-2 lg:col-span-3">
-          <Field label="Remarks">
-            <textarea className="input min-h-20" value={form.remarks} onChange={set('remarks')} />
-          </Field>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <div className="glass p-5">
+            <div className="section-title">Invoice Information</div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field label="Invoice No" required error={issueMap.invoice_no}>
+                <input className={`input ${issueMap.invoice_no ? 'invalid' : ''}`} value={form.invoice_no} onChange={set('invoice_no')} />
+              </Field>
+              <Field label="Serial No">
+                <input className="input" value={form.serial_no} onChange={set('serial_no')} />
+              </Field>
+              <Field label="Invoice Date" error={issueMap.invoice_date}>
+                <input type="date" className={`input ${issueMap.invoice_date ? 'invalid' : ''}`} value={form.invoice_date} onChange={set('invoice_date')} />
+              </Field>
+              <Field label="Contract" hint="Live utilization preview updates on the right">
+                <select className="input" value={form.contract_id} onChange={set('contract_id')}>
+                  <option value="">Select contract…</option>
+                  {(fullContracts.length > 0 ? fullContracts : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.contract_no}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Item No">
+                <input className="input" value={form.item_no} onChange={set('item_no')} />
+              </Field>
+              <Field label="Amount (Rs)" required error={issueMap.amount}>
+                <input type="number" min={0} className={`input ${issueMap.amount ? 'invalid' : ''}`} value={form.amount} onChange={set('amount')} />
+              </Field>
+              <div className="sm:col-span-3">
+                <Field label="Remarks">
+                  <textarea className="input min-h-16" value={form.remarks} onChange={set('remarks')} />
+                </Field>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass p-5">
+            <div className="section-title">Service Details</div>
+            <ServiceSelects matrix={matrix} value={serviceValue} onChange={patchService} issues={issueMap} />
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <ContractSummaryPanel
+            contract={selectedContract ? toContractLite(selectedContract) : null}
+            utilization={utilization}
+            draftAmount={draftAmount}
+          />
+          <ValidationSummary issues={issues} />
+          <AmountWords amount={form.amount} />
+          {form.amount && (
+            <div className="glass p-5 text-center">
+              <div className="text-[0.68rem] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Invoice Amount
+              </div>
+              <div className="mt-1 text-xl font-extrabold gradient-text">
+                Rs {formatMoney(draftAmount, 2)}
+              </div>
+              <div className="mt-1 text-[0.68rem] text-[var(--text-muted)]">
+                {formatAmountWords(draftAmount)}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Modal>

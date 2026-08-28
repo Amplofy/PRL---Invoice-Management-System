@@ -719,6 +719,65 @@ table.data-table {
 .data-table tbody tr:hover { background: var(--table-row-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
 
+/* ================= Kanban ================= */
+.kanban-scroll { scrollbar-width: thin; }
+.kanban-card {
+  display: block;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+.kanban-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+.kanban-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+}
+.kanban-card.pending::before { background: var(--gradient-warn); }
+.kanban-card.approved::before { background: var(--gradient-success); }
+.kanban-card.rejected::before { background: var(--gradient-danger); }
+
+/* ================= Timeline ================= */
+.timeline {
+  position: relative;
+  padding-left: 1.5rem;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 7px; top: 8px; bottom: 8px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2), transparent);
+  border-radius: 2px;
+}
+.timeline-item {
+  position: relative;
+  padding-bottom: 1rem;
+}
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -1.5rem; top: 6px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--gradient-primary);
+  border: 2px solid var(--bg-1);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 10px var(--accent);
+}
+.timeline-item.ok::before { background: var(--gradient-success); box-shadow: 0 0 0 2px var(--accent-3), 0 0 10px var(--accent-3); }
+.timeline-item.warn::before { background: var(--gradient-warn); }
+.timeline-item.err::before { background: var(--gradient-danger); }
+
 /* ================= Util bars ================= */
 .util-bar {
   height: 7px;

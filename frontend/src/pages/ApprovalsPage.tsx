@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, XCircle, FileText } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { CheckCircle2, XCircle, FileText, FolderOpen } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
+import { emitAppEvent } from '../lib/notify'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -75,6 +77,12 @@ export default function ApprovalsPage() {
         `Invoice ${inv.invoice_no ?? ''} approved`,
         res.po ? 'Payment order generated automatically' : undefined,
       )
+      emitAppEvent(
+        'ok',
+        'Invoice approved',
+        `${inv.invoice_no ?? 'Invoice'} approved${res.po ? ' — PO generated' : ''}`,
+        res.po ? '/payment-orders' : `/invoices/${inv.id}`,
+      )
       load()
     } catch (e) {
       toast.error('Approval failed', (e as Error).message)
@@ -129,6 +137,7 @@ export default function ApprovalsPage() {
     try {
       await apiPost(`/api/invoices/${rejecting.id}/reject`, { reason: reason.trim() })
       toast.success('Invoice rejected')
+      emitAppEvent('err', 'Invoice rejected', `${rejecting.invoice_no ?? 'Invoice'} — ${reason.trim()}`, `/invoices/${rejecting.id}`)
       setRejecting(null)
       setReason('')
       load()
@@ -172,7 +181,13 @@ export default function ApprovalsPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2.5">
-                  <span className="text-base font-bold">{inv.invoice_no ?? '—'}</span>
+                  <Link
+                    to={`/invoices/${inv.id}`}
+                    className="text-base font-bold text-[var(--accent)] underline-offset-4 transition hover:underline"
+                    title="Open invoice workspace"
+                  >
+                    {inv.invoice_no ?? '—'}
+                  </Link>
                   <StatusBadge tone="info">Pending</StatusBadge>
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-sm text-[var(--text-dim)]">
@@ -195,6 +210,9 @@ export default function ApprovalsPage() {
               </div>
             </div>
             <div className="mt-4 flex items-center justify-end gap-2.5 border-t border-[var(--border)] pt-4">
+              <Link to={`/invoices/${inv.id}`} className="btn btn-ghost">
+                <FolderOpen size={15} /> Open workspace
+              </Link>
               <Button
                 variant="danger"
                 size="sm"
