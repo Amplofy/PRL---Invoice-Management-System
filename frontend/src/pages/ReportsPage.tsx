@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge } from 'lucide-react'
 import {
   Chart as ChartJS,
@@ -22,6 +22,8 @@ import { useThemeColors } from '../lib/themeColors'
 import { fiscalOf, fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, type FiscalQuarter } from '../lib/fiscal'
 import { downloadCSV } from '../lib/export'
 import { useCountUp } from '../lib/useCountUp'
+import PillSelect from '../components/ui/PillSelect'
+import MultiSlicer from '../components/ui/MultiSlicer'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler)
 
@@ -45,6 +47,15 @@ interface Contract {
 
 const ALL = 'all'
 
+type Metric = 'spend' | 'invoices' | 'approved'
+type QOrder = 'chrono' | 'top'
+
+const METRIC_LABELS: Record<Metric, string> = {
+  spend: 'Spend',
+  invoices: 'Volume',
+  approved: 'Approved',
+}
+
 type Tone = 'primary' | 'ok' | 'warn' | 'err' | 'purple'
 
 const TONE_ACCENT: Record<Tone, string> = {
@@ -66,10 +77,12 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [fy, setFy] = useState(ALL)
   const [quarter, setQuarter] = useState(ALL)
-  const [vendor, setVendor] = useState(ALL)
-  const [contractId, setContractId] = useState(ALL)
-  const [costElement, setCostElement] = useState(ALL)
-  const [status, setStatus] = useState(ALL)
+  const [vendors, setVendors] = useState<Set<string>>(new Set())
+  const [contractIds, setContractIds] = useState<Set<string>>(new Set())
+  const [costElements, setCostElements] = useState<Set<string>>(new Set())
+  const [statuses, setStatuses] = useState<Set<string>>(new Set())
+  const [metric, setMetric] = useState<Metric>('spend')
+  const [qOrder, setQOrder] = useState<QOrder>('chrono')
   const toast = useToast()
   const c = useThemeColors()
 
@@ -112,14 +125,25 @@ export default function ReportsPage() {
         const fi = fiscalOf(inv.invoice_date)
         if (fy !== ALL && fi?.fy !== fy) return false
         if (quarter !== ALL && fi?.quarter !== quarter) return false
-        if (vendor !== ALL && vendorOf(inv) !== vendor) return false
-        if (contractId !== ALL && inv.contract_id !== contractId) return false
-        if (costElement !== ALL && (inv.cost_element ?? '') !== costElement) return false
-        if (status !== ALL && inv.status !== status) return false
+        if (vendors.size > 0 && !vendors.has(vendorOf(inv))) return false
+        if (contractIds.size > 0 && (!inv.contract_id || !contractIds.has(inv.contract_id))) return false
+        if (costElements.size > 0 && !(inv.cost_element && costElements.has(inv.cost_element))) return false
+        if (statuses.size > 0 && !statuses.has(inv.status)) return false
         return true
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [invoices, fy, quarter, vendor, contractId, costElement, status],
+    [invoices, fy, quarter, vendors, contractIds, costElements, statuses],
+  )
+
+  const metricValue = (inv: Invoice): number => {
+    if (metric === 'invoices') return 1
+    if (metric === 'approved') return inv.status === 'Approved' || inv.status === 'Submitted' ? Number(inv.amount ?? 0) : 0
+    return Number(inv.amount ?? 0)
+  }
+
+  const fmtMetric = useCallback(
+    (v: number) => (metric === 'invoices' ? formatMoney(v, 0) : `Rs ${formatMoney(v)}`),
+    [metric],
   )
 
   const kpi = useMemo(() => {
@@ -140,17 +164,17 @@ export default function ReportsPage() {
   }, [scoped, contracts])
 
   const quarterly = useMemo(() => {
-    const map = new Map<string, { invoices: number; spend: number }>()
+    const map = new Map<string, { invoices: number; value: number }>()
     for (const inv of scoped) {
       const fi = fiscalOf(inv.invoice_date)
       if (!fi) continue
       const key = `${fi.fy}|${fi.quarter}`
-      const bucket = map.get(key) ?? { invoices: 0, spend: 0 }
+      const bucket = map.get(key) ?? { invoices: 0, value: 0 }
       bucket.invoices += 1
-      bucket.spend += Number(inv.amount ?? 0)
+      bucket.value += metricValue(inv)
       map.set(key, bucket)
     }
-    return [...map.entries()]
+    const rows = [...map.entries()]
       .sort((a, b) => {
         const [fyA, qA] = a[0].split('|')
         const [fyB, qB] = b[0].split('|')
@@ -161,7 +185,9 @@ export default function ReportsPage() {
         const [f, q] = key.split('|')
         return { fy: f, quarter: q, label: `${f} ${q}`, ...v }
       })
-  }, [scoped])
+    return qOrder === 'top' ? [...rows].sort((a, b) => b.value - a.value) : rows
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoped, metric, qOrder])
 
   const monthly = useMemo(() => {
     const months = new Map<number, number>()
@@ -170,10 +196,11 @@ export default function ReportsPage() {
       const fi = fiscalOf(inv.invoice_date)
       if (!fi || fi.fy !== effectiveFy) continue
       const idx = fyMonthIndex(new Date(inv.invoice_date as string))
-      months.set(idx, (months.get(idx) ?? 0) + Number(inv.amount ?? 0))
+      months.set(idx, (months.get(idx) ?? 0) + metricValue(inv))
     }
     return { fy: effectiveFy, data: FY_MONTHS.map((label, idx) => ({ label, value: months.get(idx) ?? 0 })) }
-  }, [invoices, fy, fyOptions])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, fy, fyOptions, metric])
 
   const categoryMix = useMemo(() => {
     const mix = { OPEX: 0, CAPEX: 0, Uncategorized: 0 }
@@ -188,7 +215,7 @@ export default function ReportsPage() {
       const v = vendorOf(inv)
       const bucket = map.get(v) ?? { count: 0, total: 0 }
       bucket.count += 1
-      bucket.total += Number(inv.amount ?? 0)
+      bucket.total += metricValue(inv)
       map.set(v, bucket)
     }
     return [...map.entries()]
@@ -196,7 +223,7 @@ export default function ReportsPage() {
       .sort((a, b) => b.total - a.total)
       .slice(0, 6)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scoped])
+  }, [scoped, metric])
 
   const budgetRows = useMemo(() => {
     const actualByContract = new Map<string, number>()
@@ -205,7 +232,7 @@ export default function ReportsPage() {
       actualByContract.set(inv.contract_id, (actualByContract.get(inv.contract_id) ?? 0) + Number(inv.amount ?? 0))
     }
     return contracts
-      .filter((cn) => contractId === ALL || cn.id === contractId)
+      .filter((cn) => contractIds.size === 0 || contractIds.has(cn.id))
       .map((cn) => {
         const budget = Number(cn.value ?? 0)
         const actual = actualByContract.get(cn.id) ?? 0
@@ -220,13 +247,13 @@ export default function ReportsPage() {
         }
       })
       .sort((a, b) => b.utilization - a.utilization)
-  }, [contracts, scoped, contractId])
+  }, [contracts, scoped, contractIds])
 
   const insights = useMemo<Insight[]>(() => {
     const list: Insight[] = []
     if (quarterly.length > 0) {
-      const peak = quarterly.reduce((a, b) => (b.spend > a.spend ? b : a))
-      list.push({ tone: 'primary', text: `${peak.label} is the highest-spend quarter at Rs ${formatMoney(peak.spend)}` })
+      const peak = quarterly.reduce((a, b) => (b.value > a.value ? b : a))
+      list.push({ tone: 'primary', text: `${peak.label} is the highest quarter by ${METRIC_LABELS[metric].toLowerCase()} at ${fmtMetric(peak.value)}` })
     }
     if (byVendor.length > 0 && kpi.total > 0) {
       const share = (byVendor[0].total / kpi.total) * 100
@@ -242,8 +269,8 @@ export default function ReportsPage() {
     if (quarterly.length >= 2) {
       const last = quarterly[quarterly.length - 1]
       const prev = quarterly[quarterly.length - 2]
-      if (prev.spend > 0) {
-        const delta = ((last.spend - prev.spend) / prev.spend) * 100
+      if (prev.value > 0) {
+        const delta = ((last.value - prev.value) / prev.value) * 100
         list.push({
           tone: delta >= 0 ? 'ok' : 'primary',
           text: `${last.label} spend is ${delta >= 0 ? 'up' : 'down'} ${Math.abs(delta).toFixed(0)}% vs ${prev.label}`,
@@ -251,7 +278,7 @@ export default function ReportsPage() {
       }
     }
     return list.slice(0, 4)
-  }, [quarterly, byVendor, budgetRows, kpi])
+  }, [quarterly, byVendor, budgetRows, kpi, metric, fmtMetric])
 
   const animatedTotal = useCountUp(kpi.total)
   const animatedOpexPct = useCountUp(categoryMix.total > 0 ? (categoryMix.OPEX / categoryMix.total) * 100 : 0, 900)
@@ -263,7 +290,7 @@ export default function ReportsPage() {
       quarterly.map((q) => ({
         fiscal_quarter: q.label,
         invoices: q.invoices,
-        spend: Math.round(q.spend),
+        [metric]: Math.round(q.value),
       })),
     )
 
@@ -284,7 +311,7 @@ export default function ReportsPage() {
     return <div className="py-24 text-center text-[var(--text-muted)]">Loading reports…</div>
   }
 
-  const maxQuarter = Math.max(1, ...quarterly.map((q) => q.spend))
+  const maxQuarter = Math.max(1, ...quarterly.map((q) => q.value))
   const maxMonth = Math.max(1, ...monthly.data.map((m) => m.value))
   const maxVendor = Math.max(1, ...byVendor.map((v) => v.total))
   const mixSegments: Array<{ key: keyof typeof categoryMix; label: string; color: string }> = [
@@ -292,13 +319,6 @@ export default function ReportsPage() {
     { key: 'CAPEX', label: 'CAPEX', color: c.warn },
     { key: 'Uncategorized', label: 'Uncategorized', color: c.grid },
   ]
-
-  const selectCls = 'input min-w-[130px] flex-1 sm:flex-none'
-  const filterSelect = (value: string, onChange: (v: string) => void, label: string, options: React.ReactNode) => (
-    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className={selectCls}>
-      {options}
-    </select>
-  )
 
   return (
     <div className="space-y-5">
@@ -317,69 +337,82 @@ export default function ReportsPage() {
         }
       />
 
-      {/* Filters */}
-      <div className="glass flex flex-wrap items-center gap-3 p-4 rise-in" style={{ animationDelay: '40ms' }}>
-        {filterSelect(fy, setFy, 'Fiscal year', (
-          <>
-            <option value={ALL}>All fiscal years</option>
-            {fyOptions.map((f) => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </>
-        ))}
-        {filterSelect(quarter, setQuarter, 'Quarter', (
-          <>
-            <option value={ALL}>All quarters</option>
-            {QUARTERS.map((q) => (
-              <option key={q} value={q}>{q}</option>
-            ))}
-          </>
-        ))}
-        {filterSelect(vendor, setVendor, 'Vendor', (
-          <>
-            <option value={ALL}>All vendors</option>
-            {vendorOptions.map((v) => (
-              <option key={v} value={v}>{v}</option>
-            ))}
-          </>
-        ))}
-        {filterSelect(contractId, setContractId, 'Contract', (
-          <>
-            <option value={ALL}>All contracts</option>
-            {contracts.map((cn) => (
-              <option key={cn.id} value={cn.id}>{cn.contract_no}</option>
-            ))}
-          </>
-        ))}
-        {filterSelect(costElement, setCostElement, 'Cost element', (
-          <>
-            <option value={ALL}>All cost elements</option>
-            {costElementOptions.map((ce) => (
-              <option key={ce} value={ce}>{ce}</option>
-            ))}
-          </>
-        ))}
-        {filterSelect(status, setStatus, 'Status', (
-          <>
-            <option value={ALL}>All statuses</option>
-            {['Pending', 'Approved', 'Rejected', 'Submitted'].map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </>
-        ))}
-        <button
-          className="btn btn-ghost !px-3"
-          onClick={() => {
-            setFy(ALL)
-            setQuarter(ALL)
-            setVendor(ALL)
-            setContractId(ALL)
-            setCostElement(ALL)
-            setStatus(ALL)
-          }}
-        >
-          Reset
-        </button>
+      {/* Control deck: pill slicers + multi-select dimensions + analysis lens */}
+      <div className="glass space-y-3 p-4 rise-in" style={{ animationDelay: '40ms' }}>
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+          <PillSelect
+            label="Fiscal Year"
+            value={fy}
+            onChange={setFy}
+            options={[{ value: ALL, label: 'All' }, ...fyOptions.map((f) => ({ value: f, label: f }))]}
+          />
+          <PillSelect
+            label="Quarter"
+            value={quarter}
+            onChange={setQuarter}
+            options={[{ value: ALL, label: 'All' }, ...QUARTERS.map((q) => ({ value: q, label: q }))]}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-3">
+          <MultiSlicer
+            label="Vendor"
+            options={vendorOptions.map((v) => ({ value: v, label: v }))}
+            selected={vendors}
+            onChange={setVendors}
+          />
+          <MultiSlicer
+            label="Contract"
+            options={contracts.map((cn) => ({ value: cn.id, label: cn.contract_no }))}
+            selected={contractIds}
+            onChange={setContractIds}
+          />
+          <MultiSlicer
+            label="Cost Element"
+            options={costElementOptions.map((ce) => ({ value: ce, label: ce }))}
+            selected={costElements}
+            onChange={setCostElements}
+          />
+          <MultiSlicer
+            label="Status"
+            options={['Pending', 'Approved', 'Rejected', 'Submitted'].map((s) => ({ value: s, label: s }))}
+            selected={statuses}
+            onChange={setStatuses}
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+            <PillSelect
+              label="Lens"
+              value={metric}
+              onChange={(v) => setMetric(v as Metric)}
+              options={(Object.keys(METRIC_LABELS) as Metric[]).map((m) => ({ value: m, label: METRIC_LABELS[m] }))}
+            />
+            <PillSelect
+              label="Order"
+              value={qOrder}
+              onChange={(v) => setQOrder(v as QOrder)}
+              options={[
+                { value: 'chrono', label: 'Timeline' },
+                { value: 'top', label: 'Highest first' },
+              ]}
+            />
+          </div>
+          <button
+            className="btn btn-ghost !px-3"
+            onClick={() => {
+              setFy(ALL)
+              setQuarter(ALL)
+              setVendors(new Set())
+              setContractIds(new Set())
+              setCostElements(new Set())
+              setStatuses(new Set())
+              setMetric('spend')
+              setQOrder('chrono')
+            }}
+          >
+            Reset all
+          </button>
+        </div>
       </div>
 
       {/* Hero row: spend pulse + OPEX/CAPEX mix */}
@@ -420,7 +453,7 @@ export default function ReportsPage() {
               <div
                 key={m.label}
                 className="group relative flex-1"
-                title={`${monthly.fy} ${m.label}: Rs ${formatMoney(m.value)}`}
+                title={`${monthly.fy} ${m.label}: ${fmtMetric(m.value)}`}
               >
                 <div
                   className="report-bar w-full rounded-t-md transition-opacity group-hover:opacity-100"
@@ -505,15 +538,16 @@ export default function ReportsPage() {
         <div className="report-card glass p-6 lg:col-span-2 rise-in" style={{ animationDelay: '300ms' }}>
           <div className="mb-5 flex items-center justify-between">
             <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-              <TrendingUp size={13} className="text-[var(--accent)]" /> Quarterly pulse
+              <TrendingUp size={13} className="text-[var(--accent)]" /> Quarterly pulse · {METRIC_LABELS[metric]}
+              {qOrder === 'top' ? ' (ranked)' : ''}
             </span>
-            {quarterly.length > 1 && (
+            {quarterly.length > 1 && qOrder === 'chrono' && (
               <span className="text-[0.65rem] text-[var(--text-dim)]">
                 {(() => {
                   const last = quarterly[quarterly.length - 1]
                   const prev = quarterly[quarterly.length - 2]
-                  if (prev.spend <= 0) return null
-                  const delta = ((last.spend - prev.spend) / prev.spend) * 100
+                  if (prev.value <= 0) return null
+                  const delta = ((last.value - prev.value) / prev.value) * 100
                   return (
                     <span className={`inline-flex items-center gap-1 font-semibold ${delta >= 0 ? 'text-[var(--accent-3)]' : 'text-[var(--danger)]'}`}>
                       {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
@@ -529,18 +563,18 @@ export default function ReportsPage() {
               {quarterly.map((q, i) => (
                 <div key={q.label} className="group flex h-full flex-1 flex-col items-center justify-end gap-2">
                   <span className="text-[0.62rem] font-bold text-[var(--text-muted)] opacity-0 transition-opacity group-hover:opacity-100">
-                    Rs {formatMoney(q.spend)}
+                    {fmtMetric(q.value)}
                   </span>
                   <div
                     className="report-bar relative w-full max-w-20 rounded-t-xl"
                     style={{
-                      height: `${Math.max(6, (q.spend / maxQuarter) * 100)}%`,
+                      height: `${Math.max(6, (q.value / maxQuarter) * 100)}%`,
                       background: `linear-gradient(to top, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent))`,
                       animationDelay: `${i * 110}ms`,
                     }}
                   >
                     <span className="absolute inset-x-0 top-2 text-center text-[0.6rem] font-bold text-white/85">
-                      {q.spend >= maxQuarter * 0.35 ? formatMoney(q.spend / 1000, 0) + 'k' : ''}
+                      {q.value >= maxQuarter * 0.35 ? fmtMetric(q.value) : ''}
                     </span>
                   </div>
                   <span className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-dim)]">{q.label}</span>
@@ -603,7 +637,7 @@ export default function ReportsPage() {
                 labels: monthly.data.map((m) => m.label),
                 datasets: [
                   {
-                    label: 'Spend (Rs)',
+                    label: `${METRIC_LABELS[metric]}`,
                     data: monthly.data.map((m) => m.value),
                     borderColor: c.accent,
                     backgroundColor: c.accent + '26',
@@ -646,7 +680,7 @@ export default function ReportsPage() {
                       </span>
                       <span className="truncate font-semibold">{v.vendor}</span>
                     </span>
-                    <b className="shrink-0">Rs {formatMoney(v.total)}</b>
+                    <b className="shrink-0">{fmtMetric(v.total)}</b>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-hover)]">
                     <div
@@ -730,7 +764,7 @@ export default function ReportsPage() {
               <tr>
                 <th>Fiscal Quarter</th>
                 <th className="text-right">Invoices</th>
-                <th className="text-right">Spend</th>
+                <th className="text-right">{METRIC_LABELS[metric]}</th>
                 <th className="text-right">Share</th>
                 <th className="text-right">vs previous</th>
               </tr>
@@ -738,14 +772,14 @@ export default function ReportsPage() {
             <tbody>
               {quarterly.map((q, i) => {
                 const prev = i > 0 ? quarterly[i - 1] : null
-                const delta = prev && prev.spend > 0 ? ((q.spend - prev.spend) / prev.spend) * 100 : null
+                const delta = prev && prev.value > 0 ? ((q.value - prev.value) / prev.value) * 100 : null
                 return (
                   <tr key={q.label}>
                     <td className="font-semibold">{q.label}</td>
                     <td className="text-right">{q.invoices}</td>
-                    <td className="text-right font-semibold">{formatMoney(q.spend)}</td>
+                    <td className="text-right font-semibold">{fmtMetric(q.value)}</td>
                     <td className="text-right text-xs text-[var(--text-dim)]">
-                      {kpi.total > 0 ? `${formatMoney((q.spend / kpi.total) * 100, 1)}%` : '—'}
+                      {kpi.total > 0 ? `${formatMoney((metric === 'invoices' ? q.invoices / kpi.count : q.value / kpi.total) * 100, 1)}%` : '—'}
                     </td>
                     <td className="text-right text-xs">
                       {delta === null ? (
