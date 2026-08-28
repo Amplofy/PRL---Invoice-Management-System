@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ScrollText } from 'lucide-react'
+import { ScrollText, Clock, Users } from 'lucide-react'
 import { apiGet } from '../lib/api'
 import { formatDateTime, timeAgo } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -8,7 +8,10 @@ import GlassCard from '../components/ui/GlassCard'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
+import AdvancedFilter from '../components/ui/AdvancedFilter'
+import SummaryCards from '../components/ui/SummaryCards'
 import { useColumnVisibility } from '../lib/columns'
+import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
 
 interface AuditEntry {
   id: string
@@ -32,6 +35,15 @@ const AUDIT_COLUMN_DEFS = [
 
 const AUDIT_DEFAULT_COLUMNS = ['action', 'entity', 'summary', 'user', 'when']
 
+const AUDIT_FILTER_COLUMNS: FilterColumnDef[] = [
+  { key: 'action', label: 'Action', type: 'select' },
+  { key: 'entity_type', label: 'Entity', type: 'select' },
+  { key: 'entity_id', label: 'Entity ID', type: 'text' },
+  { key: 'summary', label: 'Summary', type: 'text' },
+  { key: 'user', label: 'User', type: 'text' },
+  { key: 'timestamp', label: 'When', type: 'date' },
+]
+
 const ACTION_TONES: Record<string, string> = {
   create: 'badge-ok',
   approve: 'badge-ok',
@@ -53,8 +65,7 @@ export default function AuditLogPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [action, setAction] = useState('all')
-  const [entityType, setEntityType] = useState('all')
+  const [filters, setFilters] = useState<FilterState[]>([])
   const col = useColumnVisibility(
     'prl-eoms-cols-audit-log',
     AUDIT_COLUMN_DEFS.map((c) => c.key),
@@ -85,52 +96,73 @@ export default function AuditLogPage() {
     [entries],
   )
 
+  const filterColumns = useMemo<FilterColumnDef[]>(
+    () =>
+      AUDIT_FILTER_COLUMNS.map((c) =>
+        c.key === 'action'
+          ? { ...c, options: actions.map((a) => ({ value: a, label: a })) }
+          : c.key === 'entity_type'
+            ? { ...c, options: entityTypes.map((t) => ({ value: t, label: t })) }
+            : c,
+      ),
+    [actions, entityTypes],
+  )
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return entries.filter((e) => {
-      if (action !== 'all' && e.action !== action) return false
-      if (entityType !== 'all' && (e.entity_type ?? '') !== entityType) return false
-      if (q) {
-        const hay = `${e.summary ?? ''} ${e.entity_id ?? ''} ${e.user_email ?? ''}`.toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
-    })
-  }, [entries, search, action, entityType])
+    const searched = q
+      ? entries.filter((e) =>
+          `${e.summary ?? ''} ${e.entity_id ?? ''} ${e.user_email ?? ''}`.toLowerCase().includes(q),
+        )
+      : entries
+    return applyFilters(searched, filters, filterColumns, (e, key) =>
+      (e as unknown as Record<string, string | null>)[key] ?? null,
+    )
+  }, [entries, search, filters, filterColumns])
+
+  const usersCount = useMemo(() => new Set(filtered.map((e) => e.user_email ?? 'system')).size, [filtered])
+  const todayCount = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return filtered.filter((e) => e.timestamp.slice(0, 10) === today).length
+  }, [filtered])
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Audit Log"
         description="Immutable trail of every action across the system."
-        actions={
-          <span className="badge badge-info">
-            <ScrollText size={13} /> {entries.length} events
-          </span>
-        }
+        actions={<span className="badge badge-info"><ScrollText size={13} /> {entries.length} events</span>}
+      />
+
+      <SummaryCards
+        items={[
+          {
+            label: 'Events Shown',
+            value: String(filtered.length),
+            sub: `of ${entries.length} total`,
+            icon: <ScrollText size={16} />,
+            tone: 'primary',
+          },
+          {
+            label: 'Today',
+            value: String(todayCount),
+            sub: 'events logged today',
+            icon: <Clock size={16} />,
+            tone: 'warn',
+          },
+          {
+            label: 'Distinct Users',
+            value: String(usersCount),
+            sub: 'in current view',
+            icon: <Users size={16} />,
+            tone: 'purple',
+          },
+        ]}
       />
 
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search summary, entity id, user…' }}
-        filters={[
-          {
-            key: 'action',
-            label: 'Action',
-            value: action,
-            onChange: setAction,
-            options: [{ value: 'all', label: 'All actions' }, ...actions.map((a) => ({ value: a, label: a }))],
-          },
-          {
-            key: 'entity',
-            label: 'Entity',
-            value: entityType,
-            onChange: setEntityType,
-            options: [
-              { value: 'all', label: 'All entities' },
-              ...entityTypes.map((t) => ({ value: t, label: t })),
-            ],
-          },
-        ]}
+        filterBar={<AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} />}
         resultsCount={filtered.length}
       >
         <ColumnsButton

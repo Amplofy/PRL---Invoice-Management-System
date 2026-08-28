@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, AlertTriangle, Banknote, Truck } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -12,9 +12,12 @@ import { Field } from '../components/ui/Field'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
+import AdvancedFilter from '../components/ui/AdvancedFilter'
+import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
+import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
 
 interface Vendor {
   id: string
@@ -53,6 +56,16 @@ function contractPeriodDays(c: Contract): number | null {
   return Math.round(ms / 86400000)
 }
 
+const CONTRACT_FILTER_COLUMNS: FilterColumnDef[] = [
+  { key: 'contract_no', label: 'Contract No', type: 'text' },
+  { key: 'vendor', label: 'Vendor', type: 'text' },
+  { key: 'service', label: 'Service', type: 'text' },
+  { key: 'status', label: 'Status', type: 'select' },
+  { key: 'value', label: 'Value', type: 'number' },
+  { key: 'start_date', label: 'Start Date', type: 'date' },
+  { key: 'end_date', label: 'End Date', type: 'date' },
+]
+
 export default function ContractsPage() {
   const [contracts, setContracts] = useState<Contract[]>([])
   const [vendors, setVendors] = useState<Vendor[]>([])
@@ -62,6 +75,7 @@ export default function ContractsPage() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('end_date')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
+  const [filters, setFilters] = useState<FilterState[]>([])
   const col = useColumnVisibility(
     'prl-eoms-cols-contracts',
     CONTRACT_COLUMN_DEFS.map((c) => c.key),
@@ -122,12 +136,37 @@ export default function ContractsPage() {
     return d !== null && d >= 0 && d <= 60
   }).length
 
+  const filterColumns = useMemo<FilterColumnDef[]>(
+    () =>
+      CONTRACT_FILTER_COLUMNS.map((c) =>
+        c.key === 'status'
+          ? {
+              ...c,
+              options: Array.from(new Set(contracts.map((x) => x.status ?? '').filter(Boolean))).map((s) => ({
+                value: s,
+                label: s,
+              })),
+            }
+          : c,
+      ),
+    [contracts],
+  )
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return contracts.filter((c) =>
-      `${c.contract_no} ${vendorName(c)} ${c.service ?? ''} ${c.status ?? ''}`.toLowerCase().includes(q),
-    )
-  }, [contracts, search])
+    const searched = q
+      ? contracts.filter((c) =>
+          `${c.contract_no} ${vendorName(c)} ${c.service ?? ''} ${c.status ?? ''}`.toLowerCase().includes(q),
+        )
+      : contracts
+    return applyFilters(searched, filters, filterColumns, (c, key) => {
+      if (key === 'vendor') return vendorName(c)
+      return (c as unknown as Record<string, string | number | null>)[key] ?? null
+    })
+  }, [contracts, search, filters, filterColumns])
+
+  const totalValue = useMemo(() => filtered.reduce((s, c) => s + Number(c.value ?? 0), 0), [filtered])
+  const vendorCount = useMemo(() => new Set(filtered.map((c) => vendorName(c))).size, [filtered])
 
   const sorted = useMemo(
     () =>
@@ -185,8 +224,35 @@ export default function ContractsPage() {
         }
       />
 
+      <SummaryCards
+        items={[
+          {
+            label: 'Total Value',
+            value: `Rs ${formatMoney(totalValue)}`,
+            sub: `${filtered.length} contract${filtered.length === 1 ? '' : 's'} shown`,
+            icon: <Banknote size={16} />,
+            tone: 'primary',
+          },
+          {
+            label: 'Vendors',
+            value: String(vendorCount),
+            sub: 'distinct vendors',
+            icon: <Truck size={16} />,
+            tone: 'purple',
+          },
+          {
+            label: 'Expiring Soon',
+            value: String(expiringSoon),
+            sub: 'within 60 days',
+            icon: <AlertTriangle size={16} />,
+            tone: 'warn',
+          },
+        ]}
+      />
+
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search contract, vendor, service…' }}
+        filterBar={<AdvancedFilter columns={CONTRACT_FILTER_COLUMNS} filters={filters} onChange={setFilters} />}
         sort={{
           columns: [
             { key: 'contract_no', label: 'Contract no' },

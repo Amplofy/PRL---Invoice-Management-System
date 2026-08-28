@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Mail, Send } from 'lucide-react'
+import { Mail, Send, Truck } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -10,8 +10,11 @@ import EmptyState from '../components/ui/EmptyState'
 import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
+import AdvancedFilter from '../components/ui/AdvancedFilter'
+import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useColumnVisibility } from '../lib/columns'
+import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
 
 interface PendingFollowup {
   invoiceId: string
@@ -36,6 +39,15 @@ const FOLLOWUP_COLUMN_DEFS = [
 
 const FOLLOWUP_DEFAULT_COLUMNS = ['invoice', 'date', 'vendor', 'contract', 'email', 'amount']
 
+const FOLLOWUP_FILTER_COLUMNS: FilterColumnDef[] = [
+  { key: 'invoiceNo', label: 'Invoice', type: 'text' },
+  { key: 'vendorName', label: 'Vendor', type: 'text' },
+  { key: 'contractNo', label: 'Contract', type: 'text' },
+  { key: 'email', label: 'Email', type: 'text' },
+  { key: 'invoiceDate', label: 'Date', type: 'date' },
+  { key: 'amount', label: 'Amount', type: 'number' },
+]
+
 function daysPending(dateStr: string | null): number | null {
   if (!dateStr) return null
   const d = new Date(dateStr)
@@ -53,6 +65,7 @@ export default function FollowupsPage() {
   const [result, setResult] = useState<{ sent: string[]; failed: Array<{ invoiceId: string; reason: string }> } | null>(null)
   const [sortBy, setSortBy] = useState('invoiceDate')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
+  const [filters, setFilters] = useState<FilterState[]>([])
   const col = useColumnVisibility(
     'prl-eoms-cols-followups',
     FOLLOWUP_COLUMN_DEFS.map((c) => c.key),
@@ -78,10 +91,15 @@ export default function FollowupsPage() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return pending.filter((p) =>
-      `${p.invoiceNo} ${p.vendorName} ${p.contractNo} ${p.email}`.toLowerCase().includes(q),
+    const searched = q
+      ? pending.filter((p) =>
+          `${p.invoiceNo} ${p.vendorName} ${p.contractNo} ${p.email}`.toLowerCase().includes(q),
+        )
+      : pending
+    return applyFilters(searched, filters, FOLLOWUP_FILTER_COLUMNS, (p, key) =>
+      (p as unknown as Record<string, string | number | null>)[key] ?? null,
     )
-  }, [pending, search])
+  }, [pending, search, filters])
 
   const sorted = useMemo(
     () =>
@@ -148,6 +166,9 @@ export default function FollowupsPage() {
     return sum
   }, [pending, selected])
 
+  const totalPending = useMemo(() => filtered.reduce((s, p) => s + Number(p.amount ?? 0), 0), [filtered])
+  const vendorCount = useMemo(() => new Set(filtered.map((p) => p.vendorId)).size, [filtered])
+
   const send = async () => {
     setSending(true)
     try {
@@ -190,8 +211,35 @@ export default function FollowupsPage() {
         }
       />
 
+      <SummaryCards
+        items={[
+          {
+            label: 'Pending Amount',
+            value: `Rs ${formatMoney(totalPending)}`,
+            sub: `${filtered.length} invoice${filtered.length === 1 ? '' : 's'}`,
+            icon: <Mail size={16} />,
+            tone: 'primary',
+          },
+          {
+            label: 'Vendors',
+            value: String(vendorCount),
+            sub: 'awaiting follow-up',
+            icon: <Truck size={16} />,
+            tone: 'purple',
+          },
+          {
+            label: 'Selected',
+            value: String(selected.size),
+            sub: `Rs ${formatMoney(totalSelected)}`,
+            icon: <Send size={16} />,
+            tone: 'ok',
+          },
+        ]}
+      />
+
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search vendor, invoice, email…' }}
+        filterBar={<AdvancedFilter columns={FOLLOWUP_FILTER_COLUMNS} filters={filters} onChange={setFilters} />}
         sort={{
           columns: [
             { key: 'invoiceDate', label: 'Date' },

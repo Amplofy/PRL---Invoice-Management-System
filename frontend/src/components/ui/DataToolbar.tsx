@@ -29,10 +29,11 @@ interface DataToolbarProps {
   onExport?: () => void
   exportLabel?: string
   resultsCount?: number
+  filterBar?: ReactNode
   children?: ReactNode
 }
 
-export default function DataToolbar({ search, filters, sort, onExport, exportLabel, resultsCount, children }: DataToolbarProps) {
+export default function DataToolbar({ search, filters, sort, onExport, exportLabel, resultsCount, filterBar, children }: DataToolbarProps) {
   return (
     <div className="glass p-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -105,6 +106,8 @@ export default function DataToolbar({ search, filters, sort, onExport, exportLab
 
         {children}
       </div>
+
+      {filterBar && <div className="mt-3 border-t border-[var(--border)] pt-3">{filterBar}</div>}
     </div>
   )
 }

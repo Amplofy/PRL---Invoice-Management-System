@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages } from 'lucide-react'
+import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages, Banknote, Clock } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
 import { contractUtilization, validateInvoice, nextSerialNo, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
@@ -20,6 +20,9 @@ import { emitAppEvent } from '../lib/notify'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
+import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import AdvancedFilter from '../components/ui/AdvancedFilter'
+import SummaryCards from '../components/ui/SummaryCards'
 import { Link } from 'react-router-dom'
 
 interface VendorRef {
@@ -90,9 +93,8 @@ export default function InvoicesPage() {
     INVOICE_DEFAULT_COLUMNS,
   )
   const [loading, setLoading] = useState(true)
-  const [status, setStatus] = useState('all')
-  const [contract, setContract] = useState('all')
   const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState<FilterState[]>([])
   const [editing, setEditing] = useState<Invoice | null>(null)
   const [creating, setCreating] = useState(false)
   const [rejecting, setRejecting] = useState<Invoice | null>(null)
@@ -108,12 +110,7 @@ export default function InvoicesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams()
-      if (status !== 'all') params.set('status', status)
-      if (contract !== 'all') params.set('contract', contract)
-      if (search) params.set('search', search)
-      const qs = params.toString()
-      const d = await apiGet<{ invoices: Invoice[] }>(`/api/invoices${qs ? `?${qs}` : ''}`)
+      const d = await apiGet<{ invoices: Invoice[] }>('/api/invoices')
       setInvoices(d.invoices)
       const c = await apiGet<{ contracts: Contract[] }>('/api/contracts')
       setContracts(c.contracts)
@@ -122,12 +119,11 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false)
     }
-  }, [status, contract, search, toast])
+  }, [toast])
 
   useEffect(() => {
-    const t = setTimeout(load, search ? 300 : 0)
-    return () => clearTimeout(t)
-  }, [load, search])
+    load()
+  }, [load])
 
   const reload = useCallback(() => load(), [load])
 
@@ -212,12 +208,52 @@ export default function InvoicesPage() {
     return c?.contract_no ?? '—'
   }
 
-  const totalShown = useMemo(() => invoices.reduce((s, i) => s + Number(i.amount ?? 0), 0), [invoices])
+  const filterColumns = useMemo<FilterColumnDef[]>(
+    () => [
+      { key: 'status', label: 'Status', type: 'select', options: STATUSES.filter((s) => s !== 'all').map((s) => ({ value: s, label: s })) },
+      { key: 'contract_id', label: 'Contract', type: 'select', options: contracts.map((c) => ({ value: c.id, label: c.contract_no })) },
+      { key: 'vendor', label: 'Vendor', type: 'text' },
+      { key: 'invoice_no', label: 'Invoice No', type: 'text' },
+      { key: 'serial_no', label: 'Serial', type: 'text' },
+      { key: 'invoice_date', label: 'Date', type: 'date' },
+      { key: 'processing_date', label: 'Processing Date', type: 'date' },
+      { key: 'item_no', label: 'Item', type: 'text' },
+      { key: 'tanker_name', label: 'Tanker', type: 'text' },
+      { key: 'cost_element', label: 'Cost Element', type: 'text' },
+      { key: 'amount', label: 'Amount', type: 'number' },
+      { key: 'remarks', label: 'Remarks', type: 'text' },
+    ],
+    [contracts],
+  )
+
+  const invoiceFilterValue = (inv: Invoice, key: string): string | number | null => {
+    switch (key) {
+      case 'vendor':
+        return vendorOf(inv)
+      case 'contract_id':
+        return inv.contract_id
+      default:
+        return (inv as unknown as Record<string, string | number | null>)[key] ?? null
+    }
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    const searched = q
+      ? invoices.filter((i) =>
+          `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${vendorOf(i)} ${contractNoOf(i)} ${i.item_no ?? ''}`
+            .toLowerCase()
+            .includes(q),
+        )
+      : invoices
+    return applyFilters(searched, filters, filterColumns, invoiceFilterValue)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, search, filters, filterColumns])
 
   const sorted = useMemo(
     () =>
       sortRows(
-        invoices,
+        filtered,
         sortBy || null,
         sortDir,
         (row, key) =>
@@ -231,8 +267,16 @@ export default function InvoicesPage() {
                   ? String(vendorOf(row))
                   : (row as unknown as Record<string, unknown>)[key] as string | null,
       ),
-    [invoices, sortBy, sortDir],
+    [filtered, sortBy, sortDir],
   )
+
+  const totalShown = useMemo(() => filtered.reduce((s, i) => s + Number(i.amount ?? 0), 0), [filtered])
+  const pendingCount = useMemo(() => filtered.filter((i) => i.status === 'Pending').length, [filtered])
+  const approvedCount = useMemo(
+    () => filtered.filter((i) => i.status === 'Approved' || i.status === 'Submitted').length,
+    [filtered],
+  )
+  const rejectedCount = useMemo(() => filtered.filter((i) => i.status === 'Rejected').length, [filtered])
 
   const exportCSV = () =>
     downloadCSV(
@@ -257,38 +301,50 @@ export default function InvoicesPage() {
         title="Invoices"
         description="Browse, approve, reject and generate payment orders for vendor invoices."
         actions={
-          <>
-            <span className="badge badge-info">
-              Shown: <span className="font-bold">Rs {formatMoney(totalShown)}</span>
-            </span>
-            <Button variant="primary" onClick={() => setCreating(true)}>
-              <Plus size={16} /> New Invoice
-            </Button>
-          </>
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            <Plus size={16} /> New Invoice
+          </Button>
         }
+      />
+
+      <SummaryCards
+        items={[
+          {
+            label: 'Total Shown',
+            value: `Rs ${formatMoney(totalShown)}`,
+            sub: `${sorted.length} invoice${sorted.length === 1 ? '' : 's'}`,
+            icon: <Banknote size={16} />,
+            tone: 'primary',
+          },
+          {
+            label: 'Pending',
+            value: String(pendingCount),
+            sub: 'awaiting approval',
+            icon: <Clock size={16} />,
+            tone: 'warn',
+          },
+          {
+            label: 'Approved / Submitted',
+            value: String(approvedCount),
+            sub: 'cleared for PO',
+            icon: <CheckCircle2 size={16} />,
+            tone: 'ok',
+          },
+          {
+            label: 'Rejected',
+            value: String(rejectedCount),
+            sub: 'need rework',
+            icon: <XCircle size={16} />,
+            tone: 'err',
+          },
+        ]}
       />
 
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search invoice or serial no…' }}
-        filters={[
-          {
-            key: 'status',
-            label: 'Status',
-            value: status,
-            onChange: setStatus,
-            options: STATUSES.map((s) => ({ value: s, label: s === 'all' ? 'All statuses' : s })),
-          },
-          {
-            key: 'contract',
-            label: 'Contract',
-            value: contract,
-            onChange: setContract,
-            options: [
-              { value: 'all', label: 'All contracts' },
-              ...contracts.map((c) => ({ value: c.id, label: c.contract_no })),
-            ],
-          },
-        ]}
+        filterBar={
+          <AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} />
+        }
         sort={{
           columns: [
             { key: 'invoice_date', label: 'Date' },

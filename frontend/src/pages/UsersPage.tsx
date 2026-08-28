@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, ShieldCheck, Users as UsersIcon, Trash2 } from 'lucide-react'
+import { Plus, Pencil, ShieldCheck, Users as UsersIcon, Trash2, Lock } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -12,8 +12,11 @@ import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
+import AdvancedFilter from '../components/ui/AdvancedFilter'
+import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, type SortDirection } from '../lib/export'
 import { useColumnVisibility } from '../lib/columns'
+import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
 
 interface Role {
   id: string
@@ -47,6 +50,17 @@ const USER_COLUMN_DEFS = [
 
 const USER_DEFAULT_COLUMNS = ['username', 'full_name', 'email', 'role', 'status']
 
+const USER_FILTER_COLUMNS: FilterColumnDef[] = [
+  { key: 'username', label: 'Username', type: 'text' },
+  { key: 'full_name', label: 'Full Name', type: 'text' },
+  { key: 'email', label: 'Email', type: 'text' },
+  { key: 'role', label: 'Role', type: 'select' },
+  { key: 'status', label: 'Status', type: 'select', options: [
+    { value: 'active', label: 'Active' },
+    { value: 'inactive', label: 'Inactive' },
+  ] },
+]
+
 export default function UsersPage() {
   const [tab, setTab] = useTab('users')
   const [users, setUsers] = useState<User[]>([])
@@ -60,6 +74,7 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<User | null>(null)
   const [creating, setCreating] = useState(false)
   const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState<FilterState[]>([])
   const [sortBy, setSortBy] = useState('username')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
   const toast = useToast()
@@ -100,12 +115,30 @@ export default function UsersPage() {
     return perms?.length ?? 0
   }
 
+  const filterColumns = useMemo<FilterColumnDef[]>(
+    () =>
+      USER_FILTER_COLUMNS.map((c) =>
+        c.key === 'role'
+          ? { ...c, options: roles.map((r) => ({ value: r.name, label: r.name })) }
+          : c,
+      ),
+    [roles],
+  )
+
   const filteredUsers = useMemo(() => {
     const q = search.toLowerCase()
-    return users.filter((u) =>
-      `${u.username} ${u.full_name ?? ''} ${u.email ?? ''} ${u.roles?.name ?? ''}`.toLowerCase().includes(q),
-    )
-  }, [users, search])
+    const searched = q
+      ? users.filter((u) =>
+          `${u.username} ${u.full_name ?? ''} ${u.email ?? ''} ${u.roles?.name ?? ''}`.toLowerCase().includes(q),
+        )
+      : users
+    return applyFilters(searched, filters, filterColumns, (u, key) => {
+      if (key === 'role') return u.roles?.name ?? null
+      return (u as unknown as Record<string, string | null>)[key] ?? null
+    })
+  }, [users, search, filters, filterColumns])
+
+  const activeCount = useMemo(() => filteredUsers.filter((u) => u.status === 'active').length, [filteredUsers])
 
   const sortedUsers = useMemo(
     () =>
@@ -160,8 +193,34 @@ export default function UsersPage() {
 
       {tab === 'users' && (
         <>
+          <SummaryCards
+            items={[
+              {
+                label: 'Users Shown',
+                value: String(filteredUsers.length),
+                sub: `of ${users.length} total`,
+                icon: <UsersIcon size={16} />,
+                tone: 'primary',
+              },
+              {
+                label: 'Active',
+                value: String(activeCount),
+                sub: 'can sign in',
+                icon: <ShieldCheck size={16} />,
+                tone: 'ok',
+              },
+              {
+                label: 'Roles',
+                value: String(roles.length),
+                sub: 'defined in system',
+                icon: <Lock size={16} />,
+                tone: 'purple',
+              },
+            ]}
+          />
           <DataToolbar
             search={{ value: search, onChange: setSearch, placeholder: 'Search users…' }}
+            filterBar={<AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} />}
             sort={{
               columns: [
                 { key: 'username', label: 'Username' },
