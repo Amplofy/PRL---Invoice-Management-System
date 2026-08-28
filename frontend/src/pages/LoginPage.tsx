@@ -204,8 +204,21 @@ function AuthPanel() {
 export default function LoginPage() {
   return (
     <div className="relative z-10 flex min-h-dvh">
-      {/* Brand panel — PRL corporate blue with a clear facility strip, independent of mode */}
-      <aside className="relative hidden w-[44%] flex-col overflow-hidden lg:flex" style={{ background: 'linear-gradient(175deg, #2d2e83 0%, #272c74 62%, #232866 100%)' }}>
+      {/* Brand panel — facility photo as the full background under a PRL-blue scrim */}
+      <aside className="relative hidden w-[44%] flex-col overflow-hidden lg:flex">
+        <img
+          src="/brand/prl-refinery.jpg"
+          alt="Pakistan Refinery Ltd facility"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(170deg, rgba(30,32,90,0.86) 0%, rgba(38,40,105,0.74) 48%, rgba(22,23,70,0.9) 100%)',
+          }}
+        />
+
         <div className="relative z-10 flex flex-1 flex-col justify-center p-10 xl:p-14">
           <div className="max-w-md">
             <h2 className="text-[2rem] font-extrabold leading-[1.15] tracking-tight text-white xl:text-[2.4rem]">
@@ -243,20 +256,10 @@ export default function LoginPage() {
               ))}
             </div>
           </div>
-        </div>
 
-        {/* facility strip — clear photo band capped with the PRL flame red */}
-        <div className="relative h-[36%] shrink-0">
-          <div className="absolute inset-x-0 top-0 z-10 h-0.5" style={{ background: '#c41e1e' }} />
-          <img
-            src="/brand/prl-refinery.jpg"
-            alt="Pakistan Refinery Ltd facility"
-            className="h-full w-full object-cover"
-            style={{ maskImage: 'linear-gradient(180deg, transparent 0%, black 14%)', WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, black 14%)' }}
-          />
-          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-4 bg-gradient-to-t from-[rgba(16,16,48,0.85)] to-transparent px-10 pb-3.5 pt-8 text-[0.7rem] text-white/70 xl:px-14">
+          <div className="flex items-center justify-between gap-4 pt-10 text-[0.7rem] text-white/50">
             <span>
-              Built by <span className="font-semibold text-white">Abdul Moiz</span>
+              Built by <span className="font-semibold text-white/80">Abdul Moiz</span>
             </span>
             <span>© {new Date().getFullYear()} Pakistan Refinery Ltd</span>
           </div>

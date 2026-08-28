@@ -970,45 +970,33 @@ table.data-table {
 
 /* ================= PRL flame loader ================= */
 .prl-flame {
+  transform-origin: 50% 94%;
+  animation: flameSway 2.2s ease-in-out infinite alternate;
   filter: drop-shadow(0 10px 24px rgba(208, 52, 44, 0.35));
 }
-.prl-flame .prl-flame-shell {
-  transform-origin: 32px 74px;
-  animation: flameBase 1.7s ease-in-out infinite alternate;
-}
 .prl-flame .prl-flame-mid {
-  transform-origin: 32px 64px;
-  animation: flameWaveMid 1.15s ease-in-out infinite alternate;
-}
-.prl-flame .prl-flame-tip {
-  transform-origin: 32px 29px;
-  animation: flameWaveTip 0.8s ease-in-out infinite alternate;
+  transform-origin: 32px 76px;
+  animation: flameBreathe 1.4s ease-in-out infinite alternate;
 }
 .prl-flame .prl-flame-core {
-  transform-origin: 32px 60px;
-  animation: flameCore 0.55s ease-in-out infinite alternate;
+  transform-origin: 32px 76px;
+  animation: flamePulse 0.9s ease-in-out infinite alternate;
 }
-/* wave travels bottom to top: base planted, mid swings, tip swings hardest */
-@keyframes flameBase {
-  0% { transform: rotate(-1.2deg) skewX(-1deg); }
-  100% { transform: rotate(1.2deg) skewX(1deg); }
+@keyframes flameSway {
+  0% { transform: rotate(-2.4deg); }
+  100% { transform: rotate(2.4deg); }
 }
-@keyframes flameWaveMid {
-  0% { transform: skewX(-5deg) rotate(-1.5deg) scaleX(1.01); }
-  100% { transform: skewX(5deg) rotate(1.5deg) scaleX(0.99); }
+@keyframes flameBreathe {
+  0% { transform: scaleY(0.97); }
+  100% { transform: scaleY(1.03); }
 }
-@keyframes flameWaveTip {
-  0% { transform: skewX(-9deg) rotate(-4deg) scaleX(0.9); }
-  100% { transform: skewX(9deg) rotate(4deg) scaleX(0.9); }
-}
-@keyframes flameCore {
-  0% { transform: scale(0.88); opacity: 0.72; }
-  100% { transform: scale(1.12); opacity: 1; }
+@keyframes flamePulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  100% { transform: scale(1.08); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .prl-flame .prl-flame-shell,
+  .prl-flame,
   .prl-flame .prl-flame-mid,
-  .prl-flame .prl-flame-tip,
   .prl-flame .prl-flame-core { animation: none; }
 }
 

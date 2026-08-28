@@ -4,9 +4,8 @@ interface PRLFlameProps {
 }
 
 /**
- * Animated flame lifted from the PRL logo mark — red core inside the
- * signature green droplet shell. Base stays planted while the body
- * waves along the X axis, growing toward a wavy tip.
+ * Animated flame lifted from the PRL logo mark — three nested layers,
+ * each enclosed within a bigger one: green shell, red flame, golden core.
  */
 export default function PRLFlame({ size = 88, className = '' }: PRLFlameProps) {
   return (
@@ -20,50 +19,38 @@ export default function PRLFlame({ size = 88, className = '' }: PRLFlameProps) {
       className={`prl-flame ${className}`}
     >
       <defs>
-        <linearGradient id="prl-flame-shell" x1="32" y1="8" x2="32" y2="74" gradientUnits="userSpaceOnUse">
+        <linearGradient id="prl-flame-shell" x1="32" y1="8" x2="32" y2="76" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#2e9e63" />
           <stop offset="0.55" stopColor="#0b7a3b" />
           <stop offset="1" stopColor="#065f2e" />
         </linearGradient>
-        <linearGradient id="prl-flame-mid" x1="32" y1="24" x2="32" y2="66" gradientUnits="userSpaceOnUse">
+        <linearGradient id="prl-flame-mid" x1="32" y1="22" x2="32" y2="76" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#f26649" />
           <stop offset="0.45" stopColor="#d0342c" />
           <stop offset="1" stopColor="#8f1d1d" />
         </linearGradient>
-        <linearGradient id="prl-flame-tip" x1="32" y1="8" x2="32" y2="30" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#fcd34d" />
-          <stop offset="0.55" stopColor="#fbbf24" />
-          <stop offset="1" stopColor="#f59e0b" />
-        </linearGradient>
-        <linearGradient id="prl-flame-core" x1="32" y1="42" x2="32" y2="62" gradientUnits="userSpaceOnUse">
+        <linearGradient id="prl-flame-core" x1="32" y1="36" x2="32" y2="76" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#fcd34d" />
           <stop offset="0.5" stopColor="#f87171" />
           <stop offset="1" stopColor="#dc2626" />
         </linearGradient>
       </defs>
 
-      {/* green droplet shell — planted base, barely sways */}
+      {/* outermost — green shell */}
       <path
-        className="prl-flame-shell"
-        d="M32 4 C 21 21, 9.5 33, 9.5 49.5 A 22.5 22.5 0 0 0 54.5 49.5 C 54.5 33, 43 21, 32 4 Z"
+        d="M32 6 C 21 23, 8 35, 8 52 A 24 24 0 0 0 56 52 C 56 35, 43 23, 32 6 Z"
         fill="url(#prl-flame-shell)"
       />
-      {/* red inner flame — mid wave */}
+      {/* middle — red flame, nested inside the shell */}
       <path
         className="prl-flame-mid"
-        d="M32 23 C 25.5 33.5, 19 40.5, 19 51 A 13 13 0 0 0 45 51 C 45 40.5, 38.5 33.5, 32 23 Z"
+        d="M32 20 C 24.5 32, 15 42, 15 59 A 17 17 0 0 0 49 59 C 49 42, 39.5 32, 32 20 Z"
         fill="url(#prl-flame-mid)"
       />
-      {/* wavy tip — largest swing */}
-      <path
-        className="prl-flame-tip"
-        d="M32 9.5 C 33.4 15.5, 35.6 19.4, 35.6 24 C 35.6 26.8, 34 28.8, 32 28.8 C 30 28.8, 28.4 26.8, 28.4 24 C 28.4 19.4, 30.6 15.5, 32 9.5 Z"
-        fill="url(#prl-flame-tip)"
-      />
-      {/* bright core */}
+      {/* innermost — golden core, nested inside the red flame */}
       <path
         className="prl-flame-core"
-        d="M32 41 C 28.8 46.5, 26.5 49.5, 26.5 54.5 A 5.5 5.5 0 0 0 37.5 54.5 C 37.5 49.5, 35.2 46.5, 32 41 Z"
+        d="M32 36 C 28.5 42.5, 22 48, 22 66 A 10 10 0 0 0 42 66 C 42 48, 35.5 42.5, 32 36 Z"
         fill="url(#prl-flame-core)"
       />
     </svg>
