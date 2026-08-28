@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GitBranch, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Search, Kanban, Clock, ArrowRight } from 'lucide-react'
 import { apiGet } from '../lib/api'
-import { formatMoney, formatDate } from '../lib/format'
+import { formatMoney, timeAgo } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
-import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
+import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 
 interface ServiceMatrixRow {
@@ -20,6 +21,7 @@ interface ServiceMatrixRow {
 
 interface InvoiceLite {
   id: string
+  serial_no: string | null
   invoice_no: string | null
   invoice_date: string | null
   amount: number
@@ -31,6 +33,19 @@ interface InvoiceLite {
   contracts: { contract_no: string | null; vendors: Array<{ name: string | null }> | null } | null
 }
 
+interface ColumnDef {
+  status: string
+  title: string
+  tone: 'warn' | 'ok' | 'err'
+  hint: string
+}
+
+const COLUMNS: ColumnDef[] = [
+  { status: 'Pending', title: 'Pending', tone: 'warn', hint: 'Awaiting decision' },
+  { status: 'Approved', title: 'Approved', tone: 'ok', hint: 'Cleared for payment' },
+  { status: 'Rejected', title: 'Rejected', tone: 'err', hint: 'Sent back to vendor' },
+]
+
 export default function WorkflowPage() {
   const [matrix, setMatrix] = useState<ServiceMatrixRow[]>([])
   const [invoices, setInvoices] = useState<InvoiceLite[]>([])
@@ -38,6 +53,7 @@ export default function WorkflowPage() {
   const [t2, setT2] = useState('')
   const [t3, setT3] = useState('')
   const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
   const toast = useToast()
 
   useEffect(() => {
@@ -51,6 +67,8 @@ export default function WorkflowPage() {
         setInvoices(i.invoices)
       } catch (e) {
         toast.error('Failed to load workflow data', (e as Error).message)
+      } finally {
+        setLoading(false)
       }
     }
     load()
@@ -73,7 +91,7 @@ export default function WorkflowPage() {
       if (t2 && i.t2 !== t2) return false
       if (t3 && i.t3 !== t3) return false
       if (q) {
-        const hay = `${i.invoice_no ?? ''} ${i.contracts?.contract_no ?? ''} ${i.contracts?.vendors?.[0]?.name ?? ''}`.toLowerCase()
+        const hay = `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${i.contracts?.contract_no ?? ''} ${i.contracts?.vendors?.[0]?.name ?? ''}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true
@@ -81,19 +99,15 @@ export default function WorkflowPage() {
   }, [invoices, t1, t2, t3, search])
 
   const total = useMemo(() => filtered.reduce((s, i) => s + Number(i.amount ?? 0), 0), [filtered])
-  const tankerInvoices = useMemo(
-    () => filtered.filter((i) => i.tanker_name && i.tanker_name.trim() !== ''),
-    [filtered],
-  )
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Invoice Workspace"
-        description="Drill into invoices through the T1 → T2 → T3 service hierarchy."
+        title="Workflow Board"
+        description="Drag-free kanban over the invoice lifecycle — click any card to open its workspace."
         actions={
           <div className="rounded-xl border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--text-dim)]">
-            <GitBranch size={14} className="mr-1.5 inline text-[var(--accent)]" />
+            <Kanban size={14} className="mr-1.5 inline text-[var(--accent)]" />
             {filtered.length} invoices · <span className="font-bold text-[var(--text)]">Rs {formatMoney(total)}</span>
           </div>
         }
@@ -143,56 +157,70 @@ export default function WorkflowPage() {
         </div>
       </GlassCard>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <GlassCard className="p-4">
-          <div className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Matched invoices</div>
-          <div className="mt-1 text-2xl font-bold">{filtered.length}</div>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <div className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Matched value</div>
-          <div className="mt-1 text-2xl font-bold">Rs {formatMoney(total)}</div>
-        </GlassCard>
-        <GlassCard className="p-4">
-          <div className="text-xs font-semibold uppercase tracking-wider text-[var(--text-dim)]">Tanker-linked</div>
-          <div className="mt-1 text-2xl font-bold">{tankerInvoices.length}</div>
-        </GlassCard>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {COLUMNS.map((col) => {
+          const items = filtered.filter((i) => i.status === col.status)
+          const value = items.reduce((s, i) => s + Number(i.amount ?? 0), 0)
+          return (
+            <div key={col.status} className="glass flex min-h-[320px] flex-col p-4">
+              <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-3">
+                <div className="flex items-center gap-2">
+                  <StatusBadge tone={col.tone}>{col.title}</StatusBadge>
+                  <span className="text-xs text-[var(--text-muted)]">{col.hint}</span>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-bold tabular-nums">{items.length}</div>
+                  <div className="text-[0.65rem] text-[var(--text-muted)]">Rs {formatMoney(value)}</div>
+                </div>
+              </div>
+              <div className="kanban-scroll flex-1 space-y-2.5 overflow-y-auto pr-0.5">
+                {items.map((i) => (
+                  <Link
+                    key={i.id}
+                    to={`/invoices/${i.id}`}
+                    className={`kanban-card ${col.status.toLowerCase()}`}
+                    title="Open invoice workspace"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono text-[0.7rem] text-[var(--text-muted)]">
+                        {i.serial_no ?? '—'}
+                      </span>
+                      <span className="flex items-center gap-1 text-[0.65rem] text-[var(--text-muted)]">
+                        <Clock size={10} /> {timeAgo(i.invoice_date)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-sm font-bold">{i.invoice_no ?? '—'}</div>
+                    <div className="mt-0.5 text-xs text-[var(--text-dim)]">
+                      {i.contracts?.vendors?.[0]?.name ?? '—'}
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between">
+                      <span className="badge badge-info !text-[0.6rem]">{i.contracts?.contract_no ?? '—'}</span>
+                      <span className="text-sm font-extrabold">Rs {formatMoney(i.amount)}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[0.65rem] text-[var(--text-muted)]">
+                      <span className="truncate">{[i.t1, i.t2, i.t3].filter(Boolean).join(' → ') || '—'}</span>
+                      <ArrowRight size={11} className="shrink-0" />
+                    </div>
+                  </Link>
+                ))}
+                {items.length === 0 && (
+                  <div className="flex h-32 items-center justify-center rounded-xl border border-dashed border-[var(--border)]">
+                    <span className="text-xs text-[var(--text-muted)]">
+                      {loading ? 'Loading…' : 'No invoices here'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
-      <GlassCard className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Invoice</th>
-                <th>Date</th>
-                <th>T1</th>
-                <th>T2</th>
-                <th>T3</th>
-                <th>Tanker</th>
-                <th className="text-right">Amount</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((i) => (
-                <tr key={i.id}>
-                  <td className="font-semibold">{i.invoice_no ?? '—'}</td>
-                  <td>{formatDate(i.invoice_date)}</td>
-                  <td><span className="badge badge-info">{i.t1 ?? '—'}</span></td>
-                  <td>{i.t2 ?? '—'}</td>
-                  <td>{i.t3 ?? '—'}</td>
-                  <td>{i.tanker_name ?? '—'}</td>
-                  <td className="text-right font-semibold">{formatMoney(i.amount)}</td>
-                  <td><StatusBadge tone={statusTone(i.status)}>{i.status}</StatusBadge></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {filtered.length === 0 && (
+      {!loading && filtered.length === 0 && (
+        <GlassCard>
           <EmptyState title="No invoices match" description="Adjust the T1/T2/T3 cascade or clear the search." />
-        )}
-      </GlassCard>
+        </GlassCard>
+      )}
     </div>
   )
 }
