@@ -204,46 +204,15 @@ function AuthPanel() {
 export default function LoginPage() {
   return (
     <div className="relative z-10 flex min-h-dvh">
-      <div className="bg-orb orb-1" />
-      <div className="bg-orb orb-2" />
-      <div className="bg-orb orb-3" />
-
-      {/* Brand panel — fixed dark surface with refinery imagery, independent of mode */}
-      <aside className="relative hidden w-[44%] flex-col overflow-hidden lg:flex">
-        <img
-          src="/brand/prl-refinery.jpg"
-          alt="Pakistan Refinery Ltd facility"
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(160deg, rgba(9,13,32,0.88) 0%, rgba(13,17,44,0.82) 45%, rgba(10,10,30,0.93) 100%)',
-          }}
-        />
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(at 82% 10%, rgba(99,102,241,0.22) 0, transparent 46%), radial-gradient(at 8% 92%, rgba(52,211,153,0.12) 0, transparent 42%), radial-gradient(at 92% 88%, rgba(244,114,182,0.1) 0, transparent 40%)',
-          }}
-        />
-
-        <div className="relative z-10 flex flex-1 flex-col justify-between p-10 xl:p-14">
-          <div>
-            <div className="text-xl font-extrabold leading-none tracking-tight text-white">PRL-EOMS</div>
-            <div className="mt-2 text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-white/50">
-              Pakistan Refinery Ltd
-            </div>
-          </div>
-
-          <div className="max-w-md py-10">
+      {/* Brand panel — PRL corporate blue with a clear facility strip, independent of mode */}
+      <aside className="relative hidden w-[44%] flex-col overflow-hidden lg:flex" style={{ background: 'linear-gradient(175deg, #2d2e83 0%, #272c74 62%, #232866 100%)' }}>
+        <div className="relative z-10 flex flex-1 flex-col justify-center p-10 xl:p-14">
+          <div className="max-w-md">
             <h2 className="text-[2rem] font-extrabold leading-[1.15] tracking-tight text-white xl:text-[2.4rem]">
               Run refinery operations with{' '}
               <span
                 style={{
-                  background: 'linear-gradient(120deg, #93c5fd, #c4b5fd 55%, #6ee7b7)',
+                  background: 'linear-gradient(120deg, #fcd34d, #f87171 55%, #6ee7b7)',
                   WebkitBackgroundClip: 'text',
                   backgroundClip: 'text',
                   WebkitTextFillColor: 'transparent',
@@ -274,10 +243,20 @@ export default function LoginPage() {
               ))}
             </div>
           </div>
+        </div>
 
-          <div className="flex items-center justify-between gap-4 text-[0.7rem] text-white/40">
+        {/* facility strip — clear photo band capped with the PRL flame red */}
+        <div className="relative h-[36%] shrink-0">
+          <div className="absolute inset-x-0 top-0 z-10 h-0.5" style={{ background: '#c41e1e' }} />
+          <img
+            src="/brand/prl-refinery.jpg"
+            alt="Pakistan Refinery Ltd facility"
+            className="h-full w-full object-cover"
+            style={{ maskImage: 'linear-gradient(180deg, transparent 0%, black 14%)', WebkitMaskImage: 'linear-gradient(180deg, transparent 0%, black 14%)' }}
+          />
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-4 bg-gradient-to-t from-[rgba(16,16,48,0.85)] to-transparent px-10 pb-3.5 pt-8 text-[0.7rem] text-white/70 xl:px-14">
             <span>
-              Built by <span className="font-semibold text-white/60">Abdul Moiz</span>
+              Built by <span className="font-semibold text-white">Abdul Moiz</span>
             </span>
             <span>© {new Date().getFullYear()} Pakistan Refinery Ltd</span>
           </div>
