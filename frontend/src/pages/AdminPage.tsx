@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Save, Plus, Trash2, Pencil, ShieldCheck } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
-import { formatDateTime } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -33,15 +32,6 @@ interface CostElement {
   code: string
   name: string | null
 }
-interface AuditEntry {
-  id: string
-  entity: string | null
-  entity_id: string | null
-  action: string | null
-  description: string | null
-  user_email: string | null
-  timestamp: string | null
-}
 
 const SETTING_LABELS: Record<string, { label: string; hint?: string; rows?: number }> = {
   followup_template: {
@@ -67,7 +57,6 @@ export default function AdminPage() {
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [matrix, setMatrix] = useState<ServiceMatrix[]>([])
   const [costs, setCosts] = useState<CostElement[]>([])
-  const [audit, setAudit] = useState<AuditEntry[]>([])
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [creatingService, setCreatingService] = useState(false)
   const [creatingCost, setCreatingCost] = useState(false)
@@ -76,18 +65,16 @@ export default function AdminPage() {
 
   const load = useCallback(async () => {
     try {
-      const [s, v, m, c, a] = await Promise.all([
+      const [s, v, m, c] = await Promise.all([
         apiGet<{ settings: Setting[] }>('/api/settings'),
         apiGet<{ vendors: Vendor[] }>('/api/vendors'),
         apiGet<{ serviceMatrix: ServiceMatrix[] }>('/api/service-matrix'),
         apiGet<{ costElements: CostElement[] }>('/api/cost-elements'),
-        apiGet<{ auditLog: AuditEntry[] }>('/api/audit-log'),
       ])
       setSettings(s.settings)
       setVendors(v.vendors)
       setMatrix(m.serviceMatrix)
       setCosts(c.costElements)
-      setAudit(a.auditLog)
     } catch (e) {
       toast.error('Failed to load admin data', (e as Error).message)
     }
@@ -150,7 +137,7 @@ export default function AdminPage() {
     <div className="space-y-5">
       <PageHeader
         title="Admin Panel"
-        description="Email templates, vendor emails, service matrix, cost elements and audit trail."
+        description="Email templates, vendor emails, service matrix and cost elements. The audit trail lives under Insights."
         actions={
           <span className="badge badge-purple">
             <ShieldCheck size={13} /> Admin only
@@ -164,7 +151,6 @@ export default function AdminPage() {
           { id: 'vendors', label: 'Vendor Emails' },
           { id: 'matrix', label: 'Service Matrix' },
           { id: 'costs', label: 'Cost Elements' },
-          { id: 'audit', label: 'Audit Log' },
         ]}
         active={tab}
         onChange={setTab}
@@ -320,38 +306,6 @@ export default function AdminPage() {
               </tbody>
             </table>
           </div>
-        </GlassCard>
-      )}
-
-      {tab === 'audit' && (
-        <GlassCard className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>User</th>
-                  <th>Action</th>
-                  <th>Entity</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((a) => (
-                  <tr key={a.id}>
-                    <td className="whitespace-nowrap text-xs">{formatDateTime(a.timestamp)}</td>
-                    <td className="text-xs">{a.user_email ?? '—'}</td>
-                    <td>
-                      <span className="badge badge-info">{a.action ?? '—'}</span>
-                    </td>
-                    <td className="text-xs">{a.entity ?? '—'}</td>
-                    <td className="cell-wrap max-w-xl text-xs text-[var(--text-dim)]">{a.description ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {audit.length === 0 && <EmptyState title="No audit entries yet" />}
         </GlassCard>
       )}
 
