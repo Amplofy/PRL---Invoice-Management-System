@@ -1,12 +1,19 @@
 # PRL-EOMS Production Deployment
 
-Frontend on Netlify, API on Render, database + auth on Supabase.
-Repo is already on GitHub, so both Netlify and Render connect to it directly.
+Frontend on Cloudflare Pages (or Netlify), API on Render, database + auth on Supabase.
+Repo is already on GitHub, so both hosting platforms connect to it directly.
 
 ## 0. Prerequisites
 
 - GitHub repo: `abdulmoizliaquatali-create/Invoice-Management-System` (pushed)
-- Accounts: netlify.com, render.com, supabase.com (free tiers work)
+- Accounts: dash.cloudflare.com, render.com, supabase.com (free tiers work)
+
+## 0.5 Resetting an existing Supabase project
+
+If the database already has old/partial tables, clean it first:
+
+1. SQL Editor → run `supabase/reset.sql` (drops every EOMS table — destroys data).
+2. Then run the three scripts from step 1 below, in order.
 
 ## 1. Supabase (database + auth)
 
@@ -37,19 +44,35 @@ Repo is already on GitHub, so both Netlify and Render connect to it directly.
 3. Deploy. Note the service URL, e.g. `https://prl-eoms-backend.onrender.com`.
    Verify: `curl https://<render-url>/api/health` → `{"status":"ok"}`.
 
-## 3. Netlify (frontend SPA)
+## 3. Frontend hosting (SPA)
 
-1. Add new site → Import from Git → pick the repo.
-2. `netlify.toml` at the repo root is auto-detected (build + SPA redirects).
-3. Site configuration → Environment variables:
+### Option A — Cloudflare Pages (recommended: free unlimited builds)
+
+Netlify's free plan caps build minutes per month. Cloudflare Pages has no
+build-minute cap, so prefer it when the Netlify quota is exhausted.
+
+1. Cloudflare dashboard → Workers & Pages → Create → Pages → Connect to Git.
+2. Select the repo, then set:
+   - Framework preset: Vite
+   - Root directory: `frontend`
+   - Build command: `npm run build`
+   - Output directory: `dist`
+3. Environment variables (Production):
    - `VITE_API_URL` = `https://<render-url>` (NO trailing slash, NO `/api`)
    - `VITE_SUPABASE_URL` = `https://<project>.supabase.co`
    - `VITE_SUPABASE_ANON_KEY` = anon key
-4. Deploy. Netlify URL example: `https://<site>.netlify.app`.
+4. Save and deploy. SPA fallback works via `frontend/public/_redirects`.
+
+### Option B — Netlify (when build minutes are available)
+
+1. Add new site → Import from Git → pick the repo.
+2. `netlify.toml` at the repo root is auto-detected (build + SPA redirects).
+3. Set the same three `VITE_*` environment variables as above.
+4. Deploy. Cloudflare Pages URL like https://<site>.pages.dev or Netlify URL like: `https://<site>.netlify.app`.
 
 ## 4. Close the loop
 
-1. Set `CORS_ORIGIN` on Render to the final Netlify URL → save → redeploy.
+1. Set `CORS_ORIGIN` on Render to the final frontend URL (Cloudflare Pages or Netlify) → save → redeploy.
 2. Optional custom domains on both platforms (HTTPS is automatic).
 3. Log in with a Supabase auth user (not demo mode) and smoke-test:
    invoices list → create → reports → import wizard.

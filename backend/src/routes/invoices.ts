@@ -244,7 +244,8 @@ invoicesRouter.post('/invoices/:id/po', authRequired, async (req, res, next) => 
       res.status(400).json({ error: 'Payment order requires an approved invoice' })
       return
     }
-    const { po, created, error: poError } = await createPo(supabase, req.params.id, user?.email)
+    const invoiceId = String(req.params.id)
+    const { po, created, error: poError } = await createPo(supabase, invoiceId, user?.email)
     if (poError) {
       res.status(400).json({ error: poError })
       return
