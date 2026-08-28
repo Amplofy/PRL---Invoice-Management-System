@@ -693,34 +693,12 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
         </>
       }
     >
-      <div id="invoice-form" className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+      <div id="invoice-form" className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        {/* Main column — clean 2-column field rhythm */}
+        <div className="space-y-4 lg:col-span-3">
           <div className="glass p-5">
-            <div className="section-title">Invoice</div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-6">
-              {/* Auto-generated serial — read only */}
-              <div className="sm:col-span-2">
-                <span className="mb-1.5 flex items-center justify-between text-xs font-semibold text-[var(--text-dim)]">
-                  Serial No
-                  <span
-                    className="flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.58rem] font-bold uppercase tracking-wide text-[var(--accent)]"
-                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
-                  >
-                    <Wand2 size={9} /> auto
-                  </span>
-                </span>
-                <div
-                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] font-mono text-sm font-bold tracking-wide"
-                  title="Auto-generated: running number for the Gregorian year + fiscal-year tag"
-                >
-                  {generatedSerial || '—'}
-                  <Lock size={12} className="shrink-0 text-[var(--text-muted)]" />
-                </div>
-                <span className="mt-1 block text-[0.65rem] leading-snug text-[var(--text-muted)]">
-                  Count for {form.invoice_date ? form.invoice_date.slice(0, 4) : new Date().getFullYear()} + fiscal
-                  year tag
-                </span>
-              </div>
+            <div className="section-title">Invoice Details</div>
+            <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
               <Field label="Invoice No" required error={showErrors ? issueMap.invoice_no : undefined}>
                 <input
                   className={`input ${showErrors && issueMap.invoice_no ? 'invalid' : ''}`}
@@ -737,8 +715,12 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                   onChange={set('invoice_date')}
                 />
               </Field>
-
-              <Field label="Amount (Rs)" required error={showErrors ? issueMap.amount : undefined} hint={draftAmount > 0 ? formatAmountWords(draftAmount) : undefined}>
+              <Field
+                label="Amount (Rs)"
+                required
+                error={showErrors ? issueMap.amount : undefined}
+                hint={draftAmount > 0 ? formatAmountWords(draftAmount) : undefined}
+              >
                 <input
                   type="number"
                   min={0}
@@ -749,7 +731,10 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                   placeholder="0.00"
                 />
               </Field>
-              <div className="sm:col-span-3">
+              <Field label="Item No">
+                <input className="input" value={form.item_no} onChange={set('item_no')} />
+              </Field>
+              <div className="sm:col-span-2">
                 <Field label="Contract" hint="Live utilization preview on the right">
                   <select className="input" value={form.contract_id} onChange={set('contract_id')}>
                     <option value="">Select contract…</option>
@@ -765,10 +750,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                   </select>
                 </Field>
               </div>
-              <Field label="Item No">
-                <input className="input" value={form.item_no} onChange={set('item_no')} />
-              </Field>
-              <div className="sm:col-span-6">
+              <div className="sm:col-span-2">
                 <Field label="Remarks">
                   <textarea className="input min-h-14" rows={2} value={form.remarks} onChange={set('remarks')} />
                 </Field>
@@ -787,7 +769,38 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           </div>
         </div>
 
-        <div className="space-y-4">
+        {/* Side column — serial banner, live contract math, validation */}
+        <div className="space-y-4 lg:col-span-2">
+          <div className="glass relative overflow-hidden p-5">
+            <div
+              className="pointer-events-none absolute -right-10 -top-14 h-36 w-36 rounded-full opacity-20 blur-2xl"
+              style={{ background: 'radial-gradient(circle, var(--accent), transparent 70%)' }}
+            />
+            <div className="relative">
+              <div className="flex items-center justify-between">
+                <div className="section-title !mb-0">Serial Number</div>
+                <span
+                  className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--accent)]"
+                  style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
+                >
+                  <Wand2 size={10} /> auto
+                </span>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="font-mono text-[1.7rem] font-extrabold leading-none tracking-wider gradient-text">
+                  {generatedSerial || '···· - ··'}
+                </span>
+                <Lock size={13} className="shrink-0 text-[var(--text-muted)]" />
+              </div>
+              <div className="mt-2.5 text-[0.68rem] leading-relaxed text-[var(--text-muted)]">
+                <b className="text-[var(--text-dim)]">XXX</b> = running count of invoices in{' '}
+                {form.invoice_date ? form.invoice_date.slice(0, 4) : new Date().getFullYear()} ·{' '}
+                <b className="text-[var(--text-dim)]">YY</b> = fiscal year (Jul–Jun). Regenerates as the
+                invoice date changes.
+              </div>
+            </div>
+          </div>
+
           <ContractSummaryPanel
             contract={selectedContract ? toContractLite(selectedContract) : null}
             utilization={utilization}

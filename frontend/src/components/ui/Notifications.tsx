@@ -217,6 +217,10 @@ export default function Notifications() {
   const readItems = useMemo(() => items.filter((n) => seen.has(n.id)), [items, seen])
   const unread = unreadItems.length
 
+  // Smart sizing: the panel widens as notifications pile up so entries stay readable
+  const panelWidth =
+    items.length === 0 ? 'max-w-[360px]' : items.length <= 4 ? 'max-w-lg' : 'max-w-xl'
+
   const markRead = (n: Notification) => {
     setSeen((prev) => {
       const next = new Set(prev)
@@ -242,7 +246,7 @@ export default function Notifications() {
   return (
     <>
       <button
-        className="btn btn-ghost relative !px-3"
+        className={`btn btn-ghost relative !px-3 ${open ? 'bg-[var(--surface-hover)] text-[var(--accent)]' : ''}`}
         title="Notifications"
         onClick={() => setOpen((v) => !v)}
       >
@@ -269,21 +273,21 @@ export default function Notifications() {
           onClick={() => setOpen(false)}
         />
         <aside
-          className={`glass-strong !absolute inset-y-0 right-0 flex w-full max-w-sm flex-col !rounded-none transition-transform duration-300 ease-out ${
+          className={`glass-strong !absolute inset-y-0 right-0 flex w-full flex-col !rounded-none transition-transform duration-300 ease-out ${panelWidth} ${
             open ? 'translate-x-0' : 'translate-x-full'
           }`}
           role="dialog"
           aria-label="Notifications"
         >
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3.5">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-8 w-8 items-center justify-center rounded-xl text-white" style={{ background: 'var(--gradient-primary)' }}>
-                <Bell size={14} />
-                {unread > 0 && <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-[0.55rem] font-bold text-white" style={{ background: 'var(--danger)' }}>{unread > 9 ? '9+' : unread}</span>}
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-9 w-9 items-center justify-center rounded-xl text-white" style={{ background: 'var(--gradient-primary)' }}>
+                <Bell size={15} />
+                {unread > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-0.5 text-[0.55rem] font-bold text-white" style={{ background: 'var(--danger)' }}>{unread > 9 ? '9+' : unread}</span>}
               </span>
               <span>
                 <span className="block text-sm font-bold leading-none">Notifications</span>
-                <span className="mt-1 block text-[0.65rem] text-[var(--text-muted)]">
+                <span className="mt-1 block text-[0.68rem] text-[var(--text-muted)]">
                   {unread > 0 ? `${unread} unread update${unread > 1 ? 's' : ''}` : 'All caught up'}
                 </span>
               </span>
@@ -291,7 +295,7 @@ export default function Notifications() {
             <div className="flex items-center gap-1">
               {unread > 0 && (
                 <button
-                  className="btn btn-ghost !px-2 !py-1 text-[0.68rem]"
+                  className="btn btn-ghost !px-2 !py-1 text-[0.7rem]"
                   onClick={markAllRead}
                   title="Mark all as read"
                 >
@@ -304,9 +308,9 @@ export default function Notifications() {
             </div>
           </div>
 
-          <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
+          <div className="flex-1 space-y-2 overflow-y-auto p-4">
             {items.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+              <div className="flex h-full flex-col items-center justify-center gap-2.5 px-8 text-center">
                 <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] text-[var(--text-muted)]">
                   <BellOff size={22} />
                 </span>
@@ -318,7 +322,7 @@ export default function Notifications() {
             ) : (
               <>
                 {unreadItems.length > 0 && (
-                  <div className="px-1 pb-0.5 pt-1 text-[0.6rem] font-bold uppercase tracking-wider text-[var(--accent)]">
+                  <div className="px-1 pb-0.5 pt-1 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--accent)]">
                     New · {unreadItems.length}
                   </div>
                 )}
@@ -326,7 +330,7 @@ export default function Notifications() {
                   <NotifRow key={n.id} n={n} isUnread onOpen={markRead} />
                 ))}
                 {readItems.length > 0 && (
-                  <div className="px-1 pb-0.5 pt-2 text-[0.6rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  <div className="px-1 pb-0.5 pt-3 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
                     Earlier
                   </div>
                 )}
@@ -337,9 +341,9 @@ export default function Notifications() {
             )}
           </div>
 
-          <div className="border-t border-[var(--border)] px-4 py-2.5">
+          <div className="border-t border-[var(--border)] px-5 py-3">
             <button
-              className="flex w-full items-center justify-center gap-1.5 text-[0.7rem] font-semibold text-[var(--text-muted)] transition hover:text-[var(--accent)]"
+              className="flex w-full items-center justify-center gap-1.5 text-[0.72rem] font-semibold text-[var(--text-muted)] transition hover:text-[var(--accent)]"
               onClick={() => {
                 setOpen(false)
                 navigate('/audit-log')
@@ -366,26 +370,26 @@ function NotifRow({
   const { grad, Icon } = TYPE_STYLES[n.type] ?? TYPE_STYLES.info
   return (
     <button
-      className={`w-full rounded-xl border p-3 text-left transition hover:bg-[var(--surface-hover)] ${
+      className={`w-full rounded-xl border p-3.5 text-left transition hover:bg-[var(--surface-hover)] ${
         isUnread
           ? 'border-[var(--glass-border-strong)] bg-[var(--surface-hover)]'
           : 'border-[var(--border)] bg-transparent opacity-60'
       }`}
       onClick={() => onOpen(n)}
     >
-      <div className="flex items-start gap-2.5">
+      <div className="flex items-start gap-3">
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${grad}`}
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${grad}`}
         >
-          <Icon size={15} />
+          <Icon size={16} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center justify-between gap-2">
-            <span className="truncate text-xs font-bold">{n.title}</span>
+            <span className="truncate text-[0.82rem] font-bold">{n.title}</span>
             {isUnread && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)]" />}
           </span>
-          <span className="mt-0.5 block text-[0.7rem] leading-snug text-[var(--text-dim)]">{n.message}</span>
-          <span className="mt-1 block text-[0.62rem] text-[var(--text-muted)]">
+          <span className="mt-1 block text-xs leading-relaxed text-[var(--text-dim)]">{n.message}</span>
+          <span className="mt-1.5 block text-[0.66rem] text-[var(--text-muted)]">
             {timeAgo(new Date(n.at).toISOString())}
             {n.to ? ' · click to open' : ''}
           </span>
