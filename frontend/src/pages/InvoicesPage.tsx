@@ -31,6 +31,7 @@ interface ContractRef {
 interface Invoice {
   id: string
   serial_no: string | null
+  processing_date: string | null
   invoice_no: string | null
   invoice_date: string | null
   contract_id: string | null
@@ -486,6 +487,8 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
   const [saving, setSaving] = useState(false)
   /** Errors stay hidden until the user attempts to save; they then clear per-field as fixed. */
   const [showErrors, setShowErrors] = useState(false)
+  /** Processing date is stamped at entry time and never edited by hand. */
+  const [entryDate, setEntryDate] = useState('')
   const [matrix, setMatrix] = useState<ServiceMatrixRow[]>([])
   const [allInvoices, setAllInvoices] = useState<UtilizationInvoice[]>([])
   const [fullContracts, setFullContracts] = useState<ContractFull[]>([])
@@ -497,6 +500,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
   useEffect(() => {
     if (!open) return
     setShowErrors(false)
+    setEntryDate(new Date().toISOString().slice(0, 10))
     setForm({
       serial_no: invoice?.serial_no ?? '',
       invoice_no: invoice?.invoice_no ?? '',
@@ -577,6 +581,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       nextSerialNo(form.invoice_date || undefined, allInvoices as SerialInvoiceLike[], invoice?.id),
     [invoice?.serial_no, form.invoice_date, allInvoices, invoice?.id],
   )
+  const processingDate = invoice?.processing_date?.slice(0, 10) || entryDate
 
   const focusFirstIssue = () => {
     requestAnimationFrame(() => {
@@ -602,6 +607,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     try {
       const body = {
         serial_no: generatedSerial || null,
+        processing_date: processingDate || null,
         invoice_no: form.invoice_no.trim(),
         invoice_date: form.invoice_date || null,
         contract_id: form.contract_id || null,
@@ -698,7 +704,45 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           <div className="glass p-5">
             <div className="section-title">Invoice Details</div>
             <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
-              {/* 1 — contract sets the context for everything below */}
+              {/* 1 — system-generated identifiers */}
+              <div>
+                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-dim)]">
+                  Serial No
+                  <span
+                    className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[0.55rem] font-bold uppercase tracking-wide text-[var(--accent)]"
+                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
+                  >
+                    <Wand2 size={8} /> auto
+                  </span>
+                </span>
+                <div
+                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] font-mono text-sm font-bold tracking-wide"
+                  title="Auto-generated: running count for the Gregorian year + fiscal-year tag (Jul–Jun)"
+                >
+                  {generatedSerial || '···· - ··'}
+                  <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
+                </div>
+              </div>
+              <div>
+                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-dim)]">
+                  Processing Date
+                  <span
+                    className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[0.55rem] font-bold uppercase tracking-wide text-[var(--accent)]"
+                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
+                  >
+                    <Wand2 size={8} /> auto
+                  </span>
+                </span>
+                <div
+                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] text-sm font-semibold"
+                  title="Stamped with the date of entry"
+                >
+                  {processingDate || '—'}
+                  <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
+                </div>
+              </div>
+
+              {/* 2 — contract sets the context for everything below */}
               <div className="sm:col-span-2">
                 <Field label="Contract" required hint="Live utilization preview on the right">
                   <select className="input" value={form.contract_id} onChange={set('contract_id')}>
@@ -716,7 +760,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 </Field>
               </div>
 
-              {/* 2 — invoice identity, copied from the paper invoice */}
+              {/* 3 — invoice identity, copied from the paper invoice */}
               <Field label="Invoice No" required error={showErrors ? issueMap.invoice_no : undefined}>
                 <input
                   className={`input ${showErrors && issueMap.invoice_no ? 'invalid' : ''}`}
@@ -739,28 +783,17 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 />
               </Field>
 
-              {/* 3 — serial is derived, shown compactly next to the reference fields */}
-              <div>
-                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-dim)]">
-                  Serial No
-                  <span
-                    className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[0.55rem] font-bold uppercase tracking-wide text-[var(--accent)]"
-                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
-                  >
-                    <Wand2 size={8} /> auto
-                  </span>
-                </span>
-                <div
-                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] font-mono text-sm font-bold tracking-wide"
-                  title="Auto-generated: running count for the Gregorian year + fiscal-year tag (Jul–Jun)"
-                >
-                  {generatedSerial || '···· - ··'}
-                  <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
-                </div>
-              </div>
+              {/* 4 — item reference + outcome preview */}
               <Field label="Item No">
                 <input className="input" value={form.item_no} onChange={set('item_no')} />
               </Field>
+              <div>
+                <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Status on Save</span>
+                <div className="input flex cursor-default items-center gap-2 !bg-[var(--surface)] text-sm">
+                  <StatusBadge tone="warn">Pending</StatusBadge>
+                  <span className="text-[0.65rem] text-[var(--text-muted)]">routes to approvals</span>
+                </div>
+              </div>
             </div>
           </div>
 

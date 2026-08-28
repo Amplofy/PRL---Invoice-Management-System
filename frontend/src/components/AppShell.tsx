@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import Header from './Header'
+import QuickTools from './ui/QuickTools'
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
@@ -18,6 +19,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+      <QuickTools />
     </div>
   )
 }

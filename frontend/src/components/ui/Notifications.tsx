@@ -218,10 +218,6 @@ export default function Notifications() {
   const readItems = useMemo(() => items.filter((n) => seen.has(n.id)), [items, seen])
   const unread = unreadItems.length
 
-  // Smart sizing: the panel widens as notifications pile up so entries stay readable
-  const panelWidth =
-    items.length === 0 ? 'max-w-[360px]' : items.length <= 4 ? 'max-w-lg' : 'max-w-xl'
-
   const markRead = (n: Notification) => {
     setSeen((prev) => {
       const next = new Set(prev)
@@ -264,26 +260,21 @@ export default function Notifications() {
       {/* Portal to body: the header's backdrop-filter makes it the containing
           block for fixed descendants, which would squash this overlay. */}
       {createPortal(
-        <div
-          className={`fixed inset-0 z-50 transition ${
-            open ? 'pointer-events-auto' : 'pointer-events-none'
-          }`}
-          aria-hidden={!open}
-        >
-        <div
-          className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity ${
-            open ? 'opacity-100' : 'opacity-0'
-          }`}
-          onClick={() => setOpen(false)}
-        />
-        <aside
-          className={`glass-strong flex w-full flex-col transition-transform duration-300 ease-out ${panelWidth} ${
-            open ? 'translate-x-0' : 'translate-x-full'
-          }`}
-          style={{ position: 'absolute', top: 0, bottom: 0, right: 0, borderRadius: 0 }}
-          role="dialog"
-          aria-label="Notifications"
-        >
+        <>
+          {/* Invisible click-catcher — closes the popover like the theme panel */}
+          <div
+            className={`fixed inset-0 z-40 ${open ? 'pointer-events-auto' : 'pointer-events-none'}`}
+            aria-hidden={!open}
+            onClick={() => setOpen(false)}
+          />
+          <aside
+            className={`glass-strong fixed right-4 top-[4.25rem] z-50 flex w-[min(92vw,26rem)] flex-col overflow-hidden rounded-2xl transition-all duration-200 ease-out ${
+              open ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-2 opacity-0'
+            }`}
+            style={{ maxHeight: 'calc(100dvh - 6rem)' }}
+            role="dialog"
+            aria-label="Notifications"
+          >
           <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
             <div className="flex items-center gap-2.5">
               <span className="relative flex h-9 w-9 items-center justify-center rounded-xl text-white" style={{ background: 'var(--gradient-primary)' }}>
@@ -358,7 +349,7 @@ export default function Notifications() {
             </button>
           </div>
         </aside>
-        </div>,
+        </>,
         document.body,
       )}
     </>
