@@ -968,6 +968,43 @@ table.data-table {
 .span-3 { grid-column: span 3; }
 @media (max-width: 1024px) { .span-2, .span-3 { grid-column: span 1; } }
 
+/* ================= PRL flame loader ================= */
+.prl-flame {
+  filter: drop-shadow(0 10px 24px rgba(208, 52, 44, 0.35));
+  transform-origin: 50% 92%;
+}
+.prl-flame .prl-flame-shell {
+  transform-origin: 32px 72px;
+  animation: flameSway 2.4s ease-in-out infinite alternate;
+}
+.prl-flame .prl-flame-mid {
+  transform-origin: 32px 64px;
+  animation: flameFlicker 0.95s ease-in-out infinite alternate;
+}
+.prl-flame .prl-flame-core {
+  transform-origin: 32px 60px;
+  animation: flameCore 0.55s ease-in-out infinite alternate;
+}
+@keyframes flameSway {
+  0% { transform: rotate(-2.6deg) scaleY(0.985); }
+  100% { transform: rotate(2.6deg) scaleY(1.015); }
+}
+@keyframes flameFlicker {
+  0% { transform: scaleY(0.92) scaleX(1.02); opacity: 0.94; }
+  38% { transform: scaleY(1.06) scaleX(0.98); opacity: 1; }
+  70% { transform: scaleY(0.97) scaleX(1.01) skewX(1.6deg); }
+  100% { transform: scaleY(1.04) scaleX(0.99) skewX(-1.6deg); opacity: 0.96; }
+}
+@keyframes flameCore {
+  0% { transform: scale(0.88); opacity: 0.72; }
+  100% { transform: scale(1.12); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prl-flame .prl-flame-shell,
+  .prl-flame .prl-flame-mid,
+  .prl-flame .prl-flame-core { animation: none; }
+}
+
 /* ================= Boot screen ================= */
 .boot-overlay {
   position: fixed;

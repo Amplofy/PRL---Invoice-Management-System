@@ -18,6 +18,7 @@ import { supabase, isDemoMode, enterDemo } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useToast } from '../components/ui/Toast'
 import BrandLogo from '../components/BrandLogo'
+import PRLFlame from '../components/ui/PRLFlame'
 
 const CAPABILITIES: Array<{ icon: ComponentType<{ size?: number }>; title: string; text: string }> = [
   {
@@ -139,7 +140,7 @@ function AuthPanel() {
           <button type="submit" disabled={loading} className="btn btn-primary w-full justify-center !py-3">
             {loading ? (
               <span className="flex items-center gap-2">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                <PRLFlame size={18} />
                 Signing in…
               </span>
             ) : (
@@ -167,7 +168,7 @@ function AuthPanel() {
         >
           {demoBusy ? (
             <span className="flex items-center gap-2">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--text-muted)] border-t-[var(--accent)]" />
+              <PRLFlame size={17} />
               Spinning up demo…
             </span>
           ) : (

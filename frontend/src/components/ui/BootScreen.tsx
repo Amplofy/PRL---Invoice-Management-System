@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import BrandLogo from '../BrandLogo'
+import PRLFlame from './PRLFlame'
 
 interface BootScreenProps {
   onDone: () => void
@@ -33,12 +33,8 @@ export default function BootScreen({ onDone, duration = 1800 }: BootScreenProps)
   return (
     <div className={`boot-overlay ${done ? 'done' : ''}`}>
       <div className="boot-inner">
-        <div className="boot-emblem">
-          <div className="boot-ring" />
-          <div className="boot-ring2" />
-          <div className="boot-logo"><BrandLogo size={56} /></div>
-        </div>
-        <div className="boot-title">PRL-EOMS</div>
+        <PRLFlame size={84} />
+        <div className="boot-title mt-6">PRL-EOMS</div>
         <div className="mt-2 text-sm font-medium tracking-wide text-[var(--text-dim)]">
           Enterprise Operations &amp; Management Suite
         </div>
