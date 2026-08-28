@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabaseEnabled, isDemoMode } from '../lib/supabase'
 import { useAuth, isAdmin } from '../lib/auth'
 import Button from './ui/Button'
+import BrandLogo from './BrandLogo'
 
 interface AuthGuardProps {
   children: ReactNode
@@ -41,7 +42,7 @@ export default function AuthGuard({ children, adminOnly = false }: AuthGuardProp
       <div className="flex h-screen items-center justify-center">
         <div className="boot-emblem">
           <div className="boot-ring" />
-          <div className="boot-logo">PRL</div>
+          <div className="boot-logo"><BrandLogo size={56} /></div>
         </div>
       </div>
     )

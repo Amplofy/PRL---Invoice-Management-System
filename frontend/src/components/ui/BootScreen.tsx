@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import BrandLogo from '../BrandLogo'
 
 interface BootScreenProps {
   onDone: () => void
@@ -35,7 +36,7 @@ export default function BootScreen({ onDone, duration = 1800 }: BootScreenProps)
         <div className="boot-emblem">
           <div className="boot-ring" />
           <div className="boot-ring2" />
-          <div className="boot-logo">PRL</div>
+          <div className="boot-logo"><BrandLogo size={56} /></div>
         </div>
         <div className="boot-title">PRL-EOMS</div>
         <div className="mt-2 text-sm font-medium tracking-wide text-[var(--text-dim)]">

@@ -108,12 +108,15 @@ export default function PaymentOrdersPage() {
     const inv = order.invoices
     const vendor = inv?.contracts?.vendors?.[0]?.name ?? '—'
     const contractNo = inv?.contracts?.contract_no ?? '—'
+    const logoUrl = `${window.location.origin}/brand/prl-logo.png`
     const win = window.open('', '_blank', 'width=800,height=900')
     if (!win) return
     win.document.write(`<!doctype html><html><head><title>PO ${order.serial_no}</title>
       <style>
         body{font-family:'Segoe UI',Arial,sans-serif;margin:48px;color:#111}
         .head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #1e3a8a;padding-bottom:16px}
+        .brand{display:flex;align-items:center;gap:14px}
+        .brand img{height:52px;width:auto}
         .head h1{margin:0;color:#1e3a8a;font-size:22px}
         .sub{font-size:12px;color:#555}
         .meta{margin:24px 0;display:flex;justify-content:space-between;font-size:14px}
@@ -126,7 +129,10 @@ export default function PaymentOrdersPage() {
         .sign .box{border-top:1px solid #333;padding-top:6px;width:200px;text-align:center}
       </style></head><body>
       <div class="head">
-        <div><h1>Pakistan Refinery Limited</h1><div class="sub">Payment Order / Cheque Request</div></div>
+        <div class="brand">
+          <img src="${logoUrl}" alt="PRL" />
+          <div><h1>Pakistan Refinery Limited</h1><div class="sub">Payment Order / Cheque Request</div></div>
+        </div>
         <div><strong>PO No:</strong> ${order.serial_no ?? ''}<br/><span class="sub">${formatDateTime(order.generated_at)}</span></div>
       </div>
       <div class="meta">
