@@ -31,7 +31,7 @@ followupsRouter.get('/pending', authRequired, async (_req, res, next) => {
       .eq('status', 'Pending')
       .order('created_at', { ascending: true })
     if (error) {
-      res.status(500).json({ error: 'Failed to load pending invoices' })
+      res.status(500).json({ error: `Failed to load pending invoices: ${error?.message}` })
       return
     }
     const list: PendingFollowup[] = (invoices ?? [])

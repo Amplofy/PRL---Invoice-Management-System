@@ -54,7 +54,7 @@ compareRouter.post('/', authRequired, async (req, res, next) => {
       .select('id')
       .single()
     if (error || !comparison) {
-      res.status(500).json({ error: 'Failed to store comparison' })
+      res.status(500).json({ error: `Failed to store comparison: ${error?.message}` })
       return
     }
 

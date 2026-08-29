@@ -23,7 +23,8 @@ invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
 
     const { data, error } = await query
     if (error) {
-      res.status(500).json({ error: 'Failed to load invoices' })
+      console.error('[invoices:list]', error.message)
+      res.status(500).json({ error: `Failed to load invoices: ${error.message}` })
       return
     }
     res.json({ invoices: data ?? [] })
@@ -269,7 +270,7 @@ invoicesRouter.get('/invoices/:id/po', authRequired, async (req, res, next) => {
       .eq('invoice_id', req.params.id)
       .order('generated_at', { ascending: false })
     if (error) {
-      res.status(500).json({ error: 'Failed to load payment orders' })
+      res.status(500).json({ error: `Failed to load payment orders: ${error?.message}` })
       return
     }
     res.json({ poVersions: data ?? [] })

@@ -9,7 +9,7 @@ settingsRouter.get('/', authRequired, async (_req, res, next) => {
     const supabase = getSupabase()
     const { data, error } = await supabase.from('app_settings').select('key, value').order('key')
     if (error) {
-      res.status(500).json({ error: 'Failed to load settings' })
+      res.status(500).json({ error: `Failed to load settings: ${error?.message}` })
       return
     }
     res.json({ settings: data ?? [] })

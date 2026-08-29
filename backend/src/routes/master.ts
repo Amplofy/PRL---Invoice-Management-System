@@ -12,7 +12,7 @@ masterRouter.get('/vendors', authRequired, async (_req, res, next) => {
     const supabase = getSupabase()
     const { data, error } = await supabase.from('vendors').select('*').order('name')
     if (error) {
-      res.status(500).json({ error: 'Failed to load vendors' })
+      res.status(500).json({ error: `Failed to load vendors: ${error?.message}` })
       return
     }
     res.json({ vendors: data ?? [] })
@@ -110,7 +110,7 @@ masterRouter.get('/contracts', authRequired, async (_req, res, next) => {
       .select('*, vendors(name, email)')
       .order('contract_no')
     if (error) {
-      res.status(500).json({ error: 'Failed to load contracts' })
+      res.status(500).json({ error: `Failed to load contracts: ${error?.message}` })
       return
     }
     res.json({ contracts: data ?? [] })
@@ -193,7 +193,7 @@ masterRouter.get('/service-matrix', authRequired, async (_req, res, next) => {
     const supabase = getSupabase()
     const { data, error } = await supabase.from('service_matrix').select('*').order('t1')
     if (error) {
-      res.status(500).json({ error: 'Failed to load service matrix' })
+      res.status(500).json({ error: `Failed to load service matrix: ${error?.message}` })
       return
     }
     res.json({ serviceMatrix: data ?? [] })
@@ -250,7 +250,7 @@ masterRouter.get('/cost-elements', authRequired, async (_req, res, next) => {
     const supabase = getSupabase()
     const { data, error } = await supabase.from('cost_elements').select('*').order('code')
     if (error) {
-      res.status(500).json({ error: 'Failed to load cost elements' })
+      res.status(500).json({ error: `Failed to load cost elements: ${error?.message}` })
       return
     }
     res.json({ costElements: data ?? [] })
@@ -303,7 +303,7 @@ masterRouter.get('/users', authRequired, requireRole('admin'), async (_req, res,
       .select('*, roles(name, color)')
       .order('full_name')
     if (error) {
-      res.status(500).json({ error: 'Failed to load users' })
+      res.status(500).json({ error: `Failed to load users: ${error?.message}` })
       return
     }
     res.json({ users: data ?? [] })
@@ -378,7 +378,7 @@ masterRouter.get('/roles', authRequired, async (_req, res, next) => {
       .select('*, role_permissions(permission_id)')
       .order('name')
     if (error) {
-      res.status(500).json({ error: 'Failed to load roles' })
+      res.status(500).json({ error: `Failed to load roles: ${error?.message}` })
       return
     }
     res.json({ roles: data ?? [] })
@@ -392,7 +392,7 @@ masterRouter.get('/permissions', authRequired, async (_req, res, next) => {
     const supabase = getSupabase()
     const { data, error } = await supabase.from('permissions').select('*').order('category')
     if (error) {
-      res.status(500).json({ error: 'Failed to load permissions' })
+      res.status(500).json({ error: `Failed to load permissions: ${error?.message}` })
       return
     }
     res.json({ permissions: data ?? [] })
@@ -410,7 +410,7 @@ masterRouter.get('/audit-log', authRequired, async (_req, res, next) => {
       .order('timestamp', { ascending: false })
       .limit(200)
     if (error) {
-      res.status(500).json({ error: 'Failed to load audit log' })
+      res.status(500).json({ error: `Failed to load audit log: ${error?.message}` })
       return
     }
     res.json({ auditLog: data ?? [] })

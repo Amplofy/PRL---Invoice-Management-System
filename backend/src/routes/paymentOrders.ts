@@ -12,7 +12,7 @@ paymentOrdersRouter.get('/payment-orders', authRequired, async (_req, res, next)
       .select('*, invoices(invoice_no, invoice_date, amount, status, contracts(contract_no, vendors(name)))')
       .order('generated_at', { ascending: false })
     if (error) {
-      res.status(500).json({ error: 'Failed to load payment orders' })
+      res.status(500).json({ error: `Failed to load payment orders: ${error?.message}` })
       return
     }
     res.json({ paymentOrders: data ?? [] })
