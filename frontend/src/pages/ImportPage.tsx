@@ -65,6 +65,7 @@ export default function ImportPage() {
     status: 'approved' | 'pending'
     imported: number
     skipped: number
+    updated: number
     duplicates: number
   } | null>(null)
   const [demoInvoices, setDemoInvoices] = useState<DemoInvoice[]>([])
@@ -91,11 +92,17 @@ export default function ImportPage() {
       .catch(() => undefined)
   }
 
-  const decideBatch = async (id: string, decision: 'approve' | 'reject') => {
+  const decideBatch = async (id: string, decision: 'approve' | 'reject', overwrite = false) => {
     setDecidingId(id)
     try {
-      await apiPost(`/api/import/batches/${id}/decide`, { decision })
-      toast.success(decision === 'approve' ? 'Import approved' : 'Import rejected')
+      await apiPost(`/api/import/batches/${id}/decide`, { decision, overwrite })
+      toast.success(
+        decision === 'approve'
+          ? overwrite
+            ? 'Import approved (overwrite mode)'
+            : 'Import approved'
+          : 'Import rejected',
+      )
       loadBatches()
     } catch (e) {
       toast.error('Decision failed', (e as Error).message)
@@ -244,7 +251,7 @@ export default function ImportPage() {
     setStep(4)
   }
 
-  const confirm = async () => {
+  const confirm = async (mode: 'append' | 'overwrite') => {
     const validRows = canonical.filter((r) => r.errors.length === 0).map((r) => r.data)
     if (validRows.length === 0) return
     setConfirming(true)
@@ -253,15 +260,20 @@ export default function ImportPage() {
         status: 'approved' | 'pending'
         imported: number
         skipped: number
+        updated: number
         duplicates: number
       }>('/api/import/confirm', {
         type,
         rows: validRows,
         fileName,
+        mode,
       })
-      setImportResult({ status: d.status, imported: d.imported, skipped: d.skipped, duplicates: d.duplicates })
+      setImportResult({ status: d.status, imported: d.imported, skipped: d.skipped, updated: d.updated, duplicates: d.duplicates })
       if (d.status === 'approved') {
-        toast.success('Import committed', `${d.imported} rows imported`)
+        toast.success(
+          mode === 'overwrite' ? 'Import committed (overwrite)' : 'Import committed',
+          `${d.imported} imported · ${d.updated} updated · ${d.skipped} skipped`,
+        )
       } else {
         toast.info(
           'Sent for admin approval',
@@ -359,7 +371,7 @@ export default function ImportPage() {
                       </div>
                     </div>
                     {b.status === 'pending' && (
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -368,13 +380,23 @@ export default function ImportPage() {
                         >
                           <XCircle size={14} /> Reject
                         </Button>
+                        {b.duplicate_rows > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={decidingId === b.id}
+                            onClick={() => decideBatch(b.id, 'approve', true)}
+                          >
+                            <Wand2 size={14} /> Overwrite & import
+                          </Button>
+                        )}
                         <Button
                           variant="success"
                           size="sm"
                           disabled={decidingId === b.id}
                           onClick={() => decideBatch(b.id, 'approve')}
                         >
-                          <CheckCircle2 size={14} /> Approve & import
+                          <CheckCircle2 size={14} /> {b.duplicate_rows > 0 ? 'Approve (skip dupes)' : 'Approve & import'}
                         </Button>
                       </div>
                     )}
@@ -615,30 +637,35 @@ export default function ImportPage() {
                 <ShieldCheck size={15} className="text-[var(--accent)]" />
               )}
               {dupeCount > 0
-                ? `${dupeCount} row(s) already exist in the system — continuing sends this import to an admin for final approval.`
+                ? admin
+                  ? `${dupeCount} row(s) already exist — overwrite them with the imported values, or send the batch for review.`
+                  : `${dupeCount} row(s) already exist in the system — continuing sends this import to an admin for final approval.`
                 : admin
                   ? `${cleanCount} valid rows will be committed to the ${type} table.`
                   : `${cleanCount} valid rows will be sent to an admin for approval before import.`}
             </div>
-            <Button
-              variant={dupeCount > 0 ? 'primary' : 'success'}
-              onClick={confirm}
-              disabled={confirming || validCount === 0}
-            >
-              {dupeCount > 0 ? (
-                <>
-                  <Clock size={15} /> {confirming ? 'Submitting…' : `Continue anyway — send ${validCount} rows for approval`}
-                </>
-              ) : admin ? (
-                <>
-                  <CheckCircle2 size={15} /> {confirming ? 'Committing…' : `Confirm & commit ${validCount} rows`}
-                </>
-              ) : (
-                <>
-                  <ShieldCheck size={15} /> {confirming ? 'Submitting…' : `Submit ${validCount} rows for admin approval`}
-                </>
-              )}
-            </Button>
+            {dupeCount > 0 && admin ? (
+              <div className="flex flex-wrap gap-2.5">
+                <Button variant="ghost" onClick={() => confirm('append')} disabled={confirming || validCount === 0}>
+                  <Clock size={15} /> {confirming ? 'Submitting…' : 'Send for approval'}
+                </Button>
+                <Button variant="primary" onClick={() => confirm('overwrite')} disabled={confirming || validCount === 0}>
+                  <Wand2 size={15} /> {confirming ? 'Overwriting…' : `Overwrite & import ${validCount} rows`}
+                </Button>
+              </div>
+            ) : dupeCount > 0 ? (
+              <Button variant="primary" onClick={() => confirm('append')} disabled={confirming || validCount === 0}>
+                <Clock size={15} /> {confirming ? 'Submitting…' : `Continue anyway — send ${validCount} rows for approval`}
+              </Button>
+            ) : admin ? (
+              <Button variant="success" onClick={() => confirm('append')} disabled={confirming || validCount === 0}>
+                <CheckCircle2 size={15} /> {confirming ? 'Committing…' : `Confirm & commit ${validCount} rows`}
+              </Button>
+            ) : (
+              <Button variant="success" onClick={() => confirm('append')} disabled={confirming || validCount === 0}>
+                <ShieldCheck size={15} /> {confirming ? 'Submitting…' : `Submit ${validCount} rows for admin approval`}
+              </Button>
+            )}
           </div>
         </GlassCard>
       )}
@@ -669,7 +696,8 @@ export default function ImportPage() {
           </div>
           <div className="mt-4 text-lg font-bold">Import complete</div>
           <div className="mt-1 text-sm text-[var(--text-dim)]">
-            <b>{importResult.imported}</b> rows imported · <b>{importResult.skipped}</b> skipped
+            <b>{importResult.imported}</b> rows imported · <b>{importResult.updated}</b> updated ·{' '}
+            <b>{importResult.skipped}</b> skipped
           </div>
           <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-[var(--text-muted)]">
             <Copy size={11} /> Mapping saved as template for this layout.

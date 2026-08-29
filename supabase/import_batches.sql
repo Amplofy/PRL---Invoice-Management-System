@@ -9,6 +9,7 @@ create table if not exists public.import_batches (
   total_rows     integer not null default 0,
   duplicate_rows integer not null default 0,
   status         text not null default 'pending' check (status in ('pending','approved','rejected')),
+  mode           text not null default 'append' check (mode in ('append','overwrite')),
   rows           jsonb not null default '[]',
   conflicts      jsonb not null default '[]',
   submitted_by   text not null default '',
@@ -25,3 +26,6 @@ create index if not exists import_batches_status_idx
 -- still needs table-level grants on manually created tables.
 alter table public.import_batches enable row level security;
 grant all on public.import_batches to service_role;
+
+-- Upgrade note: if you created this table before the mode column existed, run:
+-- alter table public.import_batches add column if not exists mode text not null default 'append';

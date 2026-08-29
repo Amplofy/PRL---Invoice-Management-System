@@ -53,9 +53,9 @@ importRouter.post(
 
 /**
  * Submit an import for processing.
- * - admin + zero duplicates  -> rows applied immediately (status approved)
- * - duplicates present or non-admin submitter -> stored as a pending batch
- *   that an admin must approve before anything touches the tables
+ * - admin + zero duplicates (or admin + mode=overwrite) -> rows applied immediately
+ * - duplicates present (append mode) or non-admin submitter -> stored as a
+ *   pending batch that an admin must approve before anything touches the tables
  */
 importRouter.post('/confirm', authRequired, async (req, res, next) => {
   try {
@@ -67,19 +67,22 @@ importRouter.post('/confirm', authRequired, async (req, res, next) => {
       res.status(400).json({ error: 'No rows to import' })
       return
     }
+    const mode = body.mode === 'overwrite' ? 'overwrite' : 'append'
 
     const conflicts = await detectConflicts(type, rows)
     const isAdmin = user.role === 'admin'
-    const autoApprove = isAdmin && conflicts.length === 0
+    const autoApprove = isAdmin && (conflicts.length === 0 || mode === 'overwrite')
 
     let imported = 0
     let skipped = 0
+    let updated = 0
     let batchId: string | undefined
 
     if (autoApprove) {
-      const result = await applyImportRows(type, rows, user.id)
+      const result = await applyImportRows(type, rows, user.id, mode === 'overwrite')
       imported = result.imported
       skipped = result.skipped
+      updated = result.updated
       await getSupabase().from('import_logs').insert({
         user_id: user.id,
         type,
@@ -87,7 +90,13 @@ importRouter.post('/confirm', authRequired, async (req, res, next) => {
         rows_imported: imported,
         status: 'completed',
       })
-      await audit('import.confirmed', type, null, `imported ${imported} of ${rows.length} rows`, user.email ?? user.id)
+      await audit(
+        'import.confirmed',
+        type,
+        null,
+        `imported ${imported}, updated ${updated} of ${rows.length} rows (${mode})`,
+        user.email ?? user.id,
+      )
     } else {
       const batch = await createBatch(
         type,
@@ -95,6 +104,7 @@ importRouter.post('/confirm', authRequired, async (req, res, next) => {
         conflicts,
         body.fileName ?? '',
         user.email ?? user.id,
+        mode,
       )
       batchId = batch.id
       await audit(
@@ -110,6 +120,7 @@ importRouter.post('/confirm', authRequired, async (req, res, next) => {
       status: autoApprove ? 'approved' : 'pending',
       imported,
       skipped,
+      updated,
       batchId,
       duplicates: conflicts.length,
       type,
@@ -136,7 +147,8 @@ importRouter.post(
     try {
       const user = (req as AuthedRequest).user
       const decision = req.body?.decision === 'reject' ? 'rejected' : 'approved'
-      const batch = await decideBatch(String(req.params.id), decision, user.email ?? user.id)
+      const overwrite = req.body?.overwrite === true
+      const batch = await decideBatch(String(req.params.id), decision, user.email ?? user.id, overwrite)
       if (!batch) {
         res.status(404).json({ error: 'Batch not found' })
         return
@@ -145,7 +157,7 @@ importRouter.post(
         decision === 'approved' ? 'import.batch_approved' : 'import.batch_rejected',
         batch.import_type,
         batch.id,
-        `batch ${batch.total_rows} rows, ${batch.duplicate_rows} duplicate(s)`,
+        `batch ${batch.total_rows} rows, ${batch.duplicate_rows} duplicate(s)${overwrite ? ', overwrite mode' : ''}`,
         user.email ?? user.id,
       )
       res.json({ batch })

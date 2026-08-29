@@ -40,6 +40,8 @@ export type ImportConfirmBody = {
   type: ImportType
   rows: Record<string, unknown>[]
   fileName?: string
+  /** 'append' skips duplicates; 'overwrite' updates existing rows (admin only). */
+  mode?: 'append' | 'overwrite'
   /** Client-side duplicate descriptions; the server re-detects anyway. */
   conflicts?: string[]
 }
@@ -48,6 +50,7 @@ export type ImportConfirmResult = {
   status: 'approved' | 'pending'
   imported: number
   skipped: number
+  updated: number
   batchId?: string
   duplicates: number
 }
@@ -59,6 +62,7 @@ export type ImportBatch = {
   total_rows: number
   duplicate_rows: number
   status: 'pending' | 'approved' | 'rejected'
+  mode?: 'append' | 'overwrite' | null
   rows: Record<string, unknown>[]
   conflicts: string[]
   submitted_by: string

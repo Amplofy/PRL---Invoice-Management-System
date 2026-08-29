@@ -167,15 +167,18 @@ function statusOf(row: Record<string, unknown>, allowed: string[], fallback: str
   return hit ?? fallback
 }
 
-/** Insert canonical rows into the real tables. Returns imported/skipped counts. */
+/** Insert canonical rows into the real tables. With overwrite=true, rows whose
+ * unique key already exists are updated with the imported values instead of skipped. */
 export async function applyImportRows(
   type: ImportType,
   rows: Record<string, unknown>[],
   userId?: string,
-): Promise<{ imported: number; skipped: number }> {
+  overwrite = false,
+): Promise<{ imported: number; skipped: number; updated: number }> {
   const supabase = getSupabase()
   let imported = 0
   let skipped = 0
+  let updated = 0
 
   if (type === 'vendors') {
     for (const row of rows) {
@@ -185,13 +188,25 @@ export async function applyImportRows(
         continue
       }
       const email = str(row, 'email')
-      const { error } = await supabase
-        .from('vendors')
-        .upsert(email ? { name, email } : { name }, { onConflict: 'name', ignoreDuplicates: true })
-      if (error) skipped++
-      else imported++
+      const { data: existing } = await supabase.from('vendors').select('id').eq('name', name).maybeSingle()
+      if (existing && overwrite) {
+        const { error } = await supabase
+          .from('vendors')
+          .update(email ? { name, email } : { name })
+          .eq('id', existing.id)
+        if (error) skipped++
+        else updated++
+      } else if (existing) {
+        skipped++
+      } else {
+        const { error } = await supabase
+          .from('vendors')
+          .insert(email ? { name, email } : { name })
+        if (error) skipped++
+        else imported++
+      }
     }
-    return { imported, skipped }
+    return { imported, skipped, updated }
   }
 
   if (type === 'contracts') {
@@ -222,24 +237,29 @@ export async function applyImportRows(
         skipped++
         continue
       }
-      const { error } = await supabase
-        .from('contracts')
-        .upsert(
-          {
-            contract_no: no,
-            vendor_id: vendorId,
-            service: str(row, 'service') ?? 'General',
-            start_date: start,
-            end_date: end,
-            value: num(row, 'value') ?? 0,
-            status: statusOf(row, CONTRACT_STATUSES, 'Open'),
-          },
-          { onConflict: 'contract_no', ignoreDuplicates: true },
-        )
-      if (error) skipped++
-      else imported++
+      const payload = {
+        contract_no: no,
+        vendor_id: vendorId,
+        service: str(row, 'service') ?? 'General',
+        start_date: start,
+        end_date: end,
+        value: num(row, 'value') ?? 0,
+        status: statusOf(row, CONTRACT_STATUSES, 'Open'),
+      }
+      const { data: existing } = await supabase.from('contracts').select('id').eq('contract_no', no).maybeSingle()
+      if (existing && overwrite) {
+        const { error } = await supabase.from('contracts').update(payload).eq('id', existing.id)
+        if (error) skipped++
+        else updated++
+      } else if (existing) {
+        skipped++
+      } else {
+        const { error } = await supabase.from('contracts').insert(payload)
+        if (error) skipped++
+        else imported++
+      }
     }
-    return { imported, skipped }
+    return { imported, skipped, updated }
   }
 
   // invoices
@@ -261,17 +281,8 @@ export async function applyImportRows(
       skipped++
       continue
     }
-    const { data: dup } = await supabase
-      .from('invoices')
-      .select('id')
-      .eq('invoice_no', invoiceNo)
-      .maybeSingle()
-    if (dup) {
-      skipped++
-      continue
-    }
     const approvedDate = str(row, 'approved_date')
-    const { error } = await supabase.from('invoices').insert({
+    const payload = {
       serial_no: str(row, 'serial_no'),
       processing_date: str(row, 'processing_date') ?? invoiceDate,
       contract_id: contract.id,
@@ -292,12 +303,27 @@ export async function applyImportRows(
       approved_date: approvedDate,
       approved_amount: num(row, 'approved_amount'),
       remarks: str(row, 'remarks'),
-      created_by: userId,
-    })
-    if (error) skipped++
-    else imported++
+      updated_at: new Date().toISOString(),
+      updated_by: userId ?? null,
+    }
+    const { data: existing } = await supabase
+      .from('invoices')
+      .select('id')
+      .eq('invoice_no', invoiceNo)
+      .maybeSingle()
+    if (existing && overwrite) {
+      const { error } = await supabase.from('invoices').update(payload).eq('id', existing.id)
+      if (error) skipped++
+      else updated++
+    } else if (existing) {
+      skipped++
+    } else {
+      const { error } = await supabase.from('invoices').insert({ ...payload, created_by: userId })
+      if (error) skipped++
+      else imported++
+    }
   }
-  return { imported, skipped }
+  return { imported, skipped, updated }
 }
 
 const DUP_KEY: Record<ImportType, { column: string; label: string }> = {
@@ -346,6 +372,7 @@ export async function decideBatch(
   id: string,
   decision: 'approved' | 'rejected',
   decidedBy: string,
+  overwrite = false,
 ): Promise<ImportBatch | null> {
   const supabase = getSupabase()
   const { data: batch } = await supabase
@@ -359,7 +386,7 @@ export async function decideBatch(
   }
   if (decision === 'approved') {
     const rows = ((batch as ImportBatch).rows ?? []) as Record<string, unknown>[]
-    await applyImportRows((batch as ImportBatch).import_type, rows, decidedBy)
+    await applyImportRows((batch as ImportBatch).import_type, rows, decidedBy, overwrite)
   }
   const { data: updated, error } = await supabase
     .from('import_batches')
@@ -377,6 +404,7 @@ export async function createBatch(
   conflicts: string[],
   fileName: string,
   submittedBy: string,
+  mode: 'append' | 'overwrite' = 'append',
 ): Promise<ImportBatch> {
   const supabase = getSupabase()
   const { data, error } = await supabase
@@ -387,6 +415,7 @@ export async function createBatch(
       total_rows: rows.length,
       duplicate_rows: conflicts.length,
       status: 'pending',
+      mode,
       rows,
       conflicts,
       submitted_by: submittedBy,

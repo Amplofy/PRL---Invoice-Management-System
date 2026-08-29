@@ -400,6 +400,7 @@ interface DemoImportBatch {
   total_rows: number
   duplicate_rows: number
   status: 'pending' | 'approved' | 'rejected'
+  mode: 'append' | 'overwrite'
   rows: Record<string, unknown>[]
   conflicts: string[]
   submitted_by: string
@@ -426,13 +427,26 @@ function detectDemoConflicts(type: string, rows: Record<string, unknown>[]): str
   return out
 }
 
-function applyImportRowsDemo(type: string, rows: Record<string, unknown>[]): { imported: number; skipped: number } {
+function applyImportRowsDemo(
+  type: string,
+  rows: Record<string, unknown>[],
+  overwrite = false,
+): { imported: number; skipped: number; updated: number } {
   let imported = 0
   let skipped = 0
+  let updated = 0
   if (type === 'vendors') {
     for (const r of rows) {
       const name = String(r.name ?? '').trim()
       if (!name) { skipped += 1; continue }
+      const existing = vendors.find((v) => v.name.toLowerCase() === name.toLowerCase())
+      if (existing) {
+        if (overwrite) {
+          if (r.email) existing.email = String(r.email)
+          updated += 1
+        } else skipped += 1
+        continue
+      }
       vendors.push({ id: uid(), name, email: (r.email as string) ?? null, created_at: nowIso(), updated_at: nowIso() })
       imported += 1
     }
@@ -447,17 +461,26 @@ function applyImportRowsDemo(type: string, rows: Record<string, unknown>[]): { i
         vendors.push(vendor)
       }
       const st = String(r.status ?? 'Open').toLowerCase()
-      contracts.push({
-        id: uid(),
+      const status = ['open', 'closed', 'expiring'].includes(st) ? st.charAt(0).toUpperCase() + st.slice(1) : 'Open'
+      const payload = {
         contract_no: contractNo,
         vendor_id: vendor.id,
         service: (r.service as string) ?? null,
         start_date: (r.start_date as string) ?? null,
         end_date: (r.end_date as string) ?? null,
         value: Number(r.value ?? 0),
-        status: ['open', 'closed', 'expiring'].includes(st) ? st.charAt(0).toUpperCase() + st.slice(1) : 'Open',
+        status,
         vendors: [{ name: vendor.name, email: vendor.email }],
-      })
+      }
+      const idx = contracts.findIndex((c) => c.contract_no === contractNo)
+      if (idx >= 0) {
+        if (overwrite) {
+          contracts[idx] = { ...contracts[idx]!, ...payload }
+          updated += 1
+        } else skipped += 1
+        continue
+      }
+      contracts.push({ id: uid(), ...payload })
       imported += 1
     }
   } else {
@@ -466,6 +489,25 @@ function applyImportRowsDemo(type: string, rows: Record<string, unknown>[]): { i
       if (!invoiceNo) { skipped += 1; continue }
       const contractNo = String(r.contract_no ?? '').trim()
       const contract = contractNo ? contracts.find((c) => c.contract_no === contractNo) : undefined
+      const existingIdx = invoices.findIndex((i) => i.invoice_no === invoiceNo)
+      if (existingIdx >= 0 && overwrite) {
+        const inv = invoices[existingIdx]!
+        if (r.amount !== null && r.amount !== undefined) inv.amount = Number(r.amount)
+        if (r.invoice_date) inv.invoice_date = String(r.invoice_date)
+        if (r.serial_no) inv.serial_no = String(r.serial_no)
+        if (r.t1) inv.t1 = String(r.t1)
+        if (r.t2) inv.t2 = String(r.t2)
+        if (r.t3) inv.t3 = String(r.t3)
+        if (r.tanker_name) inv.tanker_name = String(r.tanker_name)
+        if (r.remarks) inv.remarks = String(r.remarks)
+        const st = String(r.status ?? '').toLowerCase()
+        if (st && ['pending', 'approved', 'rejected', 'draft', 'void'].includes(st)) {
+          inv.status = st.charAt(0).toUpperCase() + st.slice(1)
+        }
+        updated += 1
+        continue
+      }
+      if (existingIdx >= 0) { skipped += 1; continue }
       const inv = makeInvoice({
         serial_no: (r.serial_no as string) ?? null,
         invoice_no: invoiceNo,
@@ -493,11 +535,8 @@ function applyImportRowsDemo(type: string, rows: Record<string, unknown>[]): { i
       imported += 1
     }
   }
-  if (imported > 0) audit('Import', 'Data', null, `Imported ${imported} ${type} rows`)
-  return { imported, skipped: skipped + rows.filter((r) => {
-    const key = type === 'vendors' ? r.name : type === 'contracts' ? r.contract_no : r.invoice_no
-    return !String(key ?? '').trim()
-  }).length }
+  if (imported + updated > 0) audit('Import', 'Data', null, `Imported ${imported} / updated ${updated} ${type} rows`)
+  return { imported, skipped, updated }
 }
 
 function comparePayload(): unknown {
@@ -825,13 +864,14 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     return { type: formType || 'invoices', fileName: 'upload.xlsx', preview: [], issues: [], totalRows: 0, validRows: 0 } as T
   }
   if (m === 'POST' && path === '/api/import/confirm') {
-    const b = (body ?? {}) as { type?: string; rows?: Record<string, unknown>[]; fileName?: string }
+    const b = (body ?? {}) as { type?: string; rows?: Record<string, unknown>[]; fileName?: string; mode?: string }
     const type = b.type ?? 'invoices'
     const rows = b.rows ?? []
+    const mode = b.mode === 'overwrite' ? 'overwrite' : 'append'
     const conflicts = detectDemoConflicts(type, rows)
-    if (conflicts.length === 0) {
-      const { imported, skipped } = applyImportRowsDemo(type, rows)
-      return { status: 'approved', imported, skipped, duplicates: 0, type } as T
+    if (mode === 'overwrite' || conflicts.length === 0) {
+      const { imported, skipped, updated } = applyImportRowsDemo(type, rows, mode === 'overwrite')
+      return { status: 'approved', imported, skipped, updated, duplicates: conflicts.length, type } as T
     }
     const batch: DemoImportBatch = {
       id: uid(),
@@ -840,6 +880,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       total_rows: rows.length,
       duplicate_rows: conflicts.length,
       status: 'pending',
+      mode,
       rows,
       conflicts,
       submitted_by: 'you (demo)',
@@ -848,7 +889,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       created_at: nowIso(),
     }
     importBatches.unshift(batch)
-    return { status: 'pending', imported: 0, skipped: 0, batchId: batch.id, duplicates: conflicts.length, type } as T
+    return { status: 'pending', imported: 0, skipped: 0, updated: 0, batchId: batch.id, duplicates: conflicts.length, type } as T
   }
   if (m === 'GET' && path === '/api/import/batches') {
     return { batches: importBatches } as T
@@ -858,17 +899,48 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!batch) fail('Batch not found')
     if (batch.status !== 'pending') fail(`Batch already ${batch.status}`)
     const decision = String((body as { decision?: string } | null)?.decision ?? 'approve')
+    const overwrite = (body as { overwrite?: boolean } | null)?.overwrite === true
     if (decision === 'approve') {
-      const { imported, skipped } = applyImportRowsDemo(batch.import_type, batch.rows)
+      const { imported, skipped, updated } = applyImportRowsDemo(batch.import_type, batch.rows, overwrite)
       batch.decided_by = 'you (demo)'
       batch.decided_at = nowIso()
       batch.status = 'approved'
-      return { batch: { ...batch, imported, skipped } } as T
+      return { batch: { ...batch, imported, skipped, updated } } as T
     }
     batch.decided_by = 'you (demo)'
     batch.decided_at = nowIso()
     batch.status = 'rejected'
     return { batch } as T
+  }
+
+  if (m === 'POST' && path === '/api/invoices/bulk-approve') {
+    const ids = ((body as { ids?: string[] } | null)?.ids ?? []).map(String)
+    let approved = 0
+    let poCreated = 0
+    for (const id of ids) {
+      const inv = invoices.find((x) => x.id === id)
+      if (!inv) continue
+      inv.status = 'Approved'
+      approved++
+      poCreated++
+    }
+    if (approved > 0) audit('BulkApprove', 'Invoice', null, `${approved} invoices bulk-approved`)
+    return { approved, poCreated, failed: [] } as T
+  }
+  if (m === 'POST' && path === '/api/invoices/bulk-reject') {
+    const b = (body ?? {}) as { ids?: string[]; reason?: string }
+    const reason = String(b.reason ?? '').trim()
+    if (!reason) fail('Rejection reason is required')
+    let rejected = 0
+    for (const id of (b.ids ?? []).map(String)) {
+      const inv = invoices.find((x) => x.id === id)
+      if (!inv) continue
+      inv.status = 'Rejected'
+      inv.remarks = reason
+      rejected++
+    }
+    if (rejected > 0) audit('BulkReject', 'Invoice', null, `${rejected} invoices bulk-rejected: ${reason}`)
+    return { rejected } as T
   }
 
   if (m === 'POST' && path === '/api/compare') {

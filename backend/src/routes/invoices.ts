@@ -162,6 +162,96 @@ async function createPo(
   return { po, created: true }
 }
 
+invoicesRouter.post('/invoices/bulk-approve', authRequired, async (req, res, next) => {
+  try {
+    const supabase = getSupabase()
+    const user = (req as { user?: { id?: string; email?: string } }).user
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : []
+    if (ids.length === 0) {
+      res.status(400).json({ error: 'No invoices selected' })
+      return
+    }
+    const now = new Date().toISOString()
+    let approved = 0
+    let poCreated = 0
+    const failed: string[] = []
+    for (const id of ids) {
+      const { data: inv } = await supabase
+        .from('invoices')
+        .select('id, invoice_no, status')
+        .eq('id', id)
+        .maybeSingle()
+      if (!inv) {
+        failed.push(id)
+        continue
+      }
+      const { error } = await supabase
+        .from('invoices')
+        .update({
+          status: 'Approved',
+          approved_by: user?.email,
+          approved_date: now,
+          updated_at: now,
+        })
+        .eq('id', id)
+      if (error) {
+        failed.push(id)
+        continue
+      }
+      approved++
+      await audit('BulkApprove', 'Invoice', id, `Invoice ${inv.invoice_no ?? id} bulk-approved`)
+      const { created } = await createPo(supabase, id, user?.email)
+      if (created) poCreated++
+    }
+    res.json({ approved, poCreated, failed })
+  } catch (err) {
+    next(err)
+  }
+})
+
+invoicesRouter.post('/invoices/bulk-reject', authRequired, async (req, res, next) => {
+  try {
+    const supabase = getSupabase()
+    const user = (req as { user?: { email?: string } }).user
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : []
+    const reason = String(req.body?.reason ?? '').trim()
+    if (ids.length === 0) {
+      res.status(400).json({ error: 'No invoices selected' })
+      return
+    }
+    if (!reason) {
+      res.status(400).json({ error: 'Rejection reason is required' })
+      return
+    }
+    const now = new Date().toISOString()
+    let rejected = 0
+    for (const id of ids) {
+      const { data: inv } = await supabase
+        .from('invoices')
+        .select('id, invoice_no')
+        .eq('id', id)
+        .maybeSingle()
+      if (!inv) continue
+      const { error } = await supabase
+        .from('invoices')
+        .update({
+          status: 'Rejected',
+          approved_by: user?.email,
+          approved_date: now,
+          remarks: reason,
+          updated_at: now,
+        })
+        .eq('id', id)
+      if (error) continue
+      rejected++
+      await audit('BulkReject', 'Invoice', id, `Invoice ${inv.invoice_no ?? id} bulk-rejected: ${reason}`)
+    }
+    res.json({ rejected })
+  } catch (err) {
+    next(err)
+  }
+})
+
 invoicesRouter.post('/invoices/:id/approve', authRequired, async (req, res, next) => {
   try {
     const supabase = getSupabase()

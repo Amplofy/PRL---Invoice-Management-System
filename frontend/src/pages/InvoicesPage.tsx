@@ -106,6 +106,10 @@ export default function InvoicesPage() {
   const [sortBy, setSortBy] = useState('invoice_date')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
   const [poReady, setPoReady] = useState<Record<string, boolean>>({})
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [lastClickIdx, setLastClickIdx] = useState<number | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkRejecting, setBulkRejecting] = useState(false)
   const toast = useToast()
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
@@ -275,6 +279,98 @@ export default function InvoicesPage() {
 
   const totalShown = useMemo(() => filtered.reduce((s, i) => s + Number(i.amount ?? 0), 0), [filtered])
 
+  const pendingSorted = useMemo(() => sorted.filter((i) => i.status === 'Pending'), [sorted])
+  const selectedList = useMemo(() => invoices.filter((i) => selected.has(i.id)), [invoices, selected])
+  const selectedTotal = useMemo(() => selectedList.reduce((s, i) => s + Number(i.amount ?? 0), 0), [selectedList])
+  const allPendingSelected = pendingSorted.length > 0 && pendingSorted.every((i) => selected.has(i.id))
+  const somePendingSelected = pendingSorted.some((i) => selected.has(i.id))
+
+  const toggleSelect = (inv: Invoice, idx: number, shiftKey: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (shiftKey && lastClickIdx !== null) {
+        const [a, b] = [Math.min(lastClickIdx, idx), Math.max(lastClickIdx, idx)]
+        const add = !prev.has(inv.id)
+        for (let k = a; k <= b; k++) {
+          const row = pendingSorted[k]
+          if (row) {
+            if (add) next.add(row.id)
+            else next.delete(row.id)
+          }
+        }
+      } else if (next.has(inv.id)) {
+        next.delete(inv.id)
+      } else {
+        next.add(inv.id)
+      }
+      return next
+    })
+    setLastClickIdx(idx)
+  }
+
+  const toggleAllPending = () => {
+    setSelected((prev) => {
+      if (pendingSorted.length > 0 && pendingSorted.every((i) => prev.has(i.id))) {
+        const next = new Set(prev)
+        for (const i of pendingSorted) next.delete(i.id)
+        return next
+      }
+      return new Set([...prev, ...pendingSorted.map((i) => i.id)])
+    })
+  }
+
+  const clearSelection = () => {
+    setSelected(new Set())
+    setLastClickIdx(null)
+  }
+
+  const bulkApprove = async () => {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    setBulkBusy(true)
+    try {
+      const d = await apiPost<{ approved: number; poCreated: number; failed: string[] }>(
+        '/api/invoices/bulk-approve',
+        { ids },
+      )
+      toast.success(
+        `${d.approved} invoices approved`,
+        d.poCreated > 0 ? `${d.poCreated} payment order(s) generated automatically` : undefined,
+      )
+      emitAppEvent('ok', 'Bulk approval', `${d.approved} invoices approved in one go`, '/payment-orders')
+      clearSelection()
+      reload()
+    } catch (e) {
+      toast.error('Bulk approval failed', (e as Error).message)
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const bulkRejectSubmit = async () => {
+    if (!rejectReason.trim()) {
+      toast.error('Rejection reason is required')
+      return
+    }
+    setBulkBusy(true)
+    try {
+      const d = await apiPost<{ rejected: number }>('/api/invoices/bulk-reject', {
+        ids: [...selected],
+        reason: rejectReason,
+      })
+      toast.success(`${d.rejected} invoices rejected`)
+      emitAppEvent('err', 'Bulk rejection', `${d.rejected} invoices rejected — ${rejectReason}`, '/invoices')
+      setBulkRejecting(false)
+      setRejectReason('')
+      clearSelection()
+      reload()
+    } catch (e) {
+      toast.error('Bulk rejection failed', (e as Error).message)
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   const GROUP_BY_INVOICE = [
     { key: 'vendor', label: 'Vendor' },
     { key: 'contract', label: 'Contract' },
@@ -297,7 +393,7 @@ export default function InvoicesPage() {
     [sorted, groupKey],
   )
 
-  const visibleColCount = INVOICE_COLUMN_DEFS.filter((c) => col.show(c.key)).length + 1
+  const visibleColCount = INVOICE_COLUMN_DEFS.filter((c) => col.show(c.key)).length + 2
 
   const pendingCount = useMemo(() => filtered.filter((i) => i.status === 'Pending').length, [filtered])
   const approvedCount = useMemo(
@@ -405,6 +501,19 @@ export default function InvoicesPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th className="w-9 pr-0">
+                  <input
+                    type="checkbox"
+                    className="cursor-pointer accent-[var(--accent)]"
+                    checked={allPendingSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = somePendingSelected && !allPendingSelected
+                    }}
+                    onChange={toggleAllPending}
+                    disabled={pendingSorted.length === 0}
+                    title="Select all pending invoices"
+                  />
+                </th>
                 {col.show('invoice_no') && <th>Invoice No</th>}
                 {col.show('serial') && <th>Serial</th>}
                 {col.show('date') && <th>Date</th>}
@@ -425,8 +534,23 @@ export default function InvoicesPage() {
             </thead>
             <tbody>
               {(() => {
-                const renderRow = (inv: Invoice) => (
-                <tr key={inv.id}>
+                const renderRow = (inv: Invoice) => {
+                  const pendingIdx = pendingSorted.findIndex((p) => p.id === inv.id)
+                  return (
+                <tr key={inv.id} className={selected.has(inv.id) ? 'bg-[rgba(124,58,237,0.07)]' : undefined}>
+                  <td className="pr-0 text-center">
+                    {inv.status === 'Pending' && pendingIdx >= 0 ? (
+                      <input
+                        type="checkbox"
+                        className="cursor-pointer accent-[var(--accent)]"
+                        checked={selected.has(inv.id)}
+                        onClick={(e) => toggleSelect(inv, pendingIdx, e.shiftKey)}
+                        onChange={() => undefined}
+                      />
+                    ) : (
+                      <span className="text-xs text-[var(--text-dim)]">—</span>
+                    )}
+                  </td>
                   {col.show('invoice_no') && (
                     <td className="font-semibold">
                       <Link
@@ -525,6 +649,7 @@ export default function InvoicesPage() {
                    </td>
                  </tr>
                 )
+                }
 
                 const rows = grouped
                   ? grouped.map((g) => (
@@ -602,21 +727,64 @@ export default function InvoicesPage() {
         />
       )}
 
+      {selected.size > 0 && (
+        <div
+          className="glass-strong fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-wrap items-center gap-4 rounded-2xl border border-[var(--border)] px-5 py-3 shadow-2xl"
+          style={{ animation: 'toast-in 220ms ease-out' }}
+        >
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <span className="flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-xs font-extrabold text-white" style={{ background: 'var(--gradient-primary)' }}>
+              {selected.size}
+            </span>
+            selected
+            <span className="hidden text-[var(--text-muted)] sm:inline">·</span>
+            <span className="hidden text-xs font-semibold text-[var(--accent-3)] sm:inline">
+              Rs {formatMoney(selectedTotal)} total
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkBusy}>
+              Clear
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setBulkRejecting(true)} disabled={bulkBusy}>
+              <XCircle size={14} /> Reject all
+            </Button>
+            <Button variant="success" size="sm" onClick={bulkApprove} disabled={bulkBusy}>
+              <CheckCircle2 size={14} /> {bulkBusy ? 'Working…' : `Approve all${selectedList.some((i) => i.status === 'Pending') ? ' + generate POs' : ''}`}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <Modal
-        open={!!rejecting}
-        onClose={() => setRejecting(null)}
-        title={`Reject invoice ${rejecting?.invoice_no ?? ''}`}
+        open={!!rejecting || bulkRejecting}
+        onClose={() => {
+          setRejecting(null)
+          setBulkRejecting(false)
+        }}
+        title={rejecting ? `Reject invoice ${rejecting.invoice_no ?? ''}` : `Reject ${selected.size} invoices`}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setRejecting(null)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setRejecting(null)
+                setBulkRejecting(false)
+              }}
+            >
               Cancel
             </Button>
-            <Button variant="danger" onClick={submitReject}>
-              <XCircle size={15} /> Reject invoice
+            <Button variant="danger" onClick={rejecting ? submitReject : bulkRejectSubmit}>
+              <XCircle size={15} /> {rejecting ? 'Reject invoice' : `Reject ${selected.size} invoices`}
             </Button>
           </>
         }
       >
+        {bulkRejecting && !rejecting && (
+          <div className="mb-3 rounded-xl border border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.06)] px-3 py-2 text-xs font-semibold text-[var(--err)]">
+            The same reason will be applied to all {selected.size} selected invoices.
+          </div>
+        )}
         <Field label="Reason" required>
           <textarea
             className="input min-h-24"
