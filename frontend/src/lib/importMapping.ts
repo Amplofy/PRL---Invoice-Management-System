@@ -1,7 +1,7 @@
 import type { SourceColumn } from './importParser'
 
 export type ImportType = 'invoices' | 'contracts' | 'vendors'
-export type FieldType = 'text' | 'number' | 'date'
+export type FieldType = 'text' | 'number' | 'date' | 'status'
 
 export interface ElementDef {
   key: string
@@ -9,6 +9,8 @@ export interface ElementDef {
   type: FieldType
   required: boolean
   aliases: string[]
+  /** Allowed raw values for status fields; anything else normalizes to null with a warning. */
+  allowed?: string[]
 }
 
 export interface MappingEntry {
@@ -20,15 +22,26 @@ export type MappingState = Record<string, MappingEntry>
 
 export const IMPORT_SCHEMAS: Record<ImportType, ElementDef[]> = {
   invoices: [
+    { key: 'serial_no', label: 'Serial No', type: 'text', required: false, aliases: ['serial no', 'serial number', 'sr no', 's no', 'sno', 'sl no', 'serial', 'sr', 'seq', 'sequence'] },
+    { key: 'processing_date', label: 'Processing Date', type: 'date', required: false, aliases: ['processing date', 'processed on', 'process date', 'received date', 'receipt date'] },
     { key: 'invoice_no', label: 'Invoice No', type: 'text', required: true, aliases: ['invoice no', 'invoice', 'invoice number', 'bill no', 'bill number', 'bill', 'inv no', 'inv number', 'document no', 'doc no', 'voucher no'] },
     { key: 'invoice_date', label: 'Invoice Date', type: 'date', required: true, aliases: ['invoice date', 'bill date', 'date', 'dated', 'inv date'] },
-    { key: 'processing_date', label: 'Processing Date', type: 'date', required: false, aliases: ['processing date', 'processed on', 'process date', 'received date', 'receipt date'] },
-    { key: 'amount', label: 'Amount', type: 'number', required: true, aliases: ['amount', 'invoice amount', 'bill amount', 'net amount', 'total amount', 'value', 'net value', 'total', 'amount rs', 'gross amount'] },
-    { key: 'contract_no', label: 'Contract No', type: 'text', required: true, aliases: ['contract no', 'contract', 'contract number', 'contract id', 'agreement no', 'agreement', 'lc no'] },
     { key: 't1', label: 'Service Type 1', type: 'text', required: false, aliases: ['t1', 'type1', 'service type 1', 'service type', 'activity 1', 'operation'] },
     { key: 't2', label: 'Service Type 2', type: 'text', required: false, aliases: ['t2', 'type2', 'service type 2', 'activity 2', 'service'] },
     { key: 't3', label: 'Service Type 3', type: 'text', required: false, aliases: ['t3', 'type3', 'service type 3', 'activity 3', 'description'] },
     { key: 'tanker_name', label: 'Tanker Name', type: 'text', required: false, aliases: ['tanker name', 'tanker', 'vehicle no', 'truck no', 'vehicle', 'truck'] },
+    { key: 'trips', label: 'Trips', type: 'number', required: false, aliases: ['trips', 'trip', 'no of trips', 'number of trips', 'trip count'] },
+    { key: 'item_no', label: 'Item No', type: 'text', required: false, aliases: ['item no', 'item', 'item number', 'line no', 'line item', 'line'] },
+    { key: 'cost_element', label: 'Cost Element', type: 'text', required: false, aliases: ['cost element', 'cost', 'element', 'cost centre', 'cost center', 'gl account', 'gl'] },
+    { key: 'service_from', label: 'Service From', type: 'date', required: false, aliases: ['service from', 'service start', 'period from', 'period start', 'from'] },
+    { key: 'service_to', label: 'Service To', type: 'date', required: false, aliases: ['service to', 'service end', 'period to', 'period end', 'to'] },
+    { key: 'amount', label: 'Amount', type: 'number', required: true, aliases: ['amount', 'invoice amount', 'bill amount', 'net amount', 'total amount', 'value', 'net value', 'total', 'amount rs', 'gross amount'] },
+    { key: 'status', label: 'Status', type: 'status', required: false, allowed: ['pending', 'approved', 'rejected', 'draft', 'void'], aliases: ['status', 'invoice status', 'approval status', 'state'] },
+    { key: 'approved_by', label: 'Approved By', type: 'text', required: false, aliases: ['approved by', 'approver', 'approved person', 'authorized by', 'authorised by'] },
+    { key: 'approved_date', label: 'Approved Date', type: 'date', required: false, aliases: ['approved date', 'approval date', 'approved on', 'date approved', 'approval on'] },
+    { key: 'approved_amount', label: 'Approved Amount', type: 'number', required: false, aliases: ['approved amount', 'approved value', 'sanctioned amount', 'approved amt', 'approved total'] },
+    { key: 'contract_no', label: 'Contract No', type: 'text', required: true, aliases: ['contract no', 'contract', 'contract number', 'contract id', 'agreement no', 'agreement', 'lc no'] },
+    { key: 'remarks', label: 'Remarks', type: 'text', required: false, aliases: ['remarks', 'remark', 'comments', 'comment', 'notes', 'note'] },
   ],
   contracts: [
     { key: 'contract_no', label: 'Contract No', type: 'text', required: true, aliases: ['contract no', 'contract', 'contract number', 'contract id', 'agreement no', 'agreement'] },
@@ -37,6 +50,7 @@ export const IMPORT_SCHEMAS: Record<ImportType, ElementDef[]> = {
     { key: 'start_date', label: 'Start Date', type: 'date', required: true, aliases: ['start date', 'from date', 'from', 'commencement', ' commencement date', 'effective from', 'wef'] },
     { key: 'end_date', label: 'End Date', type: 'date', required: true, aliases: ['end date', 'to date', 'to', 'expiry', 'expiry date', 'valid till', 'valid until', 'upto'] },
     { key: 'value', label: 'Contract Value', type: 'number', required: true, aliases: ['contract value', 'value', 'amount', 'contract amount', 'total value', 'total amount'] },
+    { key: 'status', label: 'Status', type: 'status', required: false, allowed: ['open', 'closed', 'expiring'], aliases: ['status', 'contract status', 'state'] },
   ],
   vendors: [
     { key: 'name', label: 'Vendor Name', type: 'text', required: true, aliases: ['name', 'vendor name', 'vendor', 'supplier', 'supplier name', 'party', 'party name'] },
@@ -166,9 +180,26 @@ export function normalizeText(raw: unknown): { value: string | null } {
   return { value: s === '' ? null : s }
 }
 
-export function normalizeValue(type: FieldType, raw: unknown): { value: string | number | null; warning?: string } {
+export function normalizeStatus(
+  raw: unknown,
+  allowed: string[],
+): { value: string | null; warning?: string } {
+  const { value } = normalizeText(raw)
+  if (!value) return { value: null }
+  const low = value.toLowerCase()
+  const hit = allowed.find((a) => a.toLowerCase() === low)
+  if (hit) return { value: hit.charAt(0).toUpperCase() + hit.slice(1).toLowerCase() }
+  return { value: null, warning: `unknown status "${value}" — imports as default` }
+}
+
+export function normalizeValue(
+  type: FieldType,
+  raw: unknown,
+  allowed?: string[],
+): { value: string | number | null; warning?: string } {
   if (type === 'date') return normalizeDate(raw)
   if (type === 'number') return normalizeNumber(raw)
+  if (type === 'status') return normalizeStatus(raw, allowed ?? [])
   return normalizeText(raw)
 }
 
@@ -220,7 +251,7 @@ export function applyMapping(
         continue
       }
       const raw = row[col.key]
-      const { value, warning } = normalizeValue(el.type, raw)
+      const { value, warning } = normalizeValue(el.type, raw, el.allowed)
       if (warning) out[`${el.key}__warn`] = warning
       out[el.key] = value ?? null
     }

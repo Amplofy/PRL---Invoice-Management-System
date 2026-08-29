@@ -393,12 +393,46 @@ function pendingFollowups(): { pending: unknown[]; total: number } {
  * Rows arrive already mapped + normalized by the client wizard:
  * canonical schema keys (see lib/importMapping.ts IMPORT_SCHEMAS).
  */
-function confirmImport(type: string, rows: Record<string, unknown>[]): { imported: number; skipped: number; type: string } {
+interface DemoImportBatch {
+  id: string
+  import_type: string
+  file_name: string
+  total_rows: number
+  duplicate_rows: number
+  status: 'pending' | 'approved' | 'rejected'
+  rows: Record<string, unknown>[]
+  conflicts: string[]
+  submitted_by: string
+  decided_by: string | null
+  decided_at: string | null
+  created_at: string
+}
+const importBatches: DemoImportBatch[] = []
+
+function detectDemoConflicts(type: string, rows: Record<string, unknown>[]): string[] {
+  const out: string[] = []
+  for (const r of rows) {
+    if (type === 'invoices') {
+      const no = String(r.invoice_no ?? '').trim()
+      if (no && invoices.some((i) => i.invoice_no === no)) out.push(`invoice no "${no}" already exists in system`)
+    } else if (type === 'contracts') {
+      const no = String(r.contract_no ?? '').trim()
+      if (no && contracts.some((c) => c.contract_no === no)) out.push(`contract no "${no}" already exists in system`)
+    } else {
+      const name = String(r.name ?? '').trim()
+      if (name && vendors.some((v) => v.name.toLowerCase() === name.toLowerCase())) out.push(`vendor name "${name}" already exists in system`)
+    }
+  }
+  return out
+}
+
+function applyImportRowsDemo(type: string, rows: Record<string, unknown>[]): { imported: number; skipped: number } {
   let imported = 0
+  let skipped = 0
   if (type === 'vendors') {
     for (const r of rows) {
       const name = String(r.name ?? '').trim()
-      if (!name) continue
+      if (!name) { skipped += 1; continue }
       vendors.push({ id: uid(), name, email: (r.email as string) ?? null, created_at: nowIso(), updated_at: nowIso() })
       imported += 1
     }
@@ -406,12 +440,13 @@ function confirmImport(type: string, rows: Record<string, unknown>[]): { importe
     for (const r of rows) {
       const contractNo = String(r.contract_no ?? '').trim()
       const vendorName = String(r.vendor ?? '').trim()
-      if (!contractNo || !vendorName) continue
+      if (!contractNo || !vendorName) { skipped += 1; continue }
       let vendor = vendors.find((x) => x.name.toLowerCase() === vendorName.toLowerCase())
       if (!vendor) {
         vendor = { id: uid(), name: vendorName, email: null, created_at: nowIso(), updated_at: nowIso() }
         vendors.push(vendor)
       }
+      const st = String(r.status ?? 'Open').toLowerCase()
       contracts.push({
         id: uid(),
         contract_no: contractNo,
@@ -420,7 +455,7 @@ function confirmImport(type: string, rows: Record<string, unknown>[]): { importe
         start_date: (r.start_date as string) ?? null,
         end_date: (r.end_date as string) ?? null,
         value: Number(r.value ?? 0),
-        status: 'Open',
+        status: ['open', 'closed', 'expiring'].includes(st) ? st.charAt(0).toUpperCase() + st.slice(1) : 'Open',
         vendors: [{ name: vendor.name, email: vendor.email }],
       })
       imported += 1
@@ -428,11 +463,11 @@ function confirmImport(type: string, rows: Record<string, unknown>[]): { importe
   } else {
     for (const r of rows) {
       const invoiceNo = String(r.invoice_no ?? '').trim()
-      if (!invoiceNo) continue
+      if (!invoiceNo) { skipped += 1; continue }
       const contractNo = String(r.contract_no ?? '').trim()
       const contract = contractNo ? contracts.find((c) => c.contract_no === contractNo) : undefined
       const inv = makeInvoice({
-        serial_no: null,
+        serial_no: (r.serial_no as string) ?? null,
         invoice_no: invoiceNo,
         invoice_date: (r.invoice_date as string) ?? null,
         contract_id: contract?.id ?? null,
@@ -443,13 +478,26 @@ function confirmImport(type: string, rows: Record<string, unknown>[]): { importe
       })
       if (r.processing_date) inv.processing_date = String(r.processing_date)
       if (r.tanker_name) inv.tanker_name = String(r.tanker_name)
+      const st = String(r.status ?? 'Pending').toLowerCase()
+      inv.status = ['pending', 'approved', 'rejected', 'draft', 'void'].includes(st)
+        ? st.charAt(0).toUpperCase() + st.slice(1)
+        : 'Pending'
+      const trips = Number(r.trips)
+      if (Number.isFinite(trips)) (inv as unknown as Record<string, unknown>).trips = Math.trunc(trips)
+      for (const k of ['item_no', 'cost_element', 'service_from', 'service_to', 'approved_by', 'approved_amount', 'remarks'] as const) {
+        if (r[k] !== null && r[k] !== undefined && r[k] !== '') (inv as unknown as Record<string, unknown>)[k] = r[k]
+      }
+      if (r.approved_date) (inv as unknown as Record<string, unknown>).approved_date = r.approved_date
       inv.contracts = embedContract(contractById(inv.contract_id))
       invoices.unshift(inv)
       imported += 1
     }
   }
   if (imported > 0) audit('Import', 'Data', null, `Imported ${imported} ${type} rows`)
-  return { imported, skipped: rows.length - imported, type }
+  return { imported, skipped: skipped + rows.filter((r) => {
+    const key = type === 'vendors' ? r.name : type === 'contracts' ? r.contract_no : r.invoice_no
+    return !String(key ?? '').trim()
+  }).length }
 }
 
 function comparePayload(): unknown {
@@ -777,8 +825,50 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     return { type: formType || 'invoices', fileName: 'upload.xlsx', preview: [], issues: [], totalRows: 0, validRows: 0 } as T
   }
   if (m === 'POST' && path === '/api/import/confirm') {
-    const b = (body ?? {}) as { type?: string; rows?: Record<string, unknown>[] }
-    return confirmImport(b.type ?? 'invoices', b.rows ?? []) as T
+    const b = (body ?? {}) as { type?: string; rows?: Record<string, unknown>[]; fileName?: string }
+    const type = b.type ?? 'invoices'
+    const rows = b.rows ?? []
+    const conflicts = detectDemoConflicts(type, rows)
+    if (conflicts.length === 0) {
+      const { imported, skipped } = applyImportRowsDemo(type, rows)
+      return { status: 'approved', imported, skipped, duplicates: 0, type } as T
+    }
+    const batch: DemoImportBatch = {
+      id: uid(),
+      import_type: type,
+      file_name: b.fileName ?? 'upload.xlsx',
+      total_rows: rows.length,
+      duplicate_rows: conflicts.length,
+      status: 'pending',
+      rows,
+      conflicts,
+      submitted_by: 'you (demo)',
+      decided_by: null,
+      decided_at: null,
+      created_at: nowIso(),
+    }
+    importBatches.unshift(batch)
+    return { status: 'pending', imported: 0, skipped: 0, batchId: batch.id, duplicates: conflicts.length, type } as T
+  }
+  if (m === 'GET' && path === '/api/import/batches') {
+    return { batches: importBatches } as T
+  }
+  if (m === 'POST' && parts.length === 5 && parts[1] === 'import' && parts[2] === 'batches' && parts[4] === 'decide') {
+    const batch = importBatches.find((x) => x.id === parts[3])
+    if (!batch) fail('Batch not found')
+    if (batch.status !== 'pending') fail(`Batch already ${batch.status}`)
+    const decision = String((body as { decision?: string } | null)?.decision ?? 'approve')
+    if (decision === 'approve') {
+      const { imported, skipped } = applyImportRowsDemo(batch.import_type, batch.rows)
+      batch.decided_by = 'you (demo)'
+      batch.decided_at = nowIso()
+      batch.status = 'approved'
+      return { batch: { ...batch, imported, skipped } } as T
+    }
+    batch.decided_by = 'you (demo)'
+    batch.decided_at = nowIso()
+    batch.status = 'rejected'
+    return { batch } as T
   }
 
   if (m === 'POST' && path === '/api/compare') {

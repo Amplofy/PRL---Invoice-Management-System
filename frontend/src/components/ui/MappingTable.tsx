@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertTriangle, Calendar, ChevronDown, EyeOff, Hash, Link2, Type, X } from 'lucide-react'
+import { AlertTriangle, Calendar, ChevronDown, EyeOff, Hash, Link2, ListChecks, Type, X } from 'lucide-react'
 import type { ElementDef, MappingState } from '../../lib/importMapping'
 import type { SourceColumn } from '../../lib/importParser'
 import { normalizeValue } from '../../lib/importMapping'
@@ -13,7 +13,7 @@ interface Props {
   detectedRow: number
 }
 
-const TYPE_ICON = { text: Type, number: Hash, date: Calendar }
+const TYPE_ICON = { text: Type, number: Hash, date: Calendar, status: ListChecks }
 
 export default function MappingTable({ schema, columns, mapping, onChange, detectedRow }: Props) {
   const [openEl, setOpenEl] = useState<string | null>(null)
@@ -40,7 +40,7 @@ export default function MappingTable({ schema, columns, mapping, onChange, detec
     const col = colKey ? colByKey.get(colKey) : undefined
     if (!col || col.samples.length === 0) return null
     return col.samples.slice(0, 3).map((s, i) => {
-      const { value, warning } = normalizeValue(el.type, s)
+      const { value, warning } = normalizeValue(el.type, s, el.allowed)
       return (
         <span key={i} className="inline-flex items-center gap-1 rounded-md bg-[var(--surface)] px-1.5 py-0.5 text-[0.68rem]">
           <span className="text-[var(--text-muted)]">{truncate(String(s))}</span>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Upload, FileSpreadsheet, FileText, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight,
-  Table2, Wand2, EyeOff, Copy, History,
+  Table2, Wand2, EyeOff, Copy, History, Clock, ShieldCheck, XCircle,
 } from 'lucide-react'
 import { apiPost, apiGet } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
@@ -61,9 +61,48 @@ export default function ImportPage() {
   const [canonical, setCanonical] = useState<CanonicalRow[]>([])
   const [showInvalidOnly, setShowInvalidOnly] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null)
+  const [importResult, setImportResult] = useState<{
+    status: 'approved' | 'pending'
+    imported: number
+    skipped: number
+    duplicates: number
+  } | null>(null)
   const [demoInvoices, setDemoInvoices] = useState<DemoInvoice[]>([])
   const [demoContracts, setDemoContracts] = useState<DemoContract[]>([])
+  const [batches, setBatches] = useState<ImportBatchRow[]>([])
+  const [decidingId, setDecidingId] = useState<string | null>(null)
+
+  interface ImportBatchRow {
+    id: string
+    import_type: string
+    file_name: string
+    total_rows: number
+    duplicate_rows: number
+    status: 'pending' | 'approved' | 'rejected'
+    conflicts: string[]
+    submitted_by: string
+    created_at: string
+  }
+
+  const loadBatches = () => {
+    if (!admin) return
+    apiGet<{ batches: ImportBatchRow[] }>('/api/import/batches')
+      .then((d) => setBatches(d.batches))
+      .catch(() => undefined)
+  }
+
+  const decideBatch = async (id: string, decision: 'approve' | 'reject') => {
+    setDecidingId(id)
+    try {
+      await apiPost(`/api/import/batches/${id}/decide`, { decision })
+      toast.success(decision === 'approve' ? 'Import approved' : 'Import rejected')
+      loadBatches()
+    } catch (e) {
+      toast.error('Decision failed', (e as Error).message)
+    } finally {
+      setDecidingId(null)
+    }
+  }
   const fileRef = useRef<HTMLInputElement>(null)
   const toast = useToast()
   const { user } = useAuth()
@@ -78,6 +117,11 @@ export default function ImportPage() {
       .then((d) => setDemoContracts(d.contracts))
       .catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    loadBatches()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin])
 
   const aliasSet = useMemo(() => {
     const s = new Set<string>()
@@ -205,12 +249,26 @@ export default function ImportPage() {
     if (validRows.length === 0) return
     setConfirming(true)
     try {
-      const d = await apiPost<{ imported: number; skipped: number; type: ImportType }>('/api/import/confirm', {
+      const d = await apiPost<{
+        status: 'approved' | 'pending'
+        imported: number
+        skipped: number
+        duplicates: number
+      }>('/api/import/confirm', {
         type,
         rows: validRows,
+        fileName,
       })
-      setImportResult({ imported: d.imported, skipped: d.skipped })
-      toast.success('Import committed', `${d.imported} rows imported`)
+      setImportResult({ status: d.status, imported: d.imported, skipped: d.skipped, duplicates: d.duplicates })
+      if (d.status === 'approved') {
+        toast.success('Import committed', `${d.imported} rows imported`)
+      } else {
+        toast.info(
+          'Sent for admin approval',
+          `${d.duplicates} duplicate row(s) detected — an admin will make the final call.`,
+        )
+        loadBatches()
+      }
       setStep(5)
     } catch (e) {
       toast.error('Confirm failed', (e as Error).message)
@@ -233,6 +291,10 @@ export default function ImportPage() {
   }
 
   const validCount = canonical.filter((r) => r.errors.length === 0).length
+  const dupeCount = canonical.filter(
+    (r) => r.errors.some((e) => e.includes('already exists')) && r.errors.every((e) => e.includes('already exists') || e.includes('inside this file')),
+  ).length
+  const cleanCount = canonical.filter((r) => r.errors.length === 0).length
   const shown = showInvalidOnly ? canonical.filter((r) => r.errors.length > 0) : canonical
   const hiddenCols = columns.filter((c) => c.hidden)
 
@@ -265,6 +327,63 @@ export default function ImportPage() {
 
       {step === 1 && (
         <div className="space-y-5">
+          {admin && batches.length > 0 && (
+            <GlassCard className="p-5">
+              <div className="section-title">
+                <Clock size={15} className="mr-1.5 inline text-[var(--warn)]" />
+                Imports awaiting approval · {batches.filter((b) => b.status === 'pending').length} pending
+              </div>
+              <div className="mt-3 space-y-2.5">
+                {batches.slice(0, 8).map((b) => (
+                  <div
+                    key={b.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
+                        {b.file_name || 'Untitled file'}
+                        <span className="badge">{b.import_type}</span>
+                        {b.status === 'pending' && <span className="badge" style={{ color: 'var(--warn)' }}>pending</span>}
+                        {b.status === 'approved' && <span className="badge badge-ok">approved</span>}
+                        {b.status === 'rejected' && <span className="badge badge-err">rejected</span>}
+                      </div>
+                      <div className="mt-1 text-xs text-[var(--text-muted)]">
+                        {b.total_rows} rows · {b.duplicate_rows} duplicate(s) · by {b.submitted_by || 'unknown'} ·{' '}
+                        {new Date(b.created_at).toLocaleString()}
+                        {b.conflicts.length > 0 && (
+                          <span className="mt-1 block truncate text-[var(--warn)]" title={b.conflicts.join('; ')}>
+                            {b.conflicts.slice(0, 2).join(' · ')}
+                            {b.conflicts.length > 2 ? ` · +${b.conflicts.length - 2} more` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {b.status === 'pending' && (
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={decidingId === b.id}
+                          onClick={() => decideBatch(b.id, 'reject')}
+                        >
+                          <XCircle size={14} /> Reject
+                        </Button>
+                        <Button
+                          variant="success"
+                          size="sm"
+                          disabled={decidingId === b.id}
+                          onClick={() => decideBatch(b.id, 'approve')}
+                        >
+                          <CheckCircle2 size={14} /> Approve & import
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+          )}
+
           <GlassCard className="p-5">
             <div className="section-title">1 · Choose import type</div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -488,25 +607,62 @@ export default function ImportPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-4">
             <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              {admin ? (
+              {dupeCount > 0 ? (
+                <AlertTriangle size={15} className="text-[var(--warn)]" />
+              ) : admin ? (
                 <CheckCircle2 size={15} className="text-[var(--accent-3)]" />
               ) : (
-                <AlertTriangle size={15} className="text-[var(--warn)]" />
+                <ShieldCheck size={15} className="text-[var(--accent)]" />
               )}
-              {admin
-                ? `${validCount} valid rows will be committed to the ${type} table.`
-                : 'Admin rights are required to confirm this import.'}
+              {dupeCount > 0
+                ? `${dupeCount} row(s) already exist in the system — continuing sends this import to an admin for final approval.`
+                : admin
+                  ? `${cleanCount} valid rows will be committed to the ${type} table.`
+                  : `${cleanCount} valid rows will be sent to an admin for approval before import.`}
             </div>
-            {admin && (
-              <Button variant="success" onClick={confirm} disabled={confirming || validCount === 0}>
-                <CheckCircle2 size={15} /> {confirming ? 'Committing…' : `Confirm & commit ${validCount} rows`}
-              </Button>
-            )}
+            <Button
+              variant={dupeCount > 0 ? 'primary' : 'success'}
+              onClick={confirm}
+              disabled={confirming || validCount === 0}
+            >
+              {dupeCount > 0 ? (
+                <>
+                  <Clock size={15} /> {confirming ? 'Submitting…' : `Continue anyway — send ${validCount} rows for approval`}
+                </>
+              ) : admin ? (
+                <>
+                  <CheckCircle2 size={15} /> {confirming ? 'Committing…' : `Confirm & commit ${validCount} rows`}
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={15} /> {confirming ? 'Submitting…' : `Submit ${validCount} rows for admin approval`}
+                </>
+              )}
+            </Button>
           </div>
         </GlassCard>
       )}
 
-      {step === 5 && importResult && (
+      {step === 5 && importResult && importResult.status === 'pending' && (
+        <GlassCard className="p-6 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[rgba(245,158,11,0.12)]">
+            <Clock size={30} className="text-[var(--warn)]" />
+          </div>
+          <div className="mt-4 text-lg font-bold">Sent for admin approval</div>
+          <div className="mx-auto mt-2 max-w-md text-sm text-[var(--text-dim)]">
+            <b>{importResult.duplicates}</b> row(s) in this file already exist in the system. The import
+            was saved as a pending batch — an admin will review it and make the final call. Nothing has
+            been imported yet.
+          </div>
+          <div className="mt-5 flex justify-center gap-2.5">
+            <Button variant="primary" onClick={reset}>
+              Back to upload
+            </Button>
+          </div>
+        </GlassCard>
+      )}
+
+      {step === 5 && importResult && importResult.status === 'approved' && (
         <GlassCard className="p-6 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[rgba(16,185,129,0.12)]">
             <CheckCircle2 size={30} className="text-[var(--accent-3)]" />

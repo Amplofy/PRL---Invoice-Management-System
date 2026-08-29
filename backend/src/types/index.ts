@@ -18,6 +18,9 @@ export type PreviewRow = {
   valid: boolean
 }
 
+/** Alias kept for import-service naming consistency. */
+export type ImportPreviewRow = PreviewRow
+
 export type ImportIssue = {
   row: number
   message: string
@@ -36,11 +39,32 @@ export type ImportParseResult = {
 export type ImportConfirmBody = {
   type: ImportType
   rows: Record<string, unknown>[]
+  fileName?: string
+  /** Client-side duplicate descriptions; the server re-detects anyway. */
+  conflicts?: string[]
 }
 
 export type ImportConfirmResult = {
+  status: 'approved' | 'pending'
   imported: number
   skipped: number
+  batchId?: string
+  duplicates: number
+}
+
+export type ImportBatch = {
+  id: string
+  import_type: ImportType
+  file_name: string
+  total_rows: number
+  duplicate_rows: number
+  status: 'pending' | 'approved' | 'rejected'
+  rows: Record<string, unknown>[]
+  conflicts: string[]
+  submitted_by: string
+  decided_by: string | null
+  decided_at: string | null
+  created_at: string
 }
 
 export type Mismatch = {
