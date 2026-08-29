@@ -26,3 +26,12 @@ alter table public.followup_emails enable row level security;
 -- No permissive policies are created on purpose:
 -- anon/authenticated roles get zero table access, all data flows
 -- through the backend API which uses the service-role key.
+--
+-- Exception: the frontend reads the signed-in user's own profile
+-- (name/role) directly, so allow self-read on profiles only.
+
+create policy "profiles_select_own"
+  on public.profiles
+  for select
+  to authenticated
+  using (id = auth.uid());
