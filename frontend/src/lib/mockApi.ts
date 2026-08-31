@@ -966,7 +966,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
         mk(name, [
           { invoice_no: 'INV-2026-0011', delivery_date: '15/01/2026', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
           { invoice_no: 'INV-2026-0012', delivery_date: 'Jan 16, 2026', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
-          { invoice_no: 'INV-2026-0013', delivery_date: '17/01/2026', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
+          { invoice_no: 'INV 2026 0013', delivery_date: '17/01/2026', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
           { invoice_no: 'INV-2026-0015', delivery_date: '22/01/2026', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
         ]),
       ],

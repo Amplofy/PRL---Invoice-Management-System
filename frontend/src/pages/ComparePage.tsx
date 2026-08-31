@@ -1,12 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Upload, GitCompareArrows, ArrowLeftRight, Send, AlertTriangle, CheckCircle2, FileText,
   ArrowLeft, ArrowRight, Thermometer, Ruler, Scale, Gauge, Waves, Wind, Sparkles, Info, Layers,
-  Hash, Calendar, Type as TypeIcon, Wand2,
+  Hash, Calendar, Type as TypeIcon, Wand2, Equal, SlidersHorizontal, ListOrdered, Stethoscope,
 } from 'lucide-react'
 import { apiUpload, apiGet, apiPost } from '../lib/api'
 import { downloadCSV } from '../lib/export'
-import { suggestJoinKey, suggestPairs, runCompare, inferColumnType, type ColumnType, type ColumnPair, type CompareOutcome, type PairConfig } from '../lib/compareEngine'
+import {
+  profileFile, keyCandidates, suggestPairs, verify,
+  type FileProfile, type KeyCandidate, type MatchStrategy, type ValueKind,
+  type ColumnPair, type VerifyOutcome, type PairConfig,
+} from '../lib/compareEngine'
 import { detectUnit, UNITS, type UnitDef } from '../lib/units'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -17,7 +21,8 @@ import Modal from '../components/ui/Modal'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 
-type Step = 1 | 2 | 3
+type Step = 1 | 2 | 3 | 4
+type ResultTab = 'all' | 'matches' | 'mismatches' | 'missing'
 
 interface ParsedGroup {
   name: string
@@ -35,8 +40,6 @@ interface ParsedFile {
   columns: string[]
 }
 
-type ResultTab = 'all' | 'matches' | 'mismatches' | 'missing'
-
 interface UploadedFile {
   fileId: string
   fileName: string
@@ -51,42 +54,71 @@ const KIND_ICON: Record<string, React.ReactNode> = {
   pressure: <Gauge size={12} />,
 }
 
-const TEMPERATURE_TARGETS = UNITS.filter((u) => u.kind === 'temperature')
-
-const TYPE_ICON: Record<ColumnType, React.ReactNode> = {
+const TYPE_ICON: Record<ValueKind, React.ReactNode> = {
   number: <Hash size={11} />,
   date: <Calendar size={11} />,
   text: <TypeIcon size={11} />,
 }
 
-const TYPE_LABEL: Record<ColumnType, string> = {
-  number: 'number',
-  date: 'date',
-  text: 'text',
+const STRATEGY_ICON: Record<MatchStrategy, React.ReactNode> = {
+  exact: <Equal size={13} />,
+  composite: <Layers size={13} />,
+  fuzzy: <Wand2 size={13} />,
+  numeric: <SlidersHorizontal size={13} />,
+  position: <ListOrdered size={13} />,
 }
+
+const STRATEGY_LABEL: Record<MatchStrategy, string> = {
+  exact: 'Exact key',
+  composite: 'Composite key',
+  fuzzy: 'Fuzzy key',
+  numeric: 'Numeric proximity',
+  position: 'Row position',
+}
+
+const STRATEGY_HINT: Record<MatchStrategy, string> = {
+  exact: 'Values match character-for-character',
+  composite: 'Two columns combined form the row identity',
+  fuzzy: 'Close enough keys counted as the same row (typos, spacing, separators)',
+  numeric: 'Rows paired by nearest numeric value (dip/depth readings)',
+  position: 'Nth row aligned with Nth row — for tables without any key',
+}
+
+const TEMPERATURE_TARGETS = UNITS.filter((u) => u.kind === 'temperature')
 
 export default function ComparePage() {
   const [step, setStep] = useState<Step>(1)
   const [base, setBase] = useState<ParsedFile | null>(null)
   const [compare, setCompare] = useState<ParsedFile | null>(null)
   const [parsing, setParsing] = useState<'base' | 'compare' | null>(null)
-  const [join, setJoin] = useState<ColumnPair | null>(null)
+
+  const [baseProfile, setBaseProfile] = useState<FileProfile | null>(null)
+  const [compareProfile, setCompareProfile] = useState<FileProfile | null>(null)
+  const [candidates, setCandidates] = useState<KeyCandidate[]>([])
+  const [chosenId, setChosenId] = useState<string | null>(null)
+
   const [pairs, setPairs] = useState<ColumnPair[]>([])
-  const [configs, setConfigs] = useState<Record<string, PairConfig>>({})
-  const [tolerance, setTolerance] = useState('0')
-  const [comparing, setComparing] = useState(false)
-  const [outcome, setOutcome] = useState<CompareOutcome | null>(null)
+  const [unitCfg, setUnitCfg] = useState<Record<string, string>>({})
+  const [numTol, setNumTol] = useState('0')
+  const [dateTol, setDateTol] = useState('0')
+  const [running, setRunning] = useState(false)
+  const [outcome, setOutcome] = useState<VerifyOutcome | null>(null)
   const [resultTab, setResultTab] = useState<ResultTab>('all')
   const [reviewed, setReviewed] = useState<Set<string>>(new Set())
+
   const [comparisonId, setComparisonId] = useState<string | null>(null)
   const [sendOpen, setSendOpen] = useState(false)
   const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([])
   const [vendorId, setVendorId] = useState('')
   const [notes, setNotes] = useState('')
   const [sending, setSending] = useState(false)
+
   const baseRef = useRef<HTMLInputElement>(null)
   const compareRef = useRef<HTMLInputElement>(null)
   const toast = useToast()
+
+  const ready = base !== null && compare !== null
+  const candidate = candidates.find((c) => c.id === chosenId) ?? null
 
   const parseFile = async (file: File, which: 'base' | 'compare') => {
     setParsing(which)
@@ -98,7 +130,6 @@ export default function ComparePage() {
       const uploaded = await apiUpload<UploadedFile>('/api/uploads', form)
       const groups = parsed.groups.filter((g) => g.rows.length > 0)
       if (groups.length === 0) throw new Error('No readable rows found in the file')
-      // default to the largest group; user can switch sheet/page below
       const best = groups.reduce((a, b) => (b.rowCount > a.rowCount ? b : a))
       const withNames: ParsedFile = {
         fileName: uploaded.fileName || parsed.fileName,
@@ -127,39 +158,43 @@ export default function ComparePage() {
     const updated: ParsedFile = { ...file, selectedGroup: name, rows: g.rows, columns: g.columns }
     if (which === 'base') setBase(updated)
     else setCompare(updated)
-    setJoin(null)
-    setPairs([])
     setOutcome(null)
+    setStep(1)
   }
 
-  const ready = base !== null && compare !== null
-
+  // Analysis runs whenever both files are ready and step 2 opens
   useEffect(() => {
     if (step !== 2 || !ready) return
-    const jk = suggestJoinKey(base!.columns, compare!.columns, base!.rows, compare!.rows)
-    setJoin(jk)
-    const suggested = suggestPairs(base!.columns, compare!.columns, jk)
-    setPairs(suggested)
-    setConfigs({})
+    const bp = profileFile(base!.rows, base!.columns)
+    const cp = profileFile(compare!.rows, compare!.columns)
+    setBaseProfile(bp)
+    setCompareProfile(cp)
+    const cands = keyCandidates(base!.rows, compare!.rows, bp, cp)
+    setCandidates(cands)
+    const best = cands[0] ?? null
+    setChosenId(best?.id ?? null)
+    if (best) {
+      setPairs(suggestPairs(base!.columns, compare!.columns, best.baseCols, best.compareCols))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, ready])
 
-  const cfgFor = (p: ColumnPair): PairConfig =>
-    configs[`${p.baseCol}→${p.compareCol}`] ?? { baseCol: p.baseCol, compareCol: p.compareCol, targetUnit: 'auto', tolerance: 0 }
-
-  const autoMatch = () => {
-    if (!base || !compare) return
-    const suggested = suggestPairs(base.columns, compare.columns, join)
-    setPairs((prev) => {
-      const seen = new Set(prev.map((p) => `${p.baseCol}→${p.compareCol}`))
-      return [...prev, ...suggested.filter((p) => !seen.has(`${p.baseCol}→${p.compareCol}`))]
-    })
-    toast.info('Headers auto-matched', `${suggested.length} column pair(s) recognized across both files`)
+  const chooseCandidate = (c: KeyCandidate) => {
+    setChosenId(c.id)
+    if (base && compare) {
+      setPairs(suggestPairs(base.columns, compare.columns, c.baseCols, c.compareCols))
+    }
   }
+
+  const cfgFor = (p: ColumnPair): PairConfig => ({
+    baseCol: p.baseCol,
+    compareCol: p.compareCol,
+    targetUnit: unitCfg[`${p.baseCol}→${p.compareCol}`] ?? 'auto',
+  })
 
   const setCfg = (p: ColumnPair, patch: Partial<PairConfig>) => {
     const key = `${p.baseCol}→${p.compareCol}`
-    setConfigs((prev) => ({ ...prev, [key]: { ...cfgFor(p), ...patch } }))
+    setUnitCfg((prev) => ({ ...prev, [key]: patch.targetUnit ?? prev[key] ?? 'auto' }))
   }
 
   const unitOf = (side: 'base' | 'compare', col: string): UnitDef | null => {
@@ -170,41 +205,58 @@ export default function ComparePage() {
   }
 
   const run = async () => {
-    if (!base || !compare || !join || pairs.length === 0) return
-    setComparing(true)
+    if (!base || !compare || !baseProfile || !compareProfile || !candidate) return
+    setRunning(true)
     try {
-      const tol = Number(tolerance) || 0
-      const result = runCompare(
+      const result = verify(
         base.rows,
         compare.rows,
-        join,
-        pairs.map((p) => ({ ...cfgFor(p), tolerance: tol })),
+        baseProfile,
+        compareProfile,
+        candidate,
+        pairs.map(cfgFor),
+        { numericTolerance: Number(numTol) || 0, dateToleranceDays: Number(dateTol) || 0 },
+        candidates,
       )
       setOutcome(result)
+      setReviewed(new Set())
+      setResultTab('all')
       const saved = await apiPost<{ comparisonId: string }>('/api/compare', {
         baseFileName: base.fileName,
         compareFileName: compare.fileName,
-        joinKey: `${join.baseCol} ↔ ${join.compareCol}`,
+        joinKey: `${candidate.strategy}: ${candidate.baseCols.join('+') || 'position'} ↔ ${candidate.compareCols.join('+') || 'position'}`,
         columns: pairs.map((p) => p.baseCol),
-        tolerance: tol,
-        mismatches: result.mismatches,
-        missingInCompare: result.missingInCompare,
-        missingInBase: result.missingInBase,
-        summary: result.summary,
+        tolerance: Number(numTol) || 0,
+        mismatches: result.rows.flatMap((r) =>
+          r.cells.filter((c) => c.status === 'mismatch').map((c) => ({
+            keyValue: r.key,
+            column: c.column,
+            baseValue: c.baseValue,
+            compareValue: c.compareValue,
+          })),
+        ),
+        missingInCompare: result.rows.filter((r) => r.status === 'missing_in_compare').map((r) => ({ keyValue: r.key })),
+        missingInBase: result.rows.filter((r) => r.status === 'missing_in_base').map((r) => ({ keyValue: r.key })),
+        summary: { totalRows: result.summary.totalRows, matchedRows: result.summary.matchedRows },
       })
       setComparisonId(saved.comparisonId)
-      setReviewed(new Set())
-      setResultTab('all')
-      setStep(3)
+      setStep(4)
       toast.info(
-        'Comparison complete',
-        `${result.mismatches.length} mismatch(es) · ${result.missingInCompare.length} missing in TO · ${result.missingInBase.length} missing in FROM`,
+        'Verification complete',
+        `${result.summary.matchedRows} matched · ${result.summary.mismatchRows} mismatched · ${result.summary.missingInCompare + result.summary.missingInBase} unaligned`,
       )
     } catch (e) {
-      toast.error('Compare failed', (e as Error).message)
+      toast.error('Verification failed', (e as Error).message)
     } finally {
-      setComparing(false)
+      setRunning(false)
     }
+  }
+
+  const healTo = (c: KeyCandidate) => {
+    chooseCandidate(c)
+    setOutcome(null)
+    setStep(2)
+    toast.info('Key switched', `Now using ${STRATEGY_LABEL[c.strategy]} on ${c.baseCols.join(' + ') || 'row position'}`)
   }
 
   const openSend = async () => {
@@ -238,77 +290,60 @@ export default function ComparePage() {
   const swap = () => {
     setBase(compare)
     setCompare(base)
-    setJoin(null)
-    setPairs([])
     setOutcome(null)
-    setReviewed(new Set())
-    setResultTab('all')
+    setCandidates([])
+    setChosenId(null)
+    setPairs([])
     setStep(ready ? 2 : 1)
   }
 
   const reset = () => {
     setBase(null)
     setCompare(null)
-    setJoin(null)
+    setBaseProfile(null)
+    setCompareProfile(null)
+    setCandidates([])
+    setChosenId(null)
     setPairs([])
+    setUnitCfg({})
     setOutcome(null)
     setComparisonId(null)
-    setConfigs({})
     setReviewed(new Set())
     setResultTab('all')
     setStep(1)
   }
 
-  const totalIssues = (outcome?.mismatches.length ?? 0) + (outcome?.missingInCompare.length ?? 0) + (outcome?.missingInBase.length ?? 0)
+  const issueRows = useMemo(
+    () => (outcome ? outcome.rows.filter((r) => r.status !== 'match') : []),
+    [outcome],
+  )
+  const matchedRows = useMemo(
+    () => (outcome ? outcome.rows.filter((r) => r.status === 'match') : []),
+    [outcome],
+  )
 
-  const exportMatches = () => {
-    if (!outcome) return
-    downloadCSV('compare-matches.csv', outcome.matched.flatMap((row) =>
-      row.matches.map((m) => ({
-        key: row.keyValue,
-        column: m.column,
-        baseValue: m.baseValue,
-        compareValue: m.compareValue,
-        normalized: `${m.baseNorm ?? ''} vs ${m.compareNorm ?? ''}`,
-        unitNote: m.unitNote ?? '',
-        result: 'match',
-      })),
+  const exportRows = (label: string, rows: VerifyOutcome['rows']) => {
+    downloadCSV(label, rows.flatMap((r) =>
+      r.cells.length === 0
+        ? [{ key: r.key, column: '', type: '', baseValue: '', compareValue: '', normalized: '', unitNote: '', result: r.status }]
+        : r.cells.map((c) => ({
+            key: r.key,
+            column: c.column,
+            type: c.type,
+            baseValue: c.baseValue,
+            compareValue: c.compareValue,
+            normalized: `${c.baseNorm ?? ''} vs ${c.compareNorm ?? ''}`,
+            unitNote: c.unitNote ?? '',
+            result: c.status,
+          })),
     ))
-  }
-
-  const exportFindings = () => {
-    if (!outcome) return
-    downloadCSV('compare-findings.csv', [
-      ...outcome.mismatches.map((m) => ({
-        key: m.keyValue,
-        column: m.column,
-        baseValue: m.baseValue,
-        compareValue: m.compareValue,
-        normalized: `${m.baseNorm ?? ''} vs ${m.compareNorm ?? ''}`,
-        unitNote: m.unitNote ?? '',
-        result: 'mismatch',
-      })),
-      ...outcome.matched.flatMap((row) =>
-        row.matches.map((m) => ({
-          key: row.keyValue,
-          column: m.column,
-          baseValue: m.baseValue,
-          compareValue: m.compareValue,
-          normalized: `${m.baseNorm ?? ''} vs ${m.compareNorm ?? ''}`,
-          unitNote: m.unitNote ?? '',
-          result: 'match',
-        })),
-      ),
-      ...outcome.missingInCompare.map((m) => ({ key: m.keyValue, column: '', baseValue: '', compareValue: '', normalized: '', unitNote: '', result: 'missing in TO' })),
-      ...outcome.missingInBase.map((m) => ({ key: m.keyValue, column: '', baseValue: '', compareValue: '', normalized: '', unitNote: '', result: 'missing in FROM' })),
-    ])
   }
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Compare Files"
-        description="Upload two files in any format, map the columns, and let smart unit detection diff them fairly."
+        title="Compare Anything"
+        description="Universal comparison: the engine profiles both files, finds how rows correspond, and verifies every value — self-healing when alignment is weak."
         actions={
           <>
             {step !== 1 && (
@@ -316,7 +351,7 @@ export default function ComparePage() {
                 <ArrowLeft size={14} /> Start over
               </Button>
             )}
-            {step === 3 && comparisonId && (
+            {step === 4 && comparisonId && (
               <Button variant="primary" size="sm" onClick={openSend}>
                 <Send size={15} /> Email discrepancy report
               </Button>
@@ -328,8 +363,9 @@ export default function ComparePage() {
       <div className="flex items-center gap-1.5">
         {[
           { id: 1 as Step, label: 'Upload' },
-          { id: 2 as Step, label: 'Map & Units' },
-          { id: 3 as Step, label: 'Results' },
+          { id: 2 as Step, label: 'Understand' },
+          { id: 3 as Step, label: 'Align' },
+          { id: 4 as Step, label: 'Verify' },
         ].map((s, i) => (
           <span key={s.id} className="flex items-center gap-1.5">
             {i > 0 && <span className="h-px w-4 bg-[var(--border)]" />}
@@ -352,27 +388,23 @@ export default function ComparePage() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="space-y-2">
             <FileDropCard
-              title="Compare FROM (base)"
+              title="File A (reference)"
               hint={base?.fileName}
               busy={parsing === 'base'}
               onPick={() => baseRef.current?.click()}
               icon={<FileText size={20} className="text-[var(--accent)]" />}
             />
-            {base && base.groups.length > 1 && (
-              <GroupPicker file={base} which="base" onSelect={selectGroup} />
-            )}
+            {base && base.groups.length > 1 && <GroupPicker file={base} which="base" onSelect={selectGroup} />}
           </div>
           <div className="space-y-2">
             <FileDropCard
-              title="Compare TO (candidate)"
+              title="File B (candidate)"
               hint={compare?.fileName}
               busy={parsing === 'compare'}
               onPick={() => compareRef.current?.click()}
               icon={<FileText size={20} className="text-[var(--accent-2)]" />}
             />
-            {compare && compare.groups.length > 1 && (
-              <GroupPicker file={compare} which="compare" onSelect={selectGroup} />
-            )}
+            {compare && compare.groups.length > 1 && <GroupPicker file={compare} which="compare" onSelect={selectGroup} />}
           </div>
           <input
             ref={baseRef}
@@ -393,68 +425,83 @@ export default function ComparePage() {
               <ArrowLeftRight size={15} /> Swap files
             </Button>
             <Button variant="primary" onClick={() => setStep(2)} disabled={!ready}>
-              Continue <ArrowRight size={15} />
+              Analyze <ArrowRight size={15} />
             </Button>
           </div>
         </div>
       )}
 
-      {step === 2 && ready && (
+      {step === 2 && ready && baseProfile && compareProfile && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <ProfileCard title={base!.fileName} profile={baseProfile} />
+            <ProfileCard title={compare!.fileName} profile={compareProfile} />
+          </div>
+
+          <GlassCard className="p-5">
+            <div className="section-title">
+              <Sparkles size={15} className="mr-1.5 inline text-[var(--accent)]" />
+              How should rows be matched?
+            </div>
+            <div className="mt-1 text-xs text-[var(--text-muted)]">
+              The engine tested every column pair across both files. Pick the strategy with the best expected alignment — you can switch later.
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+              {candidates.map((c) => {
+                const active = c.id === chosenId
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => chooseCandidate(c)}
+                    className="rounded-xl border p-4 text-left transition"
+                    style={{
+                      borderColor: active ? 'var(--accent)' : 'var(--border)',
+                      background: active ? 'rgba(124,58,237,0.06)' : 'var(--surface)',
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="badge badge-purple">{STRATEGY_ICON[c.strategy]} {STRATEGY_LABEL[c.strategy]}</span>
+                      {c.strategy === 'position' && <span className="badge badge-warn">fallback</span>}
+                      <span className="ml-auto text-xs font-bold text-[var(--accent-3)]">{Math.round(c.matchRate * 100)}% expected</span>
+                    </div>
+                    <div className="mt-2 text-xs font-semibold">
+                      {c.baseCols.length === 0
+                        ? 'Nth row ↔ Nth row'
+                        : `${c.baseCols.join(' + ')} ↔ ${c.compareCols.join(' + ')}`}
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg)]">
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, c.matchRate * 100)}%`, background: 'var(--gradient-primary)' }} />
+                    </div>
+                    <div className="mt-1.5 text-[11px] text-[var(--text-muted)]">{STRATEGY_HINT[c.strategy]}</div>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-between">
+              <Button variant="ghost" onClick={() => setStep(1)}>
+                <ArrowLeft size={15} /> Files
+              </Button>
+              <Button variant="primary" onClick={() => setStep(3)} disabled={!chosenId}>
+                Continue <ArrowRight size={15} />
+              </Button>
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {step === 3 && ready && candidate && base && compare && (
         <GlassCard className="p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="section-title">
-              <Sparkles size={15} className="mr-1.5 inline text-[var(--accent)]" />
-              Map columns · {base!.fileName} ↔ {compare!.fileName}
+              <GitCompareArrows size={15} className="mr-1.5 inline text-[var(--accent)]" />
+              Columns to verify · {base.fileName} ↔ {compare.fileName}
             </div>
             <div className="flex items-center gap-2.5 text-xs text-[var(--text-muted)]">
-              <span>{base!.rows.length} base rows</span>
-              <span>·</span>
-              <span>{compare!.rows.length} compare rows</span>
+              <span className="badge badge-purple">{STRATEGY_ICON[candidate.strategy]} {STRATEGY_LABEL[candidate.strategy]}</span>
+              <span>{base.rows.length} × {compare.rows.length} rows</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Join key (base column)" required hint="Row identity used to match rows">
-              <select
-                className="input"
-                value={join?.baseCol ?? ''}
-                onChange={(e) => setJoin({ baseCol: e.target.value, compareCol: join?.compareCol ?? '', confidence: 'manual' })}
-              >
-                <option value="">Select column…</option>
-                {base!.columns.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Join key (compare column)" required>
-              <select
-                className="input"
-                value={join?.compareCol ?? ''}
-                onChange={(e) => setJoin({ baseCol: join?.baseCol ?? '', compareCol: e.target.value, confidence: 'manual' })}
-              >
-                <option value="">Select column…</option>
-                {compare!.columns.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <div className="section-title">
-              <Sparkles size={15} className="mr-1.5 inline text-[var(--accent)]" />
-              Recognized column headers
-            </div>
-            <Button variant="ghost" size="sm" onClick={autoMatch} disabled={!join}>
-              <Wand2 size={13} /> Auto-match headers
-            </Button>
-          </div>
-          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <HeaderChips title={base!.fileName} file={base!} />
-            <HeaderChips title={compare!.fileName} file={compare!} />
-          </div>
-
-          <div className="mt-5 section-title">Columns to compare</div>
           {pairs.length === 0 ? (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--text-muted)]">
               No automatic suggestions — add column pairs manually below.
@@ -466,7 +513,7 @@ export default function ComparePage() {
                 const cu = unitOf('compare', p.compareCol)
                 const mixed = bu && cu && bu.id !== cu.id
                 const cfg = cfgFor(p)
-                const pt = inferColumnType(base!.rows, p.baseCol)
+                const pt = baseProfile?.columns.find((c) => c.name === p.baseCol)?.kind ?? 'text'
                 const targetOptions = bu?.kind === 'temperature' || cu?.kind === 'temperature' ? TEMPERATURE_TARGETS : UNITS.filter((u) => u.kind === (bu?.kind ?? cu?.kind))
                 return (
                   <div key={`${p.baseCol}→${p.compareCol}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3.5">
@@ -474,16 +521,11 @@ export default function ComparePage() {
                       <span className="badge badge-purple">{p.baseCol}</span>
                       <span className="text-xs text-[var(--text-muted)]">↔</span>
                       <span className="badge">{p.compareCol}</span>
-                      <span className="badge badge-info">{TYPE_ICON[pt]} {TYPE_LABEL[pt]}</span>
+                      <span className="badge badge-info">{TYPE_ICON[pt]} {pt}</span>
                       {p.confidence === 'high' && <span className="badge badge-ok"><CheckCircle2 size={11} /> auto</span>}
                       {mixed && (
                         <span className="badge badge-warn">
                           {KIND_ICON[bu!.kind]} {bu!.label} vs {cu!.label} — units differ
-                        </span>
-                      )}
-                      {!mixed && (bu || cu) && (
-                        <span className="badge badge-info">
-                          {KIND_ICON[(bu ?? cu)!.kind]} {(bu ?? cu)!.label}
                         </span>
                       )}
                       <button
@@ -493,96 +535,100 @@ export default function ComparePage() {
                         remove
                       </button>
                     </div>
-                    <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs">
-                      <label className="flex items-center gap-1.5">
-                        Target unit
-                        <select
-                          className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-xs"
-                          value={cfg.targetUnit}
-                          onChange={(e) => setCfg(p, { targetUnit: e.target.value })}
-                        >
-                          <option value="auto">Auto ({(bu ?? cu)?.label ?? 'none'})</option>
-                          {targetOptions.map((u) => (
-                            <option key={u.id} value={u.id}>{u.label}</option>
-                          ))}
-                        </select>
-                      </label>
-                      {mixed && (
-                        <span className="flex items-center gap-1 text-[var(--warn)]">
-                          <Info size={12} /> Values will be converted before comparing
-                        </span>
-                      )}
-                    </div>
+                    {(bu || cu) && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs">
+                        <label className="flex items-center gap-1.5">
+                          Target unit
+                          <select
+                            className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-xs"
+                            value={cfg.targetUnit}
+                            onChange={(e) => setCfg(p, { targetUnit: e.target.value })}
+                          >
+                            <option value="auto">Auto ({(bu ?? cu)?.label ?? 'none'})</option>
+                            {targetOptions.map((u) => (
+                              <option key={u.id} value={u.id}>{u.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        {mixed && (
+                          <span className="flex items-center gap-1 text-[var(--warn)]">
+                            <Info size={12} /> Values will be converted before comparing
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
             </div>
           )}
 
-          <AddPairRow
-            base={base!}
-            compare={compare!}
-            onAdd={(bp, cp) =>
-              setPairs((prev) =>
-                prev.some((x) => x.baseCol === bp && x.compareCol === cp) ? prev : [...prev, { baseCol: bp, compareCol: cp, confidence: 'manual' }],
-              )
-            }
-          />
+          <AddPairRow base={base} compare={compare} onAdd={(bp, cp) =>
+            setPairs((prev) => prev.some((x) => x.baseCol === bp && x.compareCol === cp) ? prev : [...prev, { baseCol: bp, compareCol: cp, confidence: 'manual' }])
+          } />
 
-          <div className="mt-5 flex flex-wrap items-end justify-between gap-3">
-            <Field label="Tolerance (±)" hint="Absolute tolerance; small relative drift is always allowed">
-              <input type="number" className="input !w-40" value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Numeric tolerance (±)" hint="Absolute; 0.5% relative drift is always allowed">
+              <input type="number" className="input" value={numTol} onChange={(e) => setNumTol(e.target.value)} />
             </Field>
-            <div className="flex gap-2.5">
-              <Button variant="ghost" onClick={() => setStep(1)}>
-                <ArrowLeft size={15} /> Files
-              </Button>
-              <Button variant="primary" onClick={run} disabled={comparing || !join || pairs.length === 0}>
-                <GitCompareArrows size={15} /> {comparing ? 'Comparing…' : 'Run comparison'}
-              </Button>
-            </div>
+            <Field label="Date tolerance (days)" hint="Dates normalize across formats first">
+              <input type="number" className="input" value={dateTol} onChange={(e) => setDateTol(e.target.value)} />
+            </Field>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+            <Button variant="ghost" onClick={() => setStep(2)}>
+              <ArrowLeft size={15} /> Strategy
+            </Button>
+            <Button variant="primary" onClick={run} disabled={running || pairs.length === 0}>
+              <GitCompareArrows size={15} /> {running ? 'Verifying…' : 'Verify all values'}
+            </Button>
           </div>
         </GlassCard>
       )}
 
-      {step === 3 && outcome && (
+      {step === 4 && outcome && base && compare && candidate && (
         <GlassCard className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
             <div>
-              <div className="text-sm font-bold">Results</div>
+              <div className="text-sm font-bold">Verification results</div>
               <div className="text-xs text-[var(--text-muted)]">
-                {base?.fileName} ({base?.selectedGroup}) vs {compare?.fileName} ({compare?.selectedGroup}) · join “{join?.baseCol} ↔ {join?.compareCol}” · {outcome.summary.matchedRows}/{outcome.summary.totalRows} rows matched
+                {base.fileName} ({base.selectedGroup}) vs {compare.fileName} ({compare.selectedGroup}) · {STRATEGY_LABEL[candidate.strategy]} · {Math.round(outcome.summary.matchRate * 100)}% aligned
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <span className="badge badge-ok">{outcome.matched.length} rows matched</span>
-              <span className="badge badge-err">{outcome.mismatches.length} mismatches</span>
-              <span className="badge badge-warn">{outcome.missingInCompare.length} missing in TO</span>
-              <span className="badge badge-info">{outcome.missingInBase.length} missing in FROM</span>
+              <span className="badge badge-ok">{outcome.summary.matchedRows} matched</span>
+              <span className="badge badge-err">{outcome.summary.mismatchRows} mismatched</span>
+              <span className="badge badge-warn">{outcome.summary.missingInCompare} missing in B</span>
+              <span className="badge badge-info">{outcome.summary.missingInBase} missing in A</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-5 py-2.5">
-            {([
-              ['all', `All (${outcome.matched.length + outcome.mismatches.length + outcome.missingInCompare.length + outcome.missingInBase.length})`],
-              ['matches', `Matches (${outcome.matched.length})`],
-              ['mismatches', `Mismatches (${outcome.mismatches.length})`],
-              ['missing', `Missing (${outcome.missingInCompare.length + outcome.missingInBase.length})`],
-            ] as Array<[ResultTab, string]>).map(([id, label]) => (
-              <button
-                key={id}
-                className="rounded-full px-3 py-1 text-xs font-bold transition"
-                style={
-                  resultTab === id
-                    ? { background: 'var(--gradient-primary)', color: '#fff' }
-                    : { background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }
-                }
-                onClick={() => setResultTab(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {outcome.heal.length > 0 && (
+            <div className="border-b border-[var(--border)] bg-[rgba(245,158,11,0.07)] px-5 py-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-[var(--warn)]">
+                <Stethoscope size={13} /> Self-healing suggestions
+              </div>
+              {outcome.heal.map((h, i) => (
+                <div key={i} className="mt-1.5 text-xs text-[var(--text-dim)]">
+                  {h.message}
+                  {h.candidates.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {h.candidates.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => healTo(c)}
+                          className="rounded-lg border border-[rgba(245,158,11,0.4)] bg-[var(--surface)] px-2.5 py-1 text-xs font-semibold text-[var(--warn)] hover:bg-[var(--surface-hover)]"
+                        >
+                          {STRATEGY_ICON[c.strategy]} {STRATEGY_LABEL[c.strategy]} · {c.baseCols.join('+') || 'position'} · {Math.round(c.matchRate * 100)}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {outcome.conversions.length > 0 && (
             <div className="border-b border-[var(--border)] bg-[rgba(124,58,237,0.05)] px-5 py-3">
@@ -600,114 +646,105 @@ export default function ComparePage() {
             </div>
           )}
 
-          {totalIssues === 0 && outcome.matched.length === 0 ? (
+          <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-5 py-2.5">
+            {([
+              ['all', `All (${outcome.rows.length})`],
+              ['matches', `Matched (${outcome.summary.matchedRows})`],
+              ['mismatches', `Mismatched (${outcome.summary.mismatchRows})`],
+              ['missing', `Unaligned (${issueRows.filter((r) => r.status.startsWith('missing')).length})`],
+            ] as Array<[ResultTab, string]>).map(([id, label]) => (
+              <button
+                key={id}
+                className="rounded-full px-3 py-1 text-xs font-bold transition"
+                style={
+                  resultTab === id
+                    ? { background: 'var(--gradient-primary)', color: '#fff' }
+                    : { background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }
+                }
+                onClick={() => setResultTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {outcome.rows.length === 0 ? (
             <EmptyState
-              title="Nothing to show"
-              description="The files match within the configured tolerance, after unit normalization."
-              icon={<CheckCircle2 size={28} className="text-[var(--accent-3)]" />}
+              title="Nothing to compare"
+              description="Neither file produced readable rows."
+              icon={<AlertTriangle size={28} className="text-[var(--warn)]" />}
             />
           ) : (
             <div className="space-y-4 p-5">
-              {(resultTab === 'all' || resultTab === 'matches') && outcome.matched.length > 0 && (
+              {(resultTab === 'all' || resultTab === 'matches') && matchedRows.length > 0 && (
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-bold text-[var(--accent-3)]">
-                      <CheckCircle2 size={15} /> Matched values ({outcome.matched.length} rows)
+                      <CheckCircle2 size={15} /> Verified equal ({matchedRows.length} rows)
                     </div>
-                    <button
-                      className="text-xs font-semibold text-[var(--accent)] hover:underline"
-                      onClick={() => exportMatches()}
-                    >
+                    <button className="text-xs font-semibold text-[var(--accent)] hover:underline" onClick={() => exportRows('compare-matches.csv', matchedRows)}>
                       Export matched (CSV)
                     </button>
                   </div>
-                  <MatchedTable outcome={outcome} expanded={resultTab === 'matches'} />
+                  <RowsTable rows={matchedRows.slice(0, resultTab === 'matches' ? 300 : 50)} />
+                  {matchedRows.length > (resultTab === 'matches' ? 300 : 50) && (
+                    <div className="mt-1.5 text-xs text-[var(--text-muted)]">Showing first {resultTab === 'matches' ? 300 : 50} of {matchedRows.length} — open the Matched tab or export</div>
+                  )}
                 </div>
               )}
 
-              {(resultTab === 'all' || resultTab === 'mismatches') && outcome.mismatches.length > 0 && (
-                <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Key</th>
-                        <th>Column</th>
-                        <th>Base value</th>
-                        <th>Compare value</th>
-                        <th>Normalized</th>
-                        <th>Reviewed</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {outcome.mismatches.slice(0, resultTab === 'mismatches' ? 300 : 100).map((m, i) => {
-                        const rk = `${m.keyValue}|${m.column}|${i}`
-                        return (
-                          <tr key={i} style={{ opacity: reviewed.has(rk) ? 0.55 : 1 }}>
-                            <td className="font-semibold">{m.keyValue}</td>
-                            <td>
-                              <span className="badge badge-purple">{m.column}</span>
-                              <span className="badge ml-1">{TYPE_ICON[m.type]} {TYPE_LABEL[m.type]}</span>
-                            </td>
-                            <td className="text-[var(--danger)]">{m.baseValue || '—'}</td>
-                            <td className="text-[var(--accent-3)]">{m.compareValue || '—'}</td>
-                            <td className="text-xs text-[var(--text-muted)]">
-                              {m.baseNorm} vs {m.compareNorm}
-                              {m.unitNote && (
-                                <span className="mt-0.5 block text-[var(--warn)]">{m.unitNote}</span>
-                              )}
-                            </td>
-                            <td>
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4 accent-[var(--accent)]"
-                                checked={reviewed.has(rk)}
-                                onChange={() =>
-                                  setReviewed((prev) => {
-                                    const next = new Set(prev)
-                                    if (next.has(rk)) next.delete(rk)
-                                    else next.add(rk)
-                                    return next
-                                  })
-                                }
-                              />
-                            </td>
-                            <td>{reviewed.has(rk) ? <StatusBadge tone="ok">Reviewed</StatusBadge> : <StatusBadge tone="err">Mismatch</StatusBadge>}</td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                  {outcome.mismatches.length > (resultTab === 'mismatches' ? 300 : 100) && (
-                    <div className="px-4 py-2 text-xs text-[var(--text-muted)]">
-                      Showing first {resultTab === 'mismatches' ? 300 : 100} of {outcome.mismatches.length} — switch to the Mismatches tab or export to see all
+              {(resultTab === 'all' || resultTab === 'mismatches') && issueRows.some((r) => r.status === 'mismatch') && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-bold text-[var(--danger)]">
+                      <AlertTriangle size={15} /> Discrepancies
                     </div>
-                  )}
+                    <button
+                      className="text-xs font-semibold text-[var(--accent)] hover:underline"
+                      onClick={() => exportRows('compare-mismatches.csv', issueRows.filter((r) => r.status === 'mismatch'))}
+                    >
+                      Export mismatches (CSV)
+                    </button>
+                  </div>
+                  <RowsTable
+                    rows={issueRows.filter((r) => r.status === 'mismatch').slice(0, resultTab === 'mismatches' ? 300 : 50)}
+                    reviewed={reviewed}
+                    onToggleReview={(rk) =>
+                      setReviewed((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(rk)) next.delete(rk)
+                        else next.add(rk)
+                        return next
+                      })
+                    }
+                  />
                 </div>
               )}
 
               {(resultTab === 'all' || resultTab === 'missing') && (
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {(resultTab === 'missing' || outcome.missingInCompare.length > 0) && outcome.missingInCompare.length > 0 && (
+                  {outcome.summary.missingInCompare > 0 && (
                     <div className="rounded-xl border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.05)] p-4">
-                      <div className="flex items-center gap-2 text-sm font-bold text-[var(--warn)]">
-                        <AlertTriangle size={15} /> Missing in Compare TO ({outcome.missingInCompare.length})
+                      <div className="flex items-center justify-between text-sm font-bold text-[var(--warn)]">
+                        <span className="flex items-center gap-2"><AlertTriangle size={15} /> In A, not in B ({outcome.summary.missingInCompare})</span>
+                        <button className="text-xs font-semibold hover:underline" onClick={() => exportRows('compare-missing-in-b.csv', issueRows.filter((r) => r.status === 'missing_in_compare'))}>CSV</button>
                       </div>
                       <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
-                        {outcome.missingInCompare.slice(0, 100).map((m) => (
-                          <div key={m.keyValue}>· {m.keyValue}</div>
+                        {issueRows.filter((r) => r.status === 'missing_in_compare').slice(0, 100).map((r) => (
+                          <div key={`${r.baseIdx}:${r.key}`}>· {r.key}</div>
                         ))}
                       </div>
                     </div>
                   )}
-                  {(resultTab === 'missing' || outcome.missingInBase.length > 0) && outcome.missingInBase.length > 0 && (
+                  {outcome.summary.missingInBase > 0 && (
                     <div className="rounded-xl border border-[rgba(96,165,250,0.3)] bg-[rgba(96,165,250,0.05)] p-4">
-                      <div className="flex items-center gap-2 text-sm font-bold text-[var(--accent)]">
-                        <AlertTriangle size={15} /> Missing in Base FROM ({outcome.missingInBase.length})
+                      <div className="flex items-center justify-between text-sm font-bold text-[var(--accent)]">
+                        <span className="flex items-center gap-2"><AlertTriangle size={15} /> In B, not in A ({outcome.summary.missingInBase})</span>
+                        <button className="text-xs font-semibold hover:underline" onClick={() => exportRows('compare-missing-in-a.csv', issueRows.filter((r) => r.status === 'missing_in_base'))}>CSV</button>
                       </div>
                       <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
-                        {outcome.missingInBase.slice(0, 100).map((m) => (
-                          <div key={m.keyValue}>· {m.keyValue}</div>
+                        {issueRows.filter((r) => r.status === 'missing_in_base').slice(0, 100).map((r) => (
+                          <div key={`${r.compareIdx}:${r.key}`}>· {r.key}</div>
                         ))}
                       </div>
                     </div>
@@ -718,11 +755,11 @@ export default function ComparePage() {
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-4">
-            <Button variant="ghost" size="sm" onClick={exportFindings}>
-              <FileText size={14} /> Export findings (CSV)
+            <Button variant="ghost" size="sm" onClick={() => exportRows('compare-findings.csv', outcome.rows)}>
+              <FileText size={14} /> Export full findings (CSV)
             </Button>
-            <Button variant="primary" onClick={() => setStep(2)}>
-              <ArrowLeft size={15} /> Adjust mapping
+            <Button variant="primary" onClick={() => setStep(3)}>
+              <ArrowLeft size={15} /> Adjust alignment
             </Button>
           </div>
         </GlassCard>
@@ -762,23 +799,146 @@ export default function ComparePage() {
   )
 }
 
-function HeaderChips({ title, file }: { title: string; file: ParsedFile }) {
+// ---------------------------------------------------------------- helpers
+
+function ProfileCard({ title, profile }: { title: string; profile: FileProfile }) {
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3.5">
-      <div className="truncate text-xs font-bold">{title}</div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {file.columns.map((c) => {
-          const t = inferColumnType(file.rows, c)
-          const u = detectUnit(c, file.rows.slice(0, 30).map((r) => r[c]))?.unit
-          return (
-            <span key={c} className="badge">
-              {TYPE_ICON[t]} {c}
-              {u && <span className="ml-1 text-[var(--accent)]">· {u.label}</span>}
-            </span>
-          )
-        })}
-        {file.columns.length === 0 && <span className="text-xs text-[var(--text-muted)]">No columns detected</span>}
+    <GlassCard className="p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="truncate text-xs font-bold">{title}</div>
+        <span className="badge">{profile.rowCount} rows</span>
       </div>
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        {profile.columns.map((c) => (
+          <span key={c.name} className="badge" title={`${c.kind} · ${Math.round(c.uniqueRatio * 100)}% unique · ${Math.round(c.fillRate * 100)}% filled`}>
+            {TYPE_ICON[c.kind]} {c.name}
+            {c.unit && <span className="ml-1 text-[var(--accent)]">· {c.unit.label}</span>}
+            {c.idLike && <span className="ml-1 font-bold text-[var(--accent)]">ID</span>}
+          </span>
+        ))}
+        {profile.columns.length === 0 && <span className="text-xs text-[var(--text-muted)]">No columns detected</span>}
+      </div>
+    </GlassCard>
+  )
+}
+
+function RowsTable({
+  rows,
+  reviewed,
+  onToggleReview,
+}: {
+  rows: VerifyOutcome['rows']
+  reviewed?: Set<string>
+  onToggleReview?: (key: string) => void
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Column</th>
+            <th>A value</th>
+            <th>B value</th>
+            <th>Normalized</th>
+            {onToggleReview && <th>Reviewed</th>}
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) =>
+            r.cells.length === 0 ? (
+              <tr key={`${r.baseIdx}:${r.compareIdx}:${r.key}`}>
+                <td className="font-semibold">{r.key}</td>
+                <td colSpan={4} className="text-xs text-[var(--text-muted)]">—</td>
+                {onToggleReview && <td />}
+                <td>
+                  <StatusBadge tone={r.status === 'missing_in_compare' ? 'warn' : 'info'}>
+                    {r.status === 'missing_in_compare' ? 'Missing in B' : 'Missing in A'}
+                  </StatusBadge>
+                </td>
+              </tr>
+            ) : (
+              r.cells.map((c, ci) => {
+                const rk = `${r.key}|${c.column}|${ci}`
+                return (
+                  <tr key={rk} style={{ opacity: reviewed?.has(rk) ? 0.55 : 1 }}>
+                    <td className="font-semibold">{ci === 0 ? r.key : ''}</td>
+                    <td>
+                      <span className="badge badge-purple">{c.column}</span>
+                      <span className="badge ml-1">{TYPE_ICON[c.type]} {c.type}</span>
+                    </td>
+                    <td className={c.status === 'mismatch' ? 'text-[var(--danger)]' : ''}>{c.baseValue || '—'}</td>
+                    <td className={c.status === 'mismatch' ? 'text-[var(--accent-3)]' : ''}>{c.compareValue || '—'}</td>
+                    <td className="text-xs text-[var(--text-muted)]">
+                      {c.baseNorm} vs {c.compareNorm}
+                      {c.unitNote && <span className="mt-0.5 block text-[var(--warn)]">{c.unitNote}</span>}
+                    </td>
+                    {onToggleReview && (
+                      <td>
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-[var(--accent)]"
+                          checked={reviewed?.has(rk) ?? false}
+                          onChange={() => onToggleReview(rk)}
+                        />
+                      </td>
+                    )}
+                    <td>
+                      {reviewed?.has(rk) ? <StatusBadge tone="ok">Reviewed</StatusBadge> : <StatusBadge tone={c.status === 'match' ? 'ok' : 'err'}>{c.status === 'match' ? 'Match' : 'Mismatch'}</StatusBadge>}
+                    </td>
+                  </tr>
+                )
+              })
+            ),
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function AddPairRow({
+  base,
+  compare,
+  onAdd,
+}: {
+  base: ParsedFile
+  compare: ParsedFile
+  onAdd: (baseCol: string, compareCol: string) => void
+}) {
+  const [bc, setBc] = useState('')
+  const [cc, setCc] = useState('')
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-2.5">
+      <Field label="Add A column">
+        <select className="input !w-48" value={bc} onChange={(e) => setBc(e.target.value)}>
+          <option value="">Select…</option>
+          {base.columns.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Add B column">
+        <select className="input !w-48" value={cc} onChange={(e) => setCc(e.target.value)}>
+          <option value="">Select…</option>
+          {compare.columns.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      </Field>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={!bc || !cc}
+        onClick={() => {
+          onAdd(bc, cc)
+          setBc('')
+          setCc('')
+        }}
+      >
+        + Add pair
+      </Button>
     </div>
   )
 }
@@ -810,97 +970,6 @@ function GroupPicker({
         ))}
       </select>
     </GlassCard>
-  )
-}
-
-function MatchedTable({ outcome, expanded }: { outcome: CompareOutcome; expanded: boolean }) {
-  const limit = expanded ? 300 : 50
-  const flat = outcome.matched.flatMap((row) =>
-    row.matches.map((m) => ({ key: row.keyValue, ...m })),
-  )
-  return (
-    <div className="overflow-x-auto rounded-xl border border-[rgba(34,197,94,0.25)]">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Key</th>
-            <th>Column</th>
-            <th>Base value</th>
-            <th>Compare value</th>
-            <th>Normalized</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {flat.slice(0, limit).map((m, i) => (
-            <tr key={i}>
-              <td className="font-semibold">{m.key}</td>
-              <td>
-                <span className="badge badge-purple">{m.column}</span>
-                <span className="badge ml-1">{TYPE_ICON[m.type]} {TYPE_LABEL[m.type]}</span>
-              </td>
-              <td>{m.baseValue || '—'}</td>
-              <td>{m.compareValue || '—'}</td>
-              <td className="text-xs text-[var(--text-muted)]">
-                {m.baseNorm} vs {m.compareNorm}
-                {m.unitNote && <span className="mt-0.5 block text-[var(--warn)]">{m.unitNote}</span>}
-              </td>
-              <td><StatusBadge tone="ok">Match</StatusBadge></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {flat.length > limit && (
-        <div className="px-4 py-2 text-xs text-[var(--text-muted)]">
-          Showing first {limit} of {flat.length} matched values — open the Matches tab or export to see all
-        </div>
-      )}
-    </div>
-  )
-}
-
-function AddPairRow({
-  base,
-  compare,
-  onAdd,
-}: {
-  base: ParsedFile
-  compare: ParsedFile
-  onAdd: (baseCol: string, compareCol: string) => void
-}) {
-  const [bc, setBc] = useState('')
-  const [cc, setCc] = useState('')
-  return (
-    <div className="mt-3 flex flex-wrap items-end gap-2.5">
-      <Field label="Add base column">
-        <select className="input !w-48" value={bc} onChange={(e) => setBc(e.target.value)}>
-          <option value="">Select…</option>
-          {base.columns.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Add compare column">
-        <select className="input !w-48" value={cc} onChange={(e) => setCc(e.target.value)}>
-          <option value="">Select…</option>
-          {compare.columns.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </Field>
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={!bc || !cc}
-        onClick={() => {
-          onAdd(bc, cc)
-          setBc('')
-          setCc('')
-        }}
-      >
-        + Add pair
-      </Button>
-    </div>
   )
 }
 
