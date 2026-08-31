@@ -1,53 +1,74 @@
 import { Router } from 'express'
+import multer from 'multer'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { parseFile } from '../services/parse.js'
-import { compareFiles } from '../services/compareService.js'
 import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
 import { getUploadedFile } from './uploads.js'
 import { getSetting } from '../services/settingsService.js'
+import { audit } from '../services/auditService.js'
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } })
 
 export const compareRouter = Router()
 
+/**
+ * Parse an uploaded file into raw rows + inferred column names for the
+ * client-side mapping wizard. Accepts csv / xlsx / xls / pdf.
+ */
+compareRouter.post('/parse', authRequired, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded' })
+      return
+    }
+    const { rows, format } = await parseFile({
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+    })
+    const columns =
+      rows.length > 0
+        ? Object.keys(rows[0]!).filter((c) => c !== 'line')
+        : []
+    res.json({ fileName: req.file.originalname, format, rows, columns })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/**
+ * Persist a comparison computed client-side (mapping, unit normalization and
+ * diffing all happen in the browser). Stored so discrepancy emails can
+ * reference it later.
+ */
 compareRouter.post('/', authRequired, async (req, res, next) => {
   try {
-    const { baseFileId, compareFileId, joinKey, columns, tolerance } = req.body as {
-      baseFileId: string
-      compareFileId: string
-      joinKey: string
-      columns: string[]
-      tolerance?: number
-    }
-    if (!baseFileId || !compareFileId || !joinKey || !Array.isArray(columns) || !columns.length) {
-      res.status(400).json({ error: 'baseFileId, compareFileId, joinKey and columns are required' })
+    const { baseFileName, compareFileName, joinKey, columns, tolerance, mismatches, missingInCompare, missingInBase, summary } =
+      req.body as {
+        baseFileName?: string
+        compareFileName?: string
+        joinKey?: string
+        columns?: string[]
+        tolerance?: number
+        mismatches?: Array<{ keyValue: string; column: string; baseValue: string; compareValue: string }>
+        missingInCompare?: Array<{ keyValue: string }>
+        missingInBase?: Array<{ keyValue: string }>
+        summary?: { totalRows: number; matchedRows: number }
+      }
+    if (!baseFileName || !compareFileName || !joinKey) {
+      res.status(400).json({ error: 'baseFileName, compareFileName and joinKey are required' })
       return
     }
-    const baseFile = getUploadedFile(baseFileId)
-    const compareFile = getUploadedFile(compareFileId)
-    if (!baseFile || !compareFile) {
-      res.status(400).json({ error: 'Uploaded file expired. Please upload again.' })
-      return
-    }
-    const baseParsed = await parseFile({ buffer: baseFile.buffer, originalname: baseFile.name })
-    const compareParsed = await parseFile({
-      buffer: compareFile.buffer,
-      originalname: compareFile.name,
-    })
-    const result = compareFiles(baseParsed.rows, compareParsed.rows, {
-      joinKey,
-      columns,
-      tolerance: Number(tolerance ?? 0),
-    })
 
     const supabase = getSupabase()
     const { data: comparison, error } = await supabase
       .from('comparisons')
       .insert({
         user_id: (req as { user?: { id?: string } }).user?.id ?? null,
-        base_file_name: baseFile.name,
-        compare_file_name: compareFile.name,
+        base_file_name: baseFileName,
+        compare_file_name: compareFileName,
         join_key: joinKey,
-        columns,
+        columns: columns ?? [],
         tolerance: Number(tolerance ?? 0),
         status: 'completed',
       })
@@ -59,7 +80,7 @@ compareRouter.post('/', authRequired, async (req, res, next) => {
     }
 
     const rows = [
-      ...result.mismatches.map((m) => ({
+      ...(mismatches ?? []).map((m) => ({
         comparison_id: comparison.id,
         kind: 'mismatch',
         key_value: m.keyValue,
@@ -67,24 +88,34 @@ compareRouter.post('/', authRequired, async (req, res, next) => {
         base_value: m.baseValue,
         compare_value: m.compareValue,
       })),
-      ...result.missingInCompare.map((m) => ({
+      ...(missingInCompare ?? []).map((m) => ({
         comparison_id: comparison.id,
         kind: 'missing_in_compare',
         key_value: m.keyValue,
-        base_value: JSON.stringify(m.row),
       })),
-      ...result.missingInBase.map((m) => ({
+      ...(missingInBase ?? []).map((m) => ({
         comparison_id: comparison.id,
         kind: 'missing_in_base',
         key_value: m.keyValue,
-        compare_value: JSON.stringify(m.row),
       })),
     ]
     if (rows.length) {
       await supabase.from('comparison_results').insert(rows)
     }
+    await audit(
+      'Compare',
+      'Comparison',
+      comparison.id,
+      `${baseFileName} vs ${compareFileName}: ${(mismatches ?? []).length} mismatches, ${(missingInCompare ?? []).length} + ${(missingInBase ?? []).length} missing`,
+      (req as { user?: { email?: string } }).user?.email,
+    )
 
-    res.json({ comparisonId: comparison.id, baseFileName: baseFile.name, compareFileName: compareFile.name, ...result })
+    res.json({
+      comparisonId: comparison.id,
+      baseFileName,
+      compareFileName,
+      summary: summary ?? { totalRows: 0, matchedRows: 0 },
+    })
   } catch (err) {
     next(err)
   }

@@ -539,18 +539,6 @@ function applyImportRowsDemo(
   return { imported, skipped, updated }
 }
 
-function comparePayload(): unknown {
-  return {
-    mismatches: [
-      { keyValue: 'INV-2026-0011', column: 'amount', baseValue: '850,000', compareValue: '845,000' },
-      { keyValue: 'INV-2026-0021', column: 'trips', baseValue: '3', compareValue: '4' },
-    ],
-    missingInCompare: [{ keyValue: 'INV-2026-0013' }],
-    missingInBase: [],
-    summary: { totalRows: 8, matchedRows: 5 },
-  }
-}
-
 function matchPath(path: string): string {
   return path.split('?')[0].replace(/\/+$/, '')
 }
@@ -943,12 +931,43 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     return { rejected } as T
   }
 
+  if (m === 'POST' && parts.length === 3 && parts[1] === 'compare' && parts[2] === 'parse') {
+    const which = isForm ? String((body as FormData).get('which') ?? 'base') : 'base'
+    const file = isForm ? (body as FormData).get('file') : null
+    const name = file instanceof File ? file.name : 'demo-file.pdf'
+    if (which === 'base') {
+      return {
+        fileName: name,
+        format: 'pdf',
+        columns: ['invoice_no', 'quantity', 'temp', 'amount'],
+        rows: [
+          { invoice_no: 'INV-2026-0011', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
+          { invoice_no: 'INV-2026-0012', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
+          { invoice_no: 'INV-2026-0013', quantity: '980 L', temp: '24.8 °C', amount: '430,500' },
+          { invoice_no: 'INV-2026-0014', quantity: '3,150 L', temp: '27.0 °C', amount: '1,502,250' },
+        ],
+      } as T
+    }
+    return {
+      fileName: name,
+      format: 'csv',
+      columns: ['invoice_no', 'quantity', 'temp', 'amount'],
+      rows: [
+        { invoice_no: 'INV-2026-0011', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
+        { invoice_no: 'INV-2026-0012', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
+        { invoice_no: 'INV-2026-0013', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
+        { invoice_no: 'INV-2026-0015', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
+      ],
+    } as T
+  }
   if (m === 'POST' && path === '/api/compare') {
-    const b = (body ?? {}) as { baseFileId?: string; compareFileId?: string }
-    const baseName = uploadedFiles.get(b.baseFileId ?? '') ?? 'base-file.csv'
-    const compareName = uploadedFiles.get(b.compareFileId ?? '') ?? 'compare-file.csv'
-    const result = comparePayload() as Record<string, unknown>
-    return { comparisonId: uid(), baseFileName: baseName, compareFileName: compareName, ...result } as T
+    const b = (body ?? {}) as { baseFileName?: string; compareFileName?: string; mismatches?: unknown[] }
+    return {
+      comparisonId: uid(),
+      baseFileName: b.baseFileName ?? 'demo-file.pdf',
+      compareFileName: b.compareFileName ?? 'demo-file.csv',
+      summary: { totalRows: 4, matchedRows: 2 },
+    } as T
   }
   if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'compare' && parts[3] === 'send-discrepancy') {
     const vendorId = (body as { vendorId?: string })?.vendorId
