@@ -669,3 +669,31 @@ export function verify(
     heal,
   }
 }
+
+/**
+ * Analyst narration: translates raw counts into plain conclusions, the way
+ * a human analyst would brief the findings.
+ */
+export function narrate(outcome: VerifyOutcome, candidate: KeyCandidate, pairs: ColumnPair[]): string[] {
+  const s = outcome.summary
+  const lines: string[] = []
+  const keyDesc =
+    candidate.baseCols.length > 0
+      ? `${candidate.baseCols.join(' + ')} ↔ ${candidate.compareCols.join(' + ')}`
+      : 'row position'
+  lines.push(
+    `Aligned ${Math.round(s.matchRate * 100)}% of ${s.totalRows} rows via ${candidate.strategy} matching on ${keyDesc}.`,
+  )
+  if (s.mismatchRows > 0) {
+    lines.push(`${s.mismatchRows} row(s) carry value deltas across ${pairs.length} verified column pair(s).`)
+  }
+  if (s.missingInCompare > 0) lines.push(`${s.missingInCompare} row(s) exist only in file A.`)
+  if (s.missingInBase > 0) lines.push(`${s.missingInBase} row(s) exist only in file B.`)
+  if (s.mismatchRows === 0 && s.missingInCompare === 0 && s.missingInBase === 0) {
+    lines.push('No deltas found — the files agree within tolerance.')
+  }
+  if (outcome.conversions.length > 0) {
+    lines.push(`${outcome.conversions.length} unit conversion(s) were applied before comparing values.`)
+  }
+  return lines
+}
