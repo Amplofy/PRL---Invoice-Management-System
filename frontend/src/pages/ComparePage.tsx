@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Upload, GitCompareArrows, ArrowLeftRight, Send, AlertTriangle, CheckCircle2, FileText,
   ArrowLeft, ArrowRight, Thermometer, Ruler, Scale, Gauge, Waves, Wind, Sparkles, Info, Layers,
+  Hash, Calendar, Type as TypeIcon, Wand2,
 } from 'lucide-react'
 import { apiUpload, apiGet, apiPost } from '../lib/api'
 import { downloadCSV } from '../lib/export'
-import { suggestJoinKey, suggestPairs, runCompare, type ColumnPair, type CompareOutcome, type PairConfig } from '../lib/compareEngine'
+import { suggestJoinKey, suggestPairs, runCompare, inferColumnType, type ColumnType, type ColumnPair, type CompareOutcome, type PairConfig } from '../lib/compareEngine'
 import { detectUnit, UNITS, type UnitDef } from '../lib/units'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -51,6 +52,18 @@ const KIND_ICON: Record<string, React.ReactNode> = {
 }
 
 const TEMPERATURE_TARGETS = UNITS.filter((u) => u.kind === 'temperature')
+
+const TYPE_ICON: Record<ColumnType, React.ReactNode> = {
+  number: <Hash size={11} />,
+  date: <Calendar size={11} />,
+  text: <TypeIcon size={11} />,
+}
+
+const TYPE_LABEL: Record<ColumnType, string> = {
+  number: 'number',
+  date: 'date',
+  text: 'text',
+}
 
 export default function ComparePage() {
   const [step, setStep] = useState<Step>(1)
@@ -133,6 +146,16 @@ export default function ComparePage() {
 
   const cfgFor = (p: ColumnPair): PairConfig =>
     configs[`${p.baseCol}→${p.compareCol}`] ?? { baseCol: p.baseCol, compareCol: p.compareCol, targetUnit: 'auto', tolerance: 0 }
+
+  const autoMatch = () => {
+    if (!base || !compare) return
+    const suggested = suggestPairs(base.columns, compare.columns, join)
+    setPairs((prev) => {
+      const seen = new Set(prev.map((p) => `${p.baseCol}→${p.compareCol}`))
+      return [...prev, ...suggested.filter((p) => !seen.has(`${p.baseCol}→${p.compareCol}`))]
+    })
+    toast.info('Headers auto-matched', `${suggested.length} column pair(s) recognized across both files`)
+  }
 
   const setCfg = (p: ColumnPair, patch: Partial<PairConfig>) => {
     const key = `${p.baseCol}→${p.compareCol}`
@@ -417,6 +440,20 @@ export default function ComparePage() {
             </Field>
           </div>
 
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="section-title">
+              <Sparkles size={15} className="mr-1.5 inline text-[var(--accent)]" />
+              Recognized column headers
+            </div>
+            <Button variant="ghost" size="sm" onClick={autoMatch} disabled={!join}>
+              <Wand2 size={13} /> Auto-match headers
+            </Button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <HeaderChips title={base!.fileName} file={base!} />
+            <HeaderChips title={compare!.fileName} file={compare!} />
+          </div>
+
           <div className="mt-5 section-title">Columns to compare</div>
           {pairs.length === 0 ? (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--text-muted)]">
@@ -429,6 +466,7 @@ export default function ComparePage() {
                 const cu = unitOf('compare', p.compareCol)
                 const mixed = bu && cu && bu.id !== cu.id
                 const cfg = cfgFor(p)
+                const pt = inferColumnType(base!.rows, p.baseCol)
                 const targetOptions = bu?.kind === 'temperature' || cu?.kind === 'temperature' ? TEMPERATURE_TARGETS : UNITS.filter((u) => u.kind === (bu?.kind ?? cu?.kind))
                 return (
                   <div key={`${p.baseCol}→${p.compareCol}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3.5">
@@ -436,6 +474,7 @@ export default function ComparePage() {
                       <span className="badge badge-purple">{p.baseCol}</span>
                       <span className="text-xs text-[var(--text-muted)]">↔</span>
                       <span className="badge">{p.compareCol}</span>
+                      <span className="badge badge-info">{TYPE_ICON[pt]} {TYPE_LABEL[pt]}</span>
                       {p.confidence === 'high' && <span className="badge badge-ok"><CheckCircle2 size={11} /> auto</span>}
                       {mixed && (
                         <span className="badge badge-warn">
@@ -606,7 +645,10 @@ export default function ComparePage() {
                         return (
                           <tr key={i} style={{ opacity: reviewed.has(rk) ? 0.55 : 1 }}>
                             <td className="font-semibold">{m.keyValue}</td>
-                            <td><span className="badge badge-purple">{m.column}</span></td>
+                            <td>
+                              <span className="badge badge-purple">{m.column}</span>
+                              <span className="badge ml-1">{TYPE_ICON[m.type]} {TYPE_LABEL[m.type]}</span>
+                            </td>
                             <td className="text-[var(--danger)]">{m.baseValue || '—'}</td>
                             <td className="text-[var(--accent-3)]">{m.compareValue || '—'}</td>
                             <td className="text-xs text-[var(--text-muted)]">
@@ -720,6 +762,27 @@ export default function ComparePage() {
   )
 }
 
+function HeaderChips({ title, file }: { title: string; file: ParsedFile }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3.5">
+      <div className="truncate text-xs font-bold">{title}</div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {file.columns.map((c) => {
+          const t = inferColumnType(file.rows, c)
+          const u = detectUnit(c, file.rows.slice(0, 30).map((r) => r[c]))?.unit
+          return (
+            <span key={c} className="badge">
+              {TYPE_ICON[t]} {c}
+              {u && <span className="ml-1 text-[var(--accent)]">· {u.label}</span>}
+            </span>
+          )
+        })}
+        {file.columns.length === 0 && <span className="text-xs text-[var(--text-muted)]">No columns detected</span>}
+      </div>
+    </div>
+  )
+}
+
 function GroupPicker({
   file,
   which,
@@ -772,7 +835,10 @@ function MatchedTable({ outcome, expanded }: { outcome: CompareOutcome; expanded
           {flat.slice(0, limit).map((m, i) => (
             <tr key={i}>
               <td className="font-semibold">{m.key}</td>
-              <td><span className="badge badge-purple">{m.column}</span></td>
+              <td>
+                <span className="badge badge-purple">{m.column}</span>
+                <span className="badge ml-1">{TYPE_ICON[m.type]} {TYPE_LABEL[m.type]}</span>
+              </td>
               <td>{m.baseValue || '—'}</td>
               <td>{m.compareValue || '—'}</td>
               <td className="text-xs text-[var(--text-muted)]">

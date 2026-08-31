@@ -947,14 +947,14 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
         format: 'pdf',
         groups: [
           mk('Page 1', [
-            { invoice_no: 'INV-2026-0011', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
-            { invoice_no: 'INV-2026-0012', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
-            { invoice_no: 'INV-2026-0013', quantity: '980 L', temp: '24.8 °C', amount: '430,500' },
-            { invoice_no: 'INV-2026-0014', quantity: '3,150 L', temp: '27.0 °C', amount: '1,502,250' },
+            { invoice_no: 'INV-2026-0011', delivery_date: '2026-01-15', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
+            { invoice_no: 'INV-2026-0012', delivery_date: '2026-01-16', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
+            { invoice_no: 'INV-2026-0013', delivery_date: '2026-01-18', quantity: '980 L', temp: '24.8 °C', amount: '430,500' },
+            { invoice_no: 'INV-2026-0014', delivery_date: '2026-01-20', quantity: '3,150 L', temp: '27.0 °C', amount: '1,502,250' },
           ]),
           mk('Page 2', [
-            { invoice_no: 'INV-2026-0011', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
-            { invoice_no: 'INV-2026-0012', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
+            { invoice_no: 'INV-2026-0011', delivery_date: '2026-01-15', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
+            { invoice_no: 'INV-2026-0012', delivery_date: '2026-01-16', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
           ]),
         ],
       } as T
@@ -964,10 +964,10 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       format: 'csv',
       groups: [
         mk(name, [
-          { invoice_no: 'INV-2026-0011', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
-          { invoice_no: 'INV-2026-0012', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
-          { invoice_no: 'INV-2026-0013', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
-          { invoice_no: 'INV-2026-0015', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
+          { invoice_no: 'INV-2026-0011', delivery_date: '15/01/2026', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
+          { invoice_no: 'INV-2026-0012', delivery_date: 'Jan 16, 2026', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
+          { invoice_no: 'INV-2026-0013', delivery_date: '17/01/2026', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
+          { invoice_no: 'INV-2026-0015', delivery_date: '22/01/2026', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
         ]),
       ],
     } as T
