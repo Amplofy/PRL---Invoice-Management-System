@@ -20,7 +20,7 @@ import {
   ScrollText,
   Upload,
   Mail,
-  GitCompareArrows,
+  Crosshair,
   Settings,
   Users,
 } from 'lucide-react'
@@ -46,7 +46,7 @@ const TITLES: Record<string, string> = {
   '/audit-log': 'Audit Log',
   '/import': 'Data Import',
   '/followups': 'Follow-ups',
-  '/compare': 'Compare',
+  '/delta': 'Delta Analyst',
   '/admin': 'System Admin',
   '/users': 'Users & Roles',
 }
@@ -63,7 +63,7 @@ const COMMAND_ITEMS: CommandItem[] = [
   { id: 'audit-log', label: 'Audit Log', icon: <ScrollText size={16} />, path: '/audit-log' },
   { id: 'import', label: 'Import Data', icon: <Upload size={16} />, path: '/import' },
   { id: 'followups', label: 'Follow-up Emails', icon: <Mail size={16} />, path: '/followups' },
-  { id: 'compare', label: 'Compare Files', icon: <GitCompareArrows size={16} />, path: '/compare' },
+  { id: 'delta', label: 'Delta Analyst', icon: <Crosshair size={16} />, path: '/delta' },
   { id: 'admin', label: 'Admin Settings', icon: <Settings size={16} />, path: '/admin' },
   { id: 'users', label: 'Users & Roles', icon: <Users size={16} />, path: '/users' },
 ]

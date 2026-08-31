@@ -19,7 +19,7 @@ import ReportsPage from './pages/ReportsPage'
 import AuditLogPage from './pages/AuditLogPage'
 import ImportPage from './pages/ImportPage'
 import FollowupsPage from './pages/FollowupsPage'
-import ComparePage from './pages/ComparePage'
+import DeltaAnalystPage from './pages/DeltaAnalystPage'
 import AdminPage from './pages/AdminPage'
 import UsersPage from './pages/UsersPage'
 
@@ -82,7 +82,7 @@ export default function App() {
                 <Route path="audit-log" element={<AuditLogPage />} />
                 <Route path="import" element={<ImportPage />} />
                 <Route path="followups" element={<FollowupsPage />} />
-                <Route path="compare" element={<ComparePage />} />
+                <Route path="delta" element={<DeltaAnalystPage />} />
               </Route>
               <Route path="/admin" element={<ProtectedAdminLayout />}>
                 <Route index element={<AdminPage />} />

@@ -15,7 +15,7 @@ const C_SM = '00000000-0000-0000-0000-000000000203'
 const PERMISSION_IDS = [
   'invoice.view', 'invoice.create', 'invoice.update', 'invoice.delete', 'invoice.approve',
   'invoice.reject', 'po.generate', 'contract.view', 'contract.create', 'contract.update',
-  'contract.delete', 'vendor.manage', 'import.data', 'compare.data', 'followup.send',
+  'contract.delete', 'vendor.manage', 'import.data', 'delta.data', 'followup.send',
   'reports.view', 'users.manage', 'roles.manage', 'settings.manage',
 ]
 
@@ -91,7 +91,7 @@ const permissions: Permission[] = PERMISSION_IDS.map((id) => {
     'contract.delete': ['Delete Contracts', 'Contracts'],
     'vendor.manage': ['Manage Vendors', 'Contracts'],
     'import.data': ['Import Data', 'Data'],
-    'compare.data': ['Compare Documents', 'Data'],
+    'delta.data': ['Delta Analyst', 'Data'],
     'followup.send': ['Send Follow-up Emails', 'Data'],
     'reports.view': ['View Reports', 'Reports'],
     'users.manage': ['Manage Users', 'Administration'],

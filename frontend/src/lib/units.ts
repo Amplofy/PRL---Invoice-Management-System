@@ -1,5 +1,5 @@
 /**
- * Unit detection and normalization for the Compare module.
+ * Unit detection and normalization for the Delta Analyst module.
  * Detects measurement units from column headers or raw values and converts
  * values to a common target unit so cross-unit comparisons stay correct.
  */

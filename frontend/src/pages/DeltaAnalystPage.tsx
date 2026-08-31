@@ -10,7 +10,7 @@ import {
   profileFile, keyCandidates, suggestPairs, verify,
   type FileProfile, type KeyCandidate, type MatchStrategy, type ValueKind,
   type ColumnPair, type VerifyOutcome, type PairConfig,
-} from '../lib/compareEngine'
+} from '../lib/deltaEngine'
 import { detectUnit, UNITS, type UnitDef } from '../lib/units'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -242,7 +242,7 @@ export default function ComparePage() {
       setComparisonId(saved.comparisonId)
       setStep(4)
       toast.info(
-        'Verification complete',
+        'Delta analysis complete',
         `${result.summary.matchedRows} matched · ${result.summary.mismatchRows} mismatched · ${result.summary.missingInCompare + result.summary.missingInBase} unaligned`,
       )
     } catch (e) {
@@ -342,8 +342,8 @@ export default function ComparePage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Compare Anything"
-        description="Universal comparison: the engine profiles both files, finds how rows correspond, and verifies every value — self-healing when alignment is weak."
+        title="Delta Analyst"
+        description="Universal delta detection: the engine profiles both files, discovers how rows correspond, and verifies every value — self-healing when alignment drifts."
         actions={
           <>
             {step !== 1 && (
@@ -591,16 +591,16 @@ export default function ComparePage() {
         <GlassCard className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
             <div>
-              <div className="text-sm font-bold">Verification results</div>
+              <div className="text-sm font-bold">Delta report</div>
               <div className="text-xs text-[var(--text-muted)]">
                 {base.fileName} ({base.selectedGroup}) vs {compare.fileName} ({compare.selectedGroup}) · {STRATEGY_LABEL[candidate.strategy]} · {Math.round(outcome.summary.matchRate * 100)}% aligned
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <span className="badge badge-ok">{outcome.summary.matchedRows} matched</span>
-              <span className="badge badge-err">{outcome.summary.mismatchRows} mismatched</span>
-              <span className="badge badge-warn">{outcome.summary.missingInCompare} missing in B</span>
-              <span className="badge badge-info">{outcome.summary.missingInBase} missing in A</span>
+              <span className="badge badge-ok">{outcome.summary.matchedRows} clean</span>
+              <span className="badge badge-err">{outcome.summary.mismatchRows} deltas</span>
+              <span className="badge badge-warn">{outcome.summary.missingInCompare} only in A</span>
+              <span className="badge badge-info">{outcome.summary.missingInBase} only in B</span>
             </div>
           </div>
 
@@ -649,9 +649,9 @@ export default function ComparePage() {
           <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-5 py-2.5">
             {([
               ['all', `All (${outcome.rows.length})`],
-              ['matches', `Matched (${outcome.summary.matchedRows})`],
-              ['mismatches', `Mismatched (${outcome.summary.mismatchRows})`],
-              ['missing', `Unaligned (${issueRows.filter((r) => r.status.startsWith('missing')).length})`],
+              ['matches', `Clean (${outcome.summary.matchedRows})`],
+              ['mismatches', `Deltas (${outcome.summary.mismatchRows})`],
+              ['missing', `Unmatched (${issueRows.filter((r) => r.status.startsWith('missing')).length})`],
             ] as Array<[ResultTab, string]>).map(([id, label]) => (
               <button
                 key={id}
@@ -680,10 +680,10 @@ export default function ComparePage() {
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-bold text-[var(--accent-3)]">
-                      <CheckCircle2 size={15} /> Verified equal ({matchedRows.length} rows)
+                      <CheckCircle2 size={15} /> Clean rows ({matchedRows.length})
                     </div>
-                    <button className="text-xs font-semibold text-[var(--accent)] hover:underline" onClick={() => exportRows('compare-matches.csv', matchedRows)}>
-                      Export matched (CSV)
+                    <button className="text-xs font-semibold text-[var(--accent)] hover:underline" onClick={() => exportRows('delta-clean.csv', matchedRows)}>
+                      Export clean rows (CSV)
                     </button>
                   </div>
                   <RowsTable rows={matchedRows.slice(0, resultTab === 'matches' ? 300 : 50)} />
@@ -701,9 +701,9 @@ export default function ComparePage() {
                     </div>
                     <button
                       className="text-xs font-semibold text-[var(--accent)] hover:underline"
-                      onClick={() => exportRows('compare-mismatches.csv', issueRows.filter((r) => r.status === 'mismatch'))}
+                      onClick={() => exportRows('delta-variances.csv', issueRows.filter((r) => r.status === 'mismatch'))}
                     >
-                      Export mismatches (CSV)
+                      Export deltas (CSV)
                     </button>
                   </div>
                   <RowsTable
@@ -726,8 +726,8 @@ export default function ComparePage() {
                   {outcome.summary.missingInCompare > 0 && (
                     <div className="rounded-xl border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.05)] p-4">
                       <div className="flex items-center justify-between text-sm font-bold text-[var(--warn)]">
-                        <span className="flex items-center gap-2"><AlertTriangle size={15} /> In A, not in B ({outcome.summary.missingInCompare})</span>
-                        <button className="text-xs font-semibold hover:underline" onClick={() => exportRows('compare-missing-in-b.csv', issueRows.filter((r) => r.status === 'missing_in_compare'))}>CSV</button>
+                        <span className="flex items-center gap-2"><AlertTriangle size={15} /> Only in A ({outcome.summary.missingInCompare})</span>
+                        <button className="text-xs font-semibold hover:underline" onClick={() => exportRows('delta-only-in-a.csv', issueRows.filter((r) => r.status === 'missing_in_compare'))}>CSV</button>
                       </div>
                       <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
                         {issueRows.filter((r) => r.status === 'missing_in_compare').slice(0, 100).map((r) => (
@@ -739,8 +739,8 @@ export default function ComparePage() {
                   {outcome.summary.missingInBase > 0 && (
                     <div className="rounded-xl border border-[rgba(96,165,250,0.3)] bg-[rgba(96,165,250,0.05)] p-4">
                       <div className="flex items-center justify-between text-sm font-bold text-[var(--accent)]">
-                        <span className="flex items-center gap-2"><AlertTriangle size={15} /> In B, not in A ({outcome.summary.missingInBase})</span>
-                        <button className="text-xs font-semibold hover:underline" onClick={() => exportRows('compare-missing-in-a.csv', issueRows.filter((r) => r.status === 'missing_in_base'))}>CSV</button>
+                        <span className="flex items-center gap-2"><AlertTriangle size={15} /> Only in B ({outcome.summary.missingInBase})</span>
+                        <button className="text-xs font-semibold hover:underline" onClick={() => exportRows('delta-only-in-b.csv', issueRows.filter((r) => r.status === 'missing_in_base'))}>CSV</button>
                       </div>
                       <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
                         {issueRows.filter((r) => r.status === 'missing_in_base').slice(0, 100).map((r) => (
@@ -755,8 +755,8 @@ export default function ComparePage() {
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-4">
-            <Button variant="ghost" size="sm" onClick={() => exportRows('compare-findings.csv', outcome.rows)}>
-              <FileText size={14} /> Export full findings (CSV)
+            <Button variant="ghost" size="sm" onClick={() => exportRows('delta-report.csv', outcome.rows)}>
+              <FileText size={14} /> Export delta report (CSV)
             </Button>
             <Button variant="primary" onClick={() => setStep(3)}>
               <ArrowLeft size={15} /> Adjust alignment
@@ -854,7 +854,7 @@ function RowsTable({
                 {onToggleReview && <td />}
                 <td>
                   <StatusBadge tone={r.status === 'missing_in_compare' ? 'warn' : 'info'}>
-                    {r.status === 'missing_in_compare' ? 'Missing in B' : 'Missing in A'}
+                    {r.status === 'missing_in_compare' ? 'Only in B' : 'Only in A'}
                   </StatusBadge>
                 </td>
               </tr>
@@ -885,7 +885,7 @@ function RowsTable({
                       </td>
                     )}
                     <td>
-                      {reviewed?.has(rk) ? <StatusBadge tone="ok">Reviewed</StatusBadge> : <StatusBadge tone={c.status === 'match' ? 'ok' : 'err'}>{c.status === 'match' ? 'Match' : 'Mismatch'}</StatusBadge>}
+                      {reviewed?.has(rk) ? <StatusBadge tone="ok">Reviewed</StatusBadge> : <StatusBadge tone={c.status === 'match' ? 'ok' : 'err'}>{c.status === 'match' ? 'Clean' : 'Delta'}</StatusBadge>}
                     </td>
                   </tr>
                 )

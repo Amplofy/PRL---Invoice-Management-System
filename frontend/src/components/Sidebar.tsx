@@ -11,7 +11,7 @@ import {
   ScrollText,
   Upload,
   Mail,
-  GitCompareArrows,
+  Crosshair,
   Settings,
   Users,
   type LucideIcon,
@@ -52,7 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
     entries: [
       { to: '/reports', label: 'Reports', icon: BarChart3 },
       { to: '/audit-log', label: 'Audit Log', icon: ScrollText },
-      { to: '/compare', label: 'Compare', icon: GitCompareArrows },
+      { to: '/delta', label: 'Delta Analyst', icon: Crosshair },
       { to: '/followups', label: 'Follow-ups', icon: Mail },
     ],
   },
