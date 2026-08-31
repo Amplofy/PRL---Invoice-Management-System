@@ -83,7 +83,7 @@ function unitFromText(text: string): UnitDef | null {
   // A bare single letter is too ambiguous unless it sits in brackets or after a degree sign
   if (best && best.u.aliases.some((a) => a.length === 1)) {
     const ctx = t.slice(Math.max(0, best.at - 2), best.at + best.len + 1)
-    if (!/[°(\[]/.test(ctx) && !/\btemp|temperature|degrees?/.test(t)) {
+    if (!/[°([]/.test(ctx) && !/\btemp|temperature|degrees?/.test(t)) {
       if (best.u.kind === 'temperature') return null
     }
   }

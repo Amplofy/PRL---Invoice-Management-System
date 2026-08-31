@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Upload, GitCompareArrows, ArrowLeftRight, Send, AlertTriangle, CheckCircle2, FileText,
-  ArrowLeft, ArrowRight, Thermometer, Ruler, Scale, Gauge, Waves, Wind, Sparkles, Info,
+  ArrowLeft, ArrowRight, Thermometer, Ruler, Scale, Gauge, Waves, Wind, Sparkles, Info, Layers,
 } from 'lucide-react'
 import { apiUpload, apiGet, apiPost } from '../lib/api'
+import { downloadCSV } from '../lib/export'
 import { suggestJoinKey, suggestPairs, runCompare, type ColumnPair, type CompareOutcome, type PairConfig } from '../lib/compareEngine'
 import { detectUnit, UNITS, type UnitDef } from '../lib/units'
 import { useToast } from '../components/ui/Toast'
@@ -17,12 +18,23 @@ import EmptyState from '../components/ui/EmptyState'
 
 type Step = 1 | 2 | 3
 
-interface ParsedFile {
-  fileName: string
-  format: string
+interface ParsedGroup {
+  name: string
+  rowCount: number
   rows: Record<string, unknown>[]
   columns: string[]
 }
+
+interface ParsedFile {
+  fileName: string
+  format: string
+  groups: ParsedGroup[]
+  selectedGroup: string
+  rows: Record<string, unknown>[]
+  columns: string[]
+}
+
+type ResultTab = 'all' | 'matches' | 'mismatches' | 'missing'
 
 interface UploadedFile {
   fileId: string
@@ -51,6 +63,8 @@ export default function ComparePage() {
   const [tolerance, setTolerance] = useState('0')
   const [comparing, setComparing] = useState(false)
   const [outcome, setOutcome] = useState<CompareOutcome | null>(null)
+  const [resultTab, setResultTab] = useState<ResultTab>('all')
+  const [reviewed, setReviewed] = useState<Set<string>>(new Set())
   const [comparisonId, setComparisonId] = useState<string | null>(null)
   const [sendOpen, setSendOpen] = useState(false)
   const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([])
@@ -67,17 +81,42 @@ export default function ComparePage() {
       const form = new FormData()
       form.append('file', file)
       form.append('which', which)
-      const parsed = await apiUpload<ParsedFile>('/api/compare/parse', form)
+      const parsed = await apiUpload<{ fileName: string; format: string; groups: ParsedGroup[] }>('/api/compare/parse', form)
       const uploaded = await apiUpload<UploadedFile>('/api/uploads', form)
-      const withNames = { ...parsed, fileName: uploaded.fileName || parsed.fileName }
+      const groups = parsed.groups.filter((g) => g.rows.length > 0)
+      if (groups.length === 0) throw new Error('No readable rows found in the file')
+      // default to the largest group; user can switch sheet/page below
+      const best = groups.reduce((a, b) => (b.rowCount > a.rowCount ? b : a))
+      const withNames: ParsedFile = {
+        fileName: uploaded.fileName || parsed.fileName,
+        format: parsed.format,
+        groups,
+        selectedGroup: best.name,
+        rows: best.rows,
+        columns: best.columns,
+      }
       if (which === 'base') setBase(withNames)
       else setCompare(withNames)
-      toast.success('File parsed', `${parsed.rows.length} rows · ${parsed.columns.length} columns · ${parsed.format.toUpperCase()}`)
+      const extra = groups.length > 1 ? ` · ${groups.length} sheets/pages` : ''
+      toast.success('File parsed', `${best.rowCount} rows · ${best.columns.length} columns · ${parsed.format.toUpperCase()}${extra}`)
     } catch (e) {
       toast.error('Could not read file', (e as Error).message)
     } finally {
       setParsing(null)
     }
+  }
+
+  const selectGroup = (which: 'base' | 'compare', name: string) => {
+    const file = which === 'base' ? base : compare
+    if (!file) return
+    const g = file.groups.find((x) => x.name === name)
+    if (!g) return
+    const updated: ParsedFile = { ...file, selectedGroup: name, rows: g.rows, columns: g.columns }
+    if (which === 'base') setBase(updated)
+    else setCompare(updated)
+    setJoin(null)
+    setPairs([])
+    setOutcome(null)
   }
 
   const ready = base !== null && compare !== null
@@ -131,6 +170,8 @@ export default function ComparePage() {
         summary: result.summary,
       })
       setComparisonId(saved.comparisonId)
+      setReviewed(new Set())
+      setResultTab('all')
       setStep(3)
       toast.info(
         'Comparison complete',
@@ -177,6 +218,8 @@ export default function ComparePage() {
     setJoin(null)
     setPairs([])
     setOutcome(null)
+    setReviewed(new Set())
+    setResultTab('all')
     setStep(ready ? 2 : 1)
   }
 
@@ -188,10 +231,55 @@ export default function ComparePage() {
     setOutcome(null)
     setComparisonId(null)
     setConfigs({})
+    setReviewed(new Set())
+    setResultTab('all')
     setStep(1)
   }
 
   const totalIssues = (outcome?.mismatches.length ?? 0) + (outcome?.missingInCompare.length ?? 0) + (outcome?.missingInBase.length ?? 0)
+
+  const exportMatches = () => {
+    if (!outcome) return
+    downloadCSV('compare-matches.csv', outcome.matched.flatMap((row) =>
+      row.matches.map((m) => ({
+        key: row.keyValue,
+        column: m.column,
+        baseValue: m.baseValue,
+        compareValue: m.compareValue,
+        normalized: `${m.baseNorm ?? ''} vs ${m.compareNorm ?? ''}`,
+        unitNote: m.unitNote ?? '',
+        result: 'match',
+      })),
+    ))
+  }
+
+  const exportFindings = () => {
+    if (!outcome) return
+    downloadCSV('compare-findings.csv', [
+      ...outcome.mismatches.map((m) => ({
+        key: m.keyValue,
+        column: m.column,
+        baseValue: m.baseValue,
+        compareValue: m.compareValue,
+        normalized: `${m.baseNorm ?? ''} vs ${m.compareNorm ?? ''}`,
+        unitNote: m.unitNote ?? '',
+        result: 'mismatch',
+      })),
+      ...outcome.matched.flatMap((row) =>
+        row.matches.map((m) => ({
+          key: row.keyValue,
+          column: m.column,
+          baseValue: m.baseValue,
+          compareValue: m.compareValue,
+          normalized: `${m.baseNorm ?? ''} vs ${m.compareNorm ?? ''}`,
+          unitNote: m.unitNote ?? '',
+          result: 'match',
+        })),
+      ),
+      ...outcome.missingInCompare.map((m) => ({ key: m.keyValue, column: '', baseValue: '', compareValue: '', normalized: '', unitNote: '', result: 'missing in TO' })),
+      ...outcome.missingInBase.map((m) => ({ key: m.keyValue, column: '', baseValue: '', compareValue: '', normalized: '', unitNote: '', result: 'missing in FROM' })),
+    ])
+  }
 
   return (
     <div className="space-y-5">
@@ -239,20 +327,30 @@ export default function ComparePage() {
 
       {step === 1 && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <FileDropCard
-            title="Compare FROM (base)"
-            hint={base?.fileName}
-            busy={parsing === 'base'}
-            onPick={() => baseRef.current?.click()}
-            icon={<FileText size={20} className="text-[var(--accent)]" />}
-          />
-          <FileDropCard
-            title="Compare TO (candidate)"
-            hint={compare?.fileName}
-            busy={parsing === 'compare'}
-            onPick={() => compareRef.current?.click()}
-            icon={<FileText size={20} className="text-[var(--accent-2)]" />}
-          />
+          <div className="space-y-2">
+            <FileDropCard
+              title="Compare FROM (base)"
+              hint={base?.fileName}
+              busy={parsing === 'base'}
+              onPick={() => baseRef.current?.click()}
+              icon={<FileText size={20} className="text-[var(--accent)]" />}
+            />
+            {base && base.groups.length > 1 && (
+              <GroupPicker file={base} which="base" onSelect={selectGroup} />
+            )}
+          </div>
+          <div className="space-y-2">
+            <FileDropCard
+              title="Compare TO (candidate)"
+              hint={compare?.fileName}
+              busy={parsing === 'compare'}
+              onPick={() => compareRef.current?.click()}
+              icon={<FileText size={20} className="text-[var(--accent-2)]" />}
+            />
+            {compare && compare.groups.length > 1 && (
+              <GroupPicker file={compare} which="compare" onSelect={selectGroup} />
+            )}
+          </div>
           <input
             ref={baseRef}
             type="file"
@@ -414,14 +512,37 @@ export default function ComparePage() {
             <div>
               <div className="text-sm font-bold">Results</div>
               <div className="text-xs text-[var(--text-muted)]">
-                {base?.fileName} vs {compare?.fileName} · join “{join?.baseCol} ↔ {join?.compareCol}” · {outcome.summary.matchedRows}/{outcome.summary.totalRows} rows matched
+                {base?.fileName} ({base?.selectedGroup}) vs {compare?.fileName} ({compare?.selectedGroup}) · join “{join?.baseCol} ↔ {join?.compareCol}” · {outcome.summary.matchedRows}/{outcome.summary.totalRows} rows matched
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <span className="badge badge-ok">{outcome.matched.length} rows matched</span>
               <span className="badge badge-err">{outcome.mismatches.length} mismatches</span>
               <span className="badge badge-warn">{outcome.missingInCompare.length} missing in TO</span>
               <span className="badge badge-info">{outcome.missingInBase.length} missing in FROM</span>
             </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 border-b border-[var(--border)] px-5 py-2.5">
+            {([
+              ['all', `All (${outcome.matched.length + outcome.mismatches.length + outcome.missingInCompare.length + outcome.missingInBase.length})`],
+              ['matches', `Matches (${outcome.matched.length})`],
+              ['mismatches', `Mismatches (${outcome.mismatches.length})`],
+              ['missing', `Missing (${outcome.missingInCompare.length + outcome.missingInBase.length})`],
+            ] as Array<[ResultTab, string]>).map(([id, label]) => (
+              <button
+                key={id}
+                className="rounded-full px-3 py-1 text-xs font-bold transition"
+                style={
+                  resultTab === id
+                    ? { background: 'var(--gradient-primary)', color: '#fff' }
+                    : { background: 'var(--surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }
+                }
+                onClick={() => setResultTab(id)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {outcome.conversions.length > 0 && (
@@ -440,15 +561,32 @@ export default function ComparePage() {
             </div>
           )}
 
-          {totalIssues === 0 ? (
+          {totalIssues === 0 && outcome.matched.length === 0 ? (
             <EmptyState
-              title="No discrepancies"
+              title="Nothing to show"
               description="The files match within the configured tolerance, after unit normalization."
               icon={<CheckCircle2 size={28} className="text-[var(--accent-3)]" />}
             />
           ) : (
             <div className="space-y-4 p-5">
-              {outcome.mismatches.length > 0 && (
+              {(resultTab === 'all' || resultTab === 'matches') && outcome.matched.length > 0 && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-bold text-[var(--accent-3)]">
+                      <CheckCircle2 size={15} /> Matched values ({outcome.matched.length} rows)
+                    </div>
+                    <button
+                      className="text-xs font-semibold text-[var(--accent)] hover:underline"
+                      onClick={() => exportMatches()}
+                    >
+                      Export matched (CSV)
+                    </button>
+                  </div>
+                  <MatchedTable outcome={outcome} expanded={resultTab === 'matches'} />
+                </div>
+              )}
+
+              {(resultTab === 'all' || resultTab === 'mismatches') && outcome.mismatches.length > 0 && (
                 <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
                   <table className="data-table">
                     <thead>
@@ -458,65 +596,89 @@ export default function ComparePage() {
                         <th>Base value</th>
                         <th>Compare value</th>
                         <th>Normalized</th>
+                        <th>Reviewed</th>
                         <th>Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {outcome.mismatches.slice(0, 100).map((m, i) => (
-                        <tr key={i}>
-                          <td className="font-semibold">{m.keyValue}</td>
-                          <td><span className="badge badge-purple">{m.column}</span></td>
-                          <td className="text-[var(--danger)]">{m.baseValue || '—'}</td>
-                          <td className="text-[var(--accent-3)]">{m.compareValue || '—'}</td>
-                          <td className="text-xs text-[var(--text-muted)]">
-                            {m.baseNorm} vs {m.compareNorm}
-                            {m.unitNote && (
-                              <span className="mt-0.5 block text-[var(--warn)]">{m.unitNote}</span>
-                            )}
-                          </td>
-                          <td><StatusBadge tone="err">Mismatch</StatusBadge></td>
-                        </tr>
-                      ))}
+                      {outcome.mismatches.slice(0, resultTab === 'mismatches' ? 300 : 100).map((m, i) => {
+                        const rk = `${m.keyValue}|${m.column}|${i}`
+                        return (
+                          <tr key={i} style={{ opacity: reviewed.has(rk) ? 0.55 : 1 }}>
+                            <td className="font-semibold">{m.keyValue}</td>
+                            <td><span className="badge badge-purple">{m.column}</span></td>
+                            <td className="text-[var(--danger)]">{m.baseValue || '—'}</td>
+                            <td className="text-[var(--accent-3)]">{m.compareValue || '—'}</td>
+                            <td className="text-xs text-[var(--text-muted)]">
+                              {m.baseNorm} vs {m.compareNorm}
+                              {m.unitNote && (
+                                <span className="mt-0.5 block text-[var(--warn)]">{m.unitNote}</span>
+                              )}
+                            </td>
+                            <td>
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-[var(--accent)]"
+                                checked={reviewed.has(rk)}
+                                onChange={() =>
+                                  setReviewed((prev) => {
+                                    const next = new Set(prev)
+                                    if (next.has(rk)) next.delete(rk)
+                                    else next.add(rk)
+                                    return next
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>{reviewed.has(rk) ? <StatusBadge tone="ok">Reviewed</StatusBadge> : <StatusBadge tone="err">Mismatch</StatusBadge>}</td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
-                  {outcome.mismatches.length > 100 && (
+                  {outcome.mismatches.length > (resultTab === 'mismatches' ? 300 : 100) && (
                     <div className="px-4 py-2 text-xs text-[var(--text-muted)]">
-                      Showing first 100 of {outcome.mismatches.length}
+                      Showing first {resultTab === 'mismatches' ? 300 : 100} of {outcome.mismatches.length} — switch to the Mismatches tab or export to see all
                     </div>
                   )}
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {outcome.missingInCompare.length > 0 && (
-                  <div className="rounded-xl border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.05)] p-4">
-                    <div className="flex items-center gap-2 text-sm font-bold text-[var(--warn)]">
-                      <AlertTriangle size={15} /> Missing in Compare TO ({outcome.missingInCompare.length})
+              {(resultTab === 'all' || resultTab === 'missing') && (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {(resultTab === 'missing' || outcome.missingInCompare.length > 0) && outcome.missingInCompare.length > 0 && (
+                    <div className="rounded-xl border border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.05)] p-4">
+                      <div className="flex items-center gap-2 text-sm font-bold text-[var(--warn)]">
+                        <AlertTriangle size={15} /> Missing in Compare TO ({outcome.missingInCompare.length})
+                      </div>
+                      <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
+                        {outcome.missingInCompare.slice(0, 100).map((m) => (
+                          <div key={m.keyValue}>· {m.keyValue}</div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
-                      {outcome.missingInCompare.slice(0, 100).map((m) => (
-                        <div key={m.keyValue}>· {m.keyValue}</div>
-                      ))}
+                  )}
+                  {(resultTab === 'missing' || outcome.missingInBase.length > 0) && outcome.missingInBase.length > 0 && (
+                    <div className="rounded-xl border border-[rgba(96,165,250,0.3)] bg-[rgba(96,165,250,0.05)] p-4">
+                      <div className="flex items-center gap-2 text-sm font-bold text-[var(--accent)]">
+                        <AlertTriangle size={15} /> Missing in Base FROM ({outcome.missingInBase.length})
+                      </div>
+                      <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
+                        {outcome.missingInBase.slice(0, 100).map((m) => (
+                          <div key={m.keyValue}>· {m.keyValue}</div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
-                {outcome.missingInBase.length > 0 && (
-                  <div className="rounded-xl border border-[rgba(96,165,250,0.3)] bg-[rgba(96,165,250,0.05)] p-4">
-                    <div className="flex items-center gap-2 text-sm font-bold text-[var(--accent)]">
-                      <AlertTriangle size={15} /> Missing in Base FROM ({outcome.missingInBase.length})
-                    </div>
-                    <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-xs text-[var(--text-dim)]">
-                      {outcome.missingInBase.slice(0, 100).map((m) => (
-                        <div key={m.keyValue}>· {m.keyValue}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
-          <div className="flex justify-end border-t border-[var(--border)] px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-5 py-4">
+            <Button variant="ghost" size="sm" onClick={exportFindings}>
+              <FileText size={14} /> Export findings (CSV)
+            </Button>
             <Button variant="primary" onClick={() => setStep(2)}>
               <ArrowLeft size={15} /> Adjust mapping
             </Button>
@@ -554,6 +716,79 @@ export default function ComparePage() {
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+function GroupPicker({
+  file,
+  which,
+  onSelect,
+}: {
+  file: ParsedFile
+  which: 'base' | 'compare'
+  onSelect: (which: 'base' | 'compare', name: string) => void
+}) {
+  return (
+    <GlassCard className="flex items-center gap-3 px-4 py-3">
+      <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--text-muted)]">
+        <Layers size={14} className="text-[var(--accent)]" />
+        {file.format === 'pdf' ? 'Page' : 'Sheet'}
+      </div>
+      <select
+        className="input !w-auto flex-1 text-xs"
+        value={file.selectedGroup}
+        onChange={(e) => onSelect(which, e.target.value)}
+      >
+        {file.groups.map((g) => (
+          <option key={g.name} value={g.name}>
+            {g.name} · {g.rowCount} rows
+          </option>
+        ))}
+      </select>
+    </GlassCard>
+  )
+}
+
+function MatchedTable({ outcome, expanded }: { outcome: CompareOutcome; expanded: boolean }) {
+  const limit = expanded ? 300 : 50
+  const flat = outcome.matched.flatMap((row) =>
+    row.matches.map((m) => ({ key: row.keyValue, ...m })),
+  )
+  return (
+    <div className="overflow-x-auto rounded-xl border border-[rgba(34,197,94,0.25)]">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Column</th>
+            <th>Base value</th>
+            <th>Compare value</th>
+            <th>Normalized</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {flat.slice(0, limit).map((m, i) => (
+            <tr key={i}>
+              <td className="font-semibold">{m.key}</td>
+              <td><span className="badge badge-purple">{m.column}</span></td>
+              <td>{m.baseValue || '—'}</td>
+              <td>{m.compareValue || '—'}</td>
+              <td className="text-xs text-[var(--text-muted)]">
+                {m.baseNorm} vs {m.compareNorm}
+                {m.unitNote && <span className="mt-0.5 block text-[var(--warn)]">{m.unitNote}</span>}
+              </td>
+              <td><StatusBadge tone="ok">Match</StatusBadge></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {flat.length > limit && (
+        <div className="px-4 py-2 text-xs text-[var(--text-muted)]">
+          Showing first {limit} of {flat.length} matched values — open the Matches tab or export to see all
+        </div>
+      )}
     </div>
   )
 }

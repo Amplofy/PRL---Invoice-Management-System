@@ -935,28 +935,40 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const which = isForm ? String((body as FormData).get('which') ?? 'base') : 'base'
     const file = isForm ? (body as FormData).get('file') : null
     const name = file instanceof File ? file.name : 'demo-file.pdf'
+    const mk = (gname: string, rows: Record<string, unknown>[]) => ({
+      name: gname,
+      rowCount: rows.length,
+      rows,
+      columns: rows.length > 0 ? Object.keys(rows[0]!) : [],
+    })
     if (which === 'base') {
       return {
         fileName: name,
         format: 'pdf',
-        columns: ['invoice_no', 'quantity', 'temp', 'amount'],
-        rows: [
-          { invoice_no: 'INV-2026-0011', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
-          { invoice_no: 'INV-2026-0012', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
-          { invoice_no: 'INV-2026-0013', quantity: '980 L', temp: '24.8 °C', amount: '430,500' },
-          { invoice_no: 'INV-2026-0014', quantity: '3,150 L', temp: '27.0 °C', amount: '1,502,250' },
+        groups: [
+          mk('Page 1', [
+            { invoice_no: 'INV-2026-0011', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
+            { invoice_no: 'INV-2026-0012', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
+            { invoice_no: 'INV-2026-0013', quantity: '980 L', temp: '24.8 °C', amount: '430,500' },
+            { invoice_no: 'INV-2026-0014', quantity: '3,150 L', temp: '27.0 °C', amount: '1,502,250' },
+          ]),
+          mk('Page 2', [
+            { invoice_no: 'INV-2026-0011', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
+            { invoice_no: 'INV-2026-0012', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
+          ]),
         ],
       } as T
     }
     return {
       fileName: name,
       format: 'csv',
-      columns: ['invoice_no', 'quantity', 'temp', 'amount'],
-      rows: [
-        { invoice_no: 'INV-2026-0011', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
-        { invoice_no: 'INV-2026-0012', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
-        { invoice_no: 'INV-2026-0013', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
-        { invoice_no: 'INV-2026-0015', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
+      groups: [
+        mk(name, [
+          { invoice_no: 'INV-2026-0011', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
+          { invoice_no: 'INV-2026-0012', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
+          { invoice_no: 'INV-2026-0013', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
+          { invoice_no: 'INV-2026-0015', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
+        ]),
       ],
     } as T
   }

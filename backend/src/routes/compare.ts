@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
-import { parseFile } from '../services/parse.js'
+import { parseFileGroups } from '../services/parse.js'
 import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
 import { getUploadedFile } from './uploads.js'
 import { getSetting } from '../services/settingsService.js'
@@ -13,8 +13,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 export const compareRouter = Router()
 
 /**
- * Parse an uploaded file into raw rows + inferred column names for the
- * client-side mapping wizard. Accepts csv / xlsx / xls / pdf.
+ * Parse an uploaded file into per-sheet (Excel) / per-page (PDF) groups of raw
+ * rows + inferred column names for the client-side mapping wizard. Accepts
+ * csv / xlsx / xls / pdf.
  */
 compareRouter.post('/parse', authRequired, upload.single('file'), async (req, res, next) => {
   try {
@@ -22,15 +23,20 @@ compareRouter.post('/parse', authRequired, upload.single('file'), async (req, re
       res.status(400).json({ error: 'No file uploaded' })
       return
     }
-    const { rows, format } = await parseFile({
+    const { format, groups } = await parseFileGroups({
       buffer: req.file.buffer,
       originalname: req.file.originalname,
     })
-    const columns =
-      rows.length > 0
-        ? Object.keys(rows[0]!).filter((c) => c !== 'line')
-        : []
-    res.json({ fileName: req.file.originalname, format, rows, columns })
+    res.json({
+      fileName: req.file.originalname,
+      format,
+      groups: groups.map((g) => ({
+        name: g.name,
+        rowCount: g.rows.length,
+        rows: g.rows,
+        columns: g.rows.length > 0 ? Object.keys(g.rows[0]!).filter((c) => c !== 'line') : [],
+      })),
+    })
   } catch (err) {
     next(err)
   }

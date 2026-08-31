@@ -31,26 +31,18 @@ function normalizeHeader(h: string): string {
   return h.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-async function extractText(buffer: Buffer): Promise<string> {
+async function extractPages(buffer: Buffer): Promise<{ text: string; pages: string[] }> {
   const parser = new pdfParse.PDFParse({ data: buffer })
   await (parser as unknown as { load(): Promise<void> }).load()
   const result = (await parser.getText()) as PdfTextResult
   parser.destroy()
-  return result?.text || ''
+  return {
+    text: result?.text || '',
+    pages: (result?.pages || []).map((p) => p?.text || ''),
+  }
 }
 
-/**
- * Extracts tabular rows from a text-based PDF using a whitespace-delimited
- * column heuristic. First line that matches known headers becomes the header
- * row; subsequent lines are parsed as data rows aligned to the same columns.
- */
-export async function parsePdf(buffer: Buffer): Promise<Record<string, unknown>[]> {
-  const text = await extractText(buffer)
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean)
-
+function linesToRows(lines: string[]): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = []
   let headers: string[] | null = null
 
@@ -84,9 +76,45 @@ export async function parsePdf(buffer: Buffer): Promise<Record<string, unknown>[
     }
   }
 
-  // Fallback: no headers detected — return raw one-column rows
-  if (!headers) {
-    return lines.map((l) => ({ line: l }))
-  }
   return rows
+}
+
+/**
+ * Extracts tabular rows from a text-based PDF using a whitespace-delimited
+ * column heuristic. First line that matches known headers becomes the header
+ * row; subsequent lines are parsed as data rows aligned to the same columns.
+ */
+export async function parsePdf(buffer: Buffer): Promise<Record<string, unknown>[]> {
+  const { text } = await extractPages(buffer)
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const rows = linesToRows(lines)
+  if (rows.length > 0) return rows
+  // Fallback: no headers detected — return raw one-column rows
+  return lines.map((l) => ({ line: l }))
+}
+
+export interface ParsedPage {
+  name: string
+  rows: Record<string, unknown>[]
+}
+
+/**
+ * Parses each PDF page independently so the user can pick which pages hold
+ * the tables to compare. Pages without a detected header row are skipped;
+ * if none match, the whole document comes back as a single raw group.
+ */
+export async function parsePdfGroups(buffer: Buffer): Promise<ParsedPage[]> {
+  const { text, pages } = await extractPages(buffer)
+  const pageTexts = pages.length > 0 ? pages : [text]
+  const groups: ParsedPage[] = []
+  pageTexts.forEach((pageText, i) => {
+    const lines = pageText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const rows = linesToRows(lines)
+    if (rows.length > 0) groups.push({ name: `Page ${i + 1}`, rows })
+  })
+  if (groups.length === 0) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    if (lines.length > 0) groups.push({ name: 'Full document', rows: lines.map((l) => ({ line: l })) })
+  }
+  return groups
 }

@@ -88,10 +88,24 @@ export function suggestPairs(
 
 export interface CompareOutcome {
   mismatches: MismatchRow[]
+  /** Rows where every compared column agreed (after unit normalization). */
+  matched: MatchedRow[]
   missingInCompare: Array<{ keyValue: string }>
   missingInBase: Array<{ keyValue: string }>
   summary: { totalRows: number; matchedRows: number }
   conversions: string[]
+}
+
+export interface MatchedRow {
+  keyValue: string
+  matches: Array<{
+    column: string
+    baseValue: string
+    compareValue: string
+    baseNorm: string | null
+    compareNorm: string | null
+    unitNote: string | null
+  }>
 }
 
 export interface MismatchRow {
@@ -162,6 +176,7 @@ export function runCompare(
   }
 
   const mismatches: MismatchRow[] = []
+  const matched: MatchedRow[] = []
   const missingInCompare: Array<{ keyValue: string }> = []
   const missingInBase: Array<{ keyValue: string }> = []
   let matchedRows = 0
@@ -175,6 +190,9 @@ export function runCompare(
       continue
     }
     seenCompare.add(keyRaw)
+    const keyLabel = String(baseRow[join.baseCol] ?? '')
+    const rowMismatch: MismatchRow[] = []
+    const rowMatches: MatchedRow['matches'] = []
     let rowOk = true
 
     for (const cfg of pairs) {
@@ -191,6 +209,21 @@ export function runCompare(
 
       const baseVal = baseRow[cfg.baseCol]
       const cmpVal = compareRow[cfg.compareCol]
+      const column = cfg.baseCol === cfg.compareCol ? cfg.baseCol : `${cfg.baseCol} ↔ ${cfg.compareCol}`
+      const unitNote =
+        baseInfo && compareInfo && baseInfo.unit.id !== compareInfo.unit.id
+          ? `units normalized: ${baseInfo.unit.label} vs ${compareInfo.unit.label} → ${target?.label ?? ''}`
+          : null
+      const fmt = (v: number | null) => (target && v !== null ? `${round2(v)} ${target.label}` : v !== null ? String(round2(v)) : null)
+
+      const entry = {
+        column,
+        baseValue: String(baseVal ?? ''),
+        compareValue: String(cmpVal ?? ''),
+        baseNorm: fmt(baseNorm.value),
+        compareNorm: fmt(compareNorm.value),
+        unitNote,
+      }
 
       if (baseNorm.value === null && compareNorm.value === null) continue
 
@@ -198,36 +231,25 @@ export function runCompare(
         const diff = Math.abs(baseNorm.value - compareNorm.value)
         const scale = Math.max(Math.abs(baseNorm.value), Math.abs(compareNorm.value), 1)
         const withinTolerance = diff <= cfg.tolerance || diff / scale <= 0.005
-        if (withinTolerance) continue
+        if (withinTolerance) {
+          rowMatches.push(entry)
+          continue
+        }
         rowOk = false
-        mismatches.push({
-          keyValue: String(baseRow[join.baseCol] ?? ''),
-          column: cfg.baseCol === cfg.compareCol ? cfg.baseCol : `${cfg.baseCol} ↔ ${cfg.compareCol}`,
-          baseValue: String(baseVal ?? ''),
-          compareValue: String(cmpVal ?? ''),
-          baseNorm: target && baseNorm.value !== null ? `${round2(baseNorm.value)} ${target.label}` : null,
-          compareNorm: target && compareNorm.value !== null ? `${round2(compareNorm.value)} ${target.label}` : null,
-          unitNote:
-            baseInfo && compareInfo && baseInfo.unit.id !== compareInfo.unit.id
-              ? `units normalized: ${baseInfo.unit.label} vs ${compareInfo.unit.label} → ${target?.label ?? ''}`
-              : null,
-        })
+        rowMismatch.push({ keyValue: keyLabel, ...entry })
         continue
       }
 
       rowOk = false
-      mismatches.push({
-        keyValue: String(baseRow[join.baseCol] ?? ''),
-        column: cfg.baseCol === cfg.compareCol ? cfg.baseCol : `${cfg.baseCol} ↔ ${cfg.compareCol}`,
-        baseValue: String(baseVal ?? ''),
-        compareValue: String(cmpVal ?? ''),
-        baseNorm: baseNorm.value !== null ? String(round2(baseNorm.value)) : null,
-        compareNorm: compareNorm.value !== null ? String(round2(compareNorm.value)) : null,
-        unitNote: null,
-      })
+      rowMismatch.push({ keyValue: keyLabel, ...entry })
     }
 
-    if (rowOk) matchedRows++
+    if (rowOk) {
+      matchedRows++
+      matched.push({ keyValue: keyLabel, matches: rowMatches })
+    } else {
+      mismatches.push(...rowMismatch)
+    }
   }
 
   for (const r of compareRows) {
@@ -239,6 +261,7 @@ export function runCompare(
 
   return {
     mismatches,
+    matched,
     missingInCompare,
     missingInBase,
     summary: { totalRows: baseRows.length, matchedRows },
