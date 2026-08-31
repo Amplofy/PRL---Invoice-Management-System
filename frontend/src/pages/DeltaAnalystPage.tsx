@@ -12,6 +12,7 @@ import {
   type ColumnPair, type VerifyOutcome, type PairConfig,
 } from '../lib/deltaEngine'
 import { detectUnit, UNITS, type UnitDef } from '../lib/units'
+import { isDemoMode } from '../lib/supabase'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -365,6 +366,12 @@ export default function DeltaAnalystPage() {
           </>
         }
       />
+
+      {isDemoMode() && (
+        <div className="flex items-center gap-2 rounded-xl border border-[rgba(245,158,11,0.4)] bg-[rgba(245,158,11,0.08)] px-4 py-2.5 text-xs font-semibold text-[var(--warn)]">
+          <Info size={14} /> Demo mode: your files are parsed locally in this browser (CSV/XLSX only) and nothing is stored server-side. Sign in with a real account to compare PDFs and save delta reports.
+        </div>
+      )}
 
       <input
         ref={pickRef}

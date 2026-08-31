@@ -1,3 +1,5 @@
+import { readWorkbook, detectHeaderRow, dataRows } from './importParser'
+
 const R_ADMIN = '00000000-0000-0000-0000-000000000001'
 const R_APPROVER = '00000000-0000-0000-0000-000000000002'
 const R_PROCESSOR = '00000000-0000-0000-0000-000000000003'
@@ -932,45 +934,34 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   }
 
   if (m === 'POST' && parts.length === 3 && parts[1] === 'compare' && parts[2] === 'parse') {
-    const which = isForm ? String((body as FormData).get('which') ?? 'base') : 'base'
+    // Demo mode still parses the user's real file locally (CSV/XLSX/XLS via
+    // the browser workbook reader); only PDF needs the server-side parser.
     const file = isForm ? (body as FormData).get('file') : null
-    const name = file instanceof File ? file.name : 'demo-file.pdf'
-    const mk = (gname: string, rows: Record<string, unknown>[]) => ({
-      name: gname,
-      rowCount: rows.length,
-      rows,
-      columns: rows.length > 0 ? Object.keys(rows[0]!) : [],
-    })
-    if (which === 'base') {
-      return {
-        fileName: name,
-        format: 'pdf',
-        groups: [
-          mk('Page 1', [
-            { invoice_no: 'INV-2026-0011', delivery_date: '2026-01-15', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
-            { invoice_no: 'INV-2026-0012', delivery_date: '2026-01-16', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
-            { invoice_no: 'INV-2026-0013', delivery_date: '2026-01-18', quantity: '980 L', temp: '24.8 °C', amount: '430,500' },
-            { invoice_no: 'INV-2026-0014', delivery_date: '2026-01-20', quantity: '3,150 L', temp: '27.0 °C', amount: '1,502,250' },
-          ]),
-          mk('Page 2', [
-            { invoice_no: 'INV-2026-0011', delivery_date: '2026-01-15', quantity: '1,900 L', temp: '25.4 °C', amount: '850,000' },
-            { invoice_no: 'INV-2026-0012', delivery_date: '2026-01-16', quantity: '2,400 L', temp: '26.1 °C', amount: '1,120,000' },
-          ]),
-        ],
-      } as T
+    const name = file instanceof File ? file.name : ''
+    if (!file || !(file instanceof File)) fail('No file uploaded')
+    const lower = name.toLowerCase()
+    if (lower.endsWith('.pdf')) {
+      fail('Demo mode cannot parse PDF (it needs the server-side parser). Sign in with a real account to compare PDF files.')
     }
-    return {
-      fileName: name,
-      format: 'csv',
-      groups: [
-        mk(name, [
-          { invoice_no: 'INV-2026-0011', delivery_date: '15/01/2026', quantity: '501.9 gal', temp: '77.7 °F', amount: '850,000' },
-          { invoice_no: 'INV-2026-0012', delivery_date: 'Jan 16, 2026', quantity: '634 gal', temp: '78.9 °F', amount: '1,120,000' },
-          { invoice_no: 'INV 2026 0013', delivery_date: '17/01/2026', quantity: '258.8 gal', temp: '76.6 °F', amount: '455,500' },
-          { invoice_no: 'INV-2026-0015', delivery_date: '22/01/2026', quantity: '410 gal', temp: '80.2 °F', amount: '620,000' },
-        ]),
-      ],
-    } as T
+    try {
+      const wb = await readWorkbook(file as File)
+      const groups = wb.sheets
+        .map((s) => {
+          const headerRowIdx = detectHeaderRow(s.matrix, new Set())
+          const rows = dataRows(s.matrix, headerRowIdx)
+          return {
+            name: s.name,
+            rowCount: rows.length,
+            rows,
+            columns: rows.length > 0 ? Object.keys(rows[0]!) : [],
+          }
+        })
+        .filter((g) => g.rows.length > 0)
+      if (groups.length === 0) fail('No readable rows found in the file')
+      return { fileName: name, format: lower.endsWith('.csv') ? 'csv' : 'xlsx', groups } as T
+    } catch (e) {
+      fail(`Could not read file in demo mode: ${(e as Error).message}`)
+    }
   }
   if (m === 'POST' && path === '/api/compare') {
     const b = (body ?? {}) as { baseFileName?: string; compareFileName?: string; mismatches?: unknown[] }
