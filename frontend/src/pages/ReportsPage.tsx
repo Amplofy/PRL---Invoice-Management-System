@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, CalendarRange, CalendarDays, Building2, FileText, Layers, Activity, X } from 'lucide-react'
+import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, CalendarRange, CalendarDays, Building2, FileText, Layers, Activity, X, Clock } from 'lucide-react'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -14,16 +14,19 @@ import {
 import { Doughnut, Line } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
 import { formatMoney } from '../lib/format'
+import { useLiveDomain } from '../lib/store'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import EmptyState from '../components/ui/EmptyState'
 import { useThemeColors } from '../lib/themeColors'
-import { fiscalOf, fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, type FiscalQuarter } from '../lib/fiscal'
+import { fiscalOf, fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, currentFiscalYear, fiscalShortRange, shiftFiscalYear, elapsedInFiscalYear, nearbyFiscalYears, type FiscalQuarter } from '../lib/fiscal'
+import { invoiceListPath } from '../lib/invoiceWindow'
 import { downloadCSV } from '../lib/export'
 import { useCountUp } from '../lib/useCountUp'
 import PillSelect from '../components/ui/PillSelect'
 import FilterCommandBar, { type FilterSuggestion, type FilterDimMeta } from '../components/ui/FilterCommandBar'
+import Tabs from '../components/ui/Tabs'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler)
 
@@ -44,11 +47,17 @@ interface Contract {
   status: string | null
   vendors: Array<{ name: string | null }> | null
 }
+interface YearBudget {
+  fy: string
+  cost_element: string
+  amount: number
+}
 
 const ALL = 'all'
 
 type Metric = 'spend' | 'invoices' | 'approved'
 type QOrder = 'chrono' | 'top'
+type ReportView = 'overview' | 'spend' | 'budget' | 'aging' | 'outlook'
 
 const METRIC_LABELS: Record<Metric, string> = {
   spend: 'Spend',
@@ -90,25 +99,37 @@ interface Insight {
 export default function ReportsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
+  const [yearBudgets, setYearBudgets] = useState<YearBudget[]>([])
   const [loading, setLoading] = useState(true)
-  const [chips, setChips] = useState<FilterChip[]>([])
+  const [chips, setChips] = useState<FilterChip[]>(() => [{ dim: 'fy', value: currentFiscalYear() }])
+  const [view, setView] = useState<ReportView>('overview')
   const [metric, setMetric] = useState<Metric>('spend')
   const [qOrder, setQOrder] = useState<QOrder>('chrono')
   const toast = useToast()
   const c = useThemeColors()
 
-  useEffect(() => {
+  const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'budgets'])
+  const reload = useCallback(() => {
+    setLoading(true)
     Promise.all([
-      apiGet<{ invoices: Invoice[] }>('/api/invoices'),
+      apiGet<{ invoices: Invoice[] }>(
+        invoiceListPath({ fy: chips.find((ch) => ch.dim === 'fy')?.value ?? currentFiscalYear() }),
+      ),
       apiGet<{ contracts: Contract[] }>('/api/contracts'),
+      apiGet<{ budgets: YearBudget[] }>('/api/budgets'),
     ])
-      .then(([inv, con]) => {
+      .then(([inv, con, bud]) => {
         setInvoices(inv.invoices)
         setContracts(con.contracts)
+        setYearBudgets(bud.budgets)
       })
       .catch((e) => toast.error('Failed to load reports', (e as Error).message))
       .finally(() => setLoading(false))
-  }, [toast])
+  }, [toast, chips])
+
+  useEffect(() => {
+    void reload()
+  }, [liveVersion, reload])
 
   const vendorOf = (inv: Invoice) => {
     const rel = inv.contracts
@@ -117,7 +138,13 @@ export default function ReportsPage() {
   }
 
   const fyOptions = useMemo(
-    () => Array.from(new Set(invoices.map((i) => fiscalOf(i.invoice_date)?.fy).filter(Boolean) as string[])).sort(),
+    () =>
+      Array.from(
+        new Set([
+          ...nearbyFiscalYears(new Date(), 2, 1),
+          ...(invoices.map((i) => fiscalOf(i.invoice_date)?.fy).filter(Boolean) as string[]),
+        ]),
+      ).sort(),
     [invoices],
   )
   const vendorOptions = useMemo(
@@ -132,6 +159,7 @@ export default function ReportsPage() {
 
   const fy = chips.find((ch) => ch.dim === 'fy')?.value ?? ALL
   const quarter = chips.find((ch) => ch.dim === 'quarter')?.value ?? ALL
+  const reportFy = fy !== ALL ? fy : currentFiscalYear()
   const vendors = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'vendor').map((ch) => ch.value)), [chips])
   const contractIds = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'contract').map((ch) => ch.value)), [chips])
   const costElements = useMemo(() => new Set(chips.filter((ch) => ch.dim === 'cost').map((ch) => ch.value)), [chips])
@@ -193,7 +221,11 @@ export default function ReportsPage() {
       .filter((i) => i.status === 'Approved' || i.status === 'Submitted')
       .reduce((s, i) => s + Number(i.amount ?? 0), 0)
     const pending = scoped.filter((i) => i.status === 'Pending').reduce((s, i) => s + Number(i.amount ?? 0), 0)
-    const budget = contracts.reduce((s, cn) => s + Number(cn.value ?? 0), 0)
+    const targetFy = fy !== ALL ? fy : currentFiscalYear()
+    const yearLines = yearBudgets.filter((b) => b.fy === targetFy)
+    const yearTotal = yearLines.reduce((s, b) => s + Number(b.amount ?? 0), 0)
+    const contractTotal = contracts.reduce((s, cn) => s + Number(cn.value ?? 0), 0)
+    const budget = yearTotal > 0 ? yearTotal : contractTotal
     return {
       total,
       count: scoped.length,
@@ -201,47 +233,41 @@ export default function ReportsPage() {
       pending,
       avg: scoped.length > 0 ? total / scoped.length : 0,
       utilization: budget > 0 ? (total / budget) * 100 : 0,
+      budget,
+      budgetLabel: yearTotal > 0 ? `${targetFy} budget` : 'contract value',
     }
-  }, [scoped, contracts])
+  }, [scoped, contracts, yearBudgets, fy])
 
   const quarterly = useMemo(() => {
-    const map = new Map<string, { invoices: number; value: number }>()
+    const map = new Map<FiscalQuarter, { invoices: number; value: number }>()
     for (const inv of scoped) {
       const fi = fiscalOf(inv.invoice_date)
-      if (!fi) continue
-      const key = `${fi.fy}|${fi.quarter}`
+      if (!fi || fi.fy !== reportFy) continue
+      const key = fi.quarter
       const bucket = map.get(key) ?? { invoices: 0, value: 0 }
       bucket.invoices += 1
       bucket.value += metricValue(inv)
       map.set(key, bucket)
     }
-    const rows = [...map.entries()]
-      .sort((a, b) => {
-        const [fyA, qA] = a[0].split('|')
-        const [fyB, qB] = b[0].split('|')
-        if (fyA !== fyB) return fyA.localeCompare(fyB)
-        return QUARTERS.indexOf(qA as FiscalQuarter) - QUARTERS.indexOf(qB as FiscalQuarter)
-      })
-      .map(([key, v]) => {
-        const [f, q] = key.split('|')
-        return { fy: f, quarter: q, label: `${f} ${q}`, ...v }
-      })
+    const rows = QUARTERS.map((q) => {
+      const v = map.get(q) ?? { invoices: 0, value: 0 }
+      return { fy: reportFy, quarter: q, label: q, ...v }
+    })
     return qOrder === 'top' ? [...rows].sort((a, b) => b.value - a.value) : rows
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scoped, metric, qOrder])
+  }, [scoped, metric, qOrder, reportFy])
 
   const monthly = useMemo(() => {
     const months = new Map<number, number>()
-    const effectiveFy = fy !== ALL ? fy : (fyOptions[fyOptions.length - 1] ?? '')
-    for (const inv of invoices) {
+    for (const inv of scoped) {
       const fi = fiscalOf(inv.invoice_date)
-      if (!fi || fi.fy !== effectiveFy) continue
+      if (!fi || fi.fy !== reportFy) continue
       const idx = fyMonthIndex(new Date(inv.invoice_date as string))
       months.set(idx, (months.get(idx) ?? 0) + metricValue(inv))
     }
-    return { fy: effectiveFy, data: FY_MONTHS.map((label, idx) => ({ label, value: months.get(idx) ?? 0 })) }
+    return { fy: reportFy, data: FY_MONTHS.map((label, idx) => ({ label, value: months.get(idx) ?? 0 })) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, fy, fyOptions, metric])
+  }, [scoped, reportFy, metric])
 
   const categoryMix = useMemo(() => {
     const mix = { OPEX: 0, CAPEX: 0, Uncategorized: 0 }
@@ -325,6 +351,99 @@ export default function ReportsPage() {
   const animatedOpexPct = useCountUp(categoryMix.total > 0 ? (categoryMix.OPEX / categoryMix.total) * 100 : 0, 900)
   const animatedUtil = useCountUp(kpi.utilization, 1200)
 
+  // ---- Foresight: project the rest of the fiscal year ----------------------
+  const forecast = useMemo(() => {
+    const monthsToDate = scoped
+      .filter((i) => fiscalOf(i.invoice_date)?.fy === reportFy)
+      .reduce((s, i) => s + Number(i.amount ?? 0), 0)
+    const { elapsed, remaining } = elapsedInFiscalYear(reportFy)
+    const rate = elapsed > 0 ? monthsToDate / elapsed : 0
+    const projected = rate * 12
+    const budgetForFy = yearBudgets.filter((b) => b.fy === reportFy).reduce((s, b) => s + Number(b.amount ?? 0), 0)
+    const projectedRemaining = rate * remaining
+    const variance = budgetForFy > 0 ? projected - budgetForFy : 0
+    return { targetFy: reportFy, monthsToDate, elapsed, rate, projected, budgetForFy, remaining, projectedRemaining, variance }
+  }, [scoped, yearBudgets, reportFy])
+
+  // ---- Budget vs actual by cost element ------------------------------------
+  const budgetVsActual = useMemo(() => {
+    const targetFy = fy !== ALL ? fy : currentFiscalYear()
+    const lines = yearBudgets.filter((b) => b.fy === targetFy)
+    const actualByCe = new Map<string, number>()
+    for (const inv of scoped) {
+      if (fiscalOf(inv.invoice_date)?.fy !== targetFy) continue
+      const ce = inv.cost_element ?? 'Uncoded'
+      actualByCe.set(ce, (actualByCe.get(ce) ?? 0) + Number(inv.amount ?? 0))
+    }
+    const rows = lines.map((l) => {
+      const actual = actualByCe.get(l.cost_element) ?? 0
+      const variance = l.amount - actual
+      return { code: l.cost_element, budget: Number(l.amount), actual, variance, utilization: l.amount > 0 ? (actual / l.amount) * 100 : 0 }
+    })
+    const uncoded = actualByCe.get('Uncoded') ?? 0
+    if (uncoded > 0) rows.push({ code: 'Uncoded', budget: 0, actual: uncoded, variance: -uncoded, utilization: 0 })
+    return rows.sort((a, b) => b.actual - a.actual)
+  }, [scoped, yearBudgets, fy])
+
+  // ---- Vendor performance scorecard ---------------------------------------
+  const vendorScore = useMemo(() => {
+    const map = new Map<string, { count: number; total: number; approved: number; pending: number; rejected: number }>()
+    for (const inv of scoped) {
+      const v = vendorOf(inv)
+      const b = map.get(v) ?? { count: 0, total: 0, approved: 0, pending: 0, rejected: 0 }
+      b.count += 1
+      b.total += Number(inv.amount ?? 0)
+      if (inv.status === 'Approved' || inv.status === 'Submitted') b.approved += 1
+      else if (inv.status === 'Pending') b.pending += 1
+      else if (inv.status === 'Rejected') b.rejected += 1
+      map.set(v, b)
+    }
+    return [...map.entries()]
+      .map(([name, v]) => ({ name, ...v, approvalRate: v.count > 0 ? (v.approved / v.count) * 100 : 0 }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6)
+  }, [scoped, metric])
+
+  const aging = useMemo(() => {
+    const buckets = [
+      { key: '0-30', label: '0-30 days', min: 0, max: 30 },
+      { key: '31-60', label: '31-60 days', min: 31, max: 60 },
+      { key: '61-90', label: '61-90 days', min: 61, max: 90 },
+      { key: '90+', label: '90+ days', min: 91, max: 100000 },
+    ]
+    const open = scoped.filter((i) => i.status === 'Pending' || i.status === 'Submitted')
+    const now = Date.now()
+    return buckets.map((b) => {
+      const rows = open.filter((i) => {
+        if (!i.invoice_date) return false
+        const days = Math.floor((now - new Date(i.invoice_date).getTime()) / 86400000)
+        return days >= b.min && days <= b.max
+      })
+      return {
+        ...b,
+        count: rows.length,
+        amount: rows.reduce((s, i) => s + Number(i.amount ?? 0), 0),
+      }
+    })
+  }, [scoped])
+
+  const yoy = useMemo(() => {
+    const prevFy = shiftFiscalYear(reportFy, -1)
+    const sumFy = (label: string) =>
+      invoices
+        .filter((i) => fiscalOf(i.invoice_date)?.fy === label)
+        .reduce((s, i) => s + Number(i.amount ?? 0), 0)
+    const current = sumFy(reportFy)
+    const previous = sumFy(prevFy)
+    const delta = previous > 0 ? ((current - previous) / previous) * 100 : null
+    return { prevFy, current, previous, delta }
+  }, [invoices, reportFy])
+
+  const exportForecast = () =>
+    downloadCSV('report-forecast.csv', [{ fiscal_year: forecast.targetFy, ytd_spend: Math.round(forecast.monthsToDate), projected_year: Math.round(forecast.projected), budget: Math.round(forecast.budgetForFy), variance: Math.round(forecast.variance) }])
+
+  const exportBudgetVsActual = () =>
+    downloadCSV('report-budget-vs-actual.csv', budgetVsActual.map((r) => ({ cost_element: r.code, budget: Math.round(r.budget), actual: Math.round(r.actual), variance: Math.round(r.variance), utilization_pct: r.utilization.toFixed(1) })))
   const exportQuarterly = () =>
     downloadCSV(
       'report-quarterly.csv',
@@ -365,17 +484,30 @@ export default function ReportsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Reports & Analysis"
-        description="Fiscal-year intelligence: quarterly trends, OPEX/CAPEX mix and budget burn-down."
+        description={`${reportFy} · ${fiscalShortRange(reportFy)}. Spend, budget burn, AP aging and year-end outlook.`}
         actions={
           <div className="flex gap-2.5">
-            <button className="btn btn-ghost" onClick={exportQuarterly}>
+            <span className="badge badge-info self-center">{reportFy} auto</span>
+            <button className="btn btn-ghost btn-sm" onClick={exportQuarterly}>
               <Download size={15} /> Quarterly CSV
             </button>
-            <button className="btn btn-ghost" onClick={exportBudget}>
+            <button className="btn btn-ghost btn-sm" onClick={exportBudget}>
               <Download size={15} /> Budget CSV
             </button>
           </div>
         }
+      />
+
+      <Tabs
+        tabs={[
+          { id: 'overview', label: 'Overview' },
+          { id: 'spend', label: 'Spend' },
+          { id: 'budget', label: 'Budget' },
+          { id: 'aging', label: 'AP aging' },
+          { id: 'outlook', label: 'Outlook' },
+        ]}
+        active={view}
+        onChange={(id) => setView(id as ReportView)}
       />
 
       {/* Filter command bar + active chips + analysis lens */}
@@ -398,7 +530,7 @@ export default function ReportsPage() {
               </span>
               <button
                 className="ml-auto text-[0.7rem] font-semibold text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline"
-                onClick={() => setChips([])}
+                onClick={() => setChips([{ dim: 'fy', value: currentFiscalYear() }])}
               >
                 Clear all
               </button>
@@ -456,9 +588,9 @@ export default function ReportsPage() {
             ]}
           />
           <button
-            className="btn btn-ghost !px-3"
+            className="btn btn-ghost btn-sm"
             onClick={() => {
-              setChips([])
+              setChips([{ dim: 'fy', value: currentFiscalYear() }])
               setMetric('spend')
               setQOrder('chrono')
             }}
@@ -469,6 +601,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Hero row: spend pulse + OPEX/CAPEX mix */}
+      {view === 'overview' && (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="report-card glass p-6 lg:col-span-2 rise-in" style={{ animationDelay: '90ms' }}>
           <div className="flex items-center justify-between">
@@ -564,9 +697,178 @@ export default function ReportsPage() {
           </p>
         </div>
       </div>
+      )}
+
+      {/* Foresight: cash-flow projection */}
+      {view === 'outlook' && (
+      <>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="report-card glass p-6 lg:col-span-2 rise-in" style={{ animationDelay: '250ms' }}>
+          <div className="mb-4 flex items-center justify-between">
+            <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+              <Sparkles size={13} className="text-[var(--accent)]" /> Foresight · {forecast.targetFy} projection
+            </span>
+            <button className="btn btn-ghost btn-sm" onClick={exportForecast}><Download size={14} /> Forecast CSV</button>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div>
+              <div className="text-[0.6rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">YTD spend</div>
+              <div className="mt-1 text-xl font-black">Rs {formatMoney(forecast.monthsToDate)}</div>
+            </div>
+            <div>
+              <div className="text-[0.6rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Run-rate / mo</div>
+              <div className="mt-1 text-xl font-black">Rs {formatMoney(forecast.rate)}</div>
+            </div>
+            <div>
+              <div className="text-[0.6rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Projected year</div>
+              <div className="mt-1 text-xl font-black text-[var(--accent)]">Rs {formatMoney(forecast.projected)}</div>
+            </div>
+            <div>
+              <div className="text-[0.6rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Budget</div>
+              <div className="mt-1 text-xl font-black">Rs {formatMoney(forecast.budgetForFy)}</div>
+            </div>
+          </div>
+          <div className="mt-5 h-3 w-full overflow-hidden rounded-full bg-[var(--surface-hover)]">
+            <div
+              className="report-fill h-full rounded-full"
+              style={{
+                width: `${forecast.budgetForFy > 0 ? Math.min(100, (forecast.projected / forecast.budgetForFy) * 100) : 0}%`,
+                background: forecast.variance > 0 ? 'var(--danger)' : 'var(--gradient-primary)',
+              }}
+            />
+          </div>
+          <p className="mt-3 text-sm">
+            {forecast.budgetForFy > 0 ? (
+              forecast.variance > 0 ? (
+                <span className="font-semibold text-[var(--danger)]">Projected to exceed budget by Rs {formatMoney(forecast.variance)} at current run-rate.</span>
+              ) : (
+                <span className="font-semibold text-[var(--accent-3)]">On track — Rs {formatMoney(-forecast.variance)} of headroom expected at year end.</span>
+              )
+            ) : (
+              <span className="text-[var(--text-dim)]">Set a {forecast.targetFy} budget to enable variance forecasting.</span>
+            )}
+          </p>
+        </div>
+
+        <div className="report-card glass flex flex-col p-6 rise-in" style={{ animationDelay: '300ms' }}>
+          <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            <CalendarRange size={13} className="text-[var(--accent)]" /> Remaining window
+          </span>
+          <div className="mt-3 text-4xl font-black tracking-tight">{forecast.remaining}<span className="ml-1 text-base font-semibold text-[var(--text-muted)]">mo</span></div>
+          <div className="mt-2 text-xs text-[var(--text-dim)]">{forecast.elapsed} of 12 months elapsed</div>
+          <div className="mt-4 rounded-xl border border-[var(--border)] p-3 text-sm">
+            Expected next {forecast.remaining} months: <b className="block text-lg text-[var(--accent)]">Rs {formatMoney(forecast.projectedRemaining)}</b>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="report-card glass p-5">
+          <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">{yoy.prevFy} spend</div>
+          <div className="mt-1 text-2xl font-black">Rs {formatMoney(yoy.previous)}</div>
+        </div>
+        <div className="report-card glass p-5">
+          <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">{reportFy} spend</div>
+          <div className="mt-1 text-2xl font-black text-[var(--accent)]">Rs {formatMoney(yoy.current)}</div>
+        </div>
+        <div className="report-card glass p-5">
+          <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Year on year</div>
+          <div className={`mt-1 text-2xl font-black ${yoy.delta != null && yoy.delta >= 0 ? 'text-[var(--danger)]' : 'text-[var(--accent-3)]'}`}>
+            {yoy.delta == null ? 'n/a' : `${yoy.delta >= 0 ? '+' : ''}${yoy.delta.toFixed(0)}%`}
+          </div>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">vs {yoy.prevFy} full-year spend</p>
+        </div>
+      </div>
+      </>
+      )}
+
+      {/* Budget vs actual by cost element */}
+      {view === 'budget' && (
+      <div className="rise-in" style={{ animationDelay: '340ms' }}>
+        <div className="flex items-center justify-between">
+          <div className="section-title" style={{ marginBottom: 0 }}>Budget vs actual</div>
+          <button className="btn btn-ghost btn-sm" onClick={exportBudgetVsActual}><Download size={14} /> CSV</button>
+        </div>
+        {budgetVsActual.length > 0 ? (
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {budgetVsActual.map((r, i) => {
+              const over = r.budget > 0 && r.actual > r.budget
+              return (
+                <div key={r.code} className="report-card glass p-4" style={{ animationDelay: `${i * 50}ms` }}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-sm font-bold">{r.code}</span>
+                    {r.budget === 0 ? (
+                      <span className="badge badge-warn">No budget</span>
+                    ) : over ? (
+                      <span className="badge badge-err">Over</span>
+                    ) : r.utilization > 90 ? (
+                      <span className="badge badge-warn">Near</span>
+                    ) : (
+                      <span className="badge badge-ok">Healthy</span>
+                    )}
+                  </div>
+                  <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--surface-hover)]">
+                    <div
+                      className="report-fill h-full rounded-full"
+                      style={{ width: `${Math.min(100, r.utilization)}%`, background: over ? 'var(--danger)' : r.utilization > 90 ? 'var(--warn)' : 'var(--gradient-primary)' }}
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs">
+                    <span><b>Rs {formatMoney(r.actual)}</b> <span className="text-[var(--text-dim)]">/ {r.budget > 0 ? `Rs ${formatMoney(r.budget)}` : '—'}</span></span>
+                    <span className={r.variance < 0 ? 'font-bold text-[var(--danger)]' : 'font-semibold text-[var(--accent-3)]'}>
+                      {r.variance < 0 ? '-' : ''}Rs {formatMoney(Math.abs(r.variance))} {r.variance < 0 ? 'over' : 'left'}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <EmptyState title="No budget lines" description="Add a yearly budget to compare against actuals." />
+        )}
+      </div>
+      )}
+
+      {/* Vendor performance scorecard */}
+      {view === 'spend' && (
+      <div className="rise-in" style={{ animationDelay: '380ms' }}>
+        <div className="section-title">Vendor performance</div>
+        {vendorScore.length > 0 ? (
+          <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)]">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Vendor</th>
+                  <th className="text-right">Invoices</th>
+                  <th className="text-right">Spend</th>
+                  <th className="text-right">Approved</th>
+                  <th className="text-right">Pending</th>
+                  <th className="text-right">Rejected</th>
+                  <th className="text-right">Approval rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vendorScore.map((v) => (
+                  <tr key={v.name}>
+                    <td className="font-semibold">{v.name}</td>
+                    <td className="text-right">{v.count}</td>
+                    <td className="text-right">Rs {formatMoney(v.total)}</td>
+                    <td className="text-right text-[var(--accent-3)]">{v.approved}</td>
+                    <td className="text-right text-[var(--warn)]">{v.pending}</td>
+                    <td className="text-right text-[var(--danger)]">{v.rejected}</td>
+                    <td className="text-right font-bold">{v.approvalRate.toFixed(0)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="No vendor data" description="Adjust the filters to see vendor performance." />
+        )}
+      </div>
+      )}
 
       {/* Auto insights */}
-      {insights.length > 0 && (
+      {view === 'overview' && insights.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {insights.map((ins, i) => (
             <div
@@ -587,6 +889,7 @@ export default function ReportsPage() {
       )}
 
       {/* Quarterly pulse + budget gauge */}
+      {view === 'overview' && (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="report-card glass p-6 lg:col-span-2 rise-in" style={{ animationDelay: '300ms' }}>
           <div className="mb-5 flex items-center justify-between">
@@ -671,12 +974,14 @@ export default function ReportsPage() {
             </div>
           </div>
           <div className="mt-3 text-center text-xs text-[var(--text-dim)]">
-            Rs {formatMoney(kpi.total)} drawn of Rs {formatMoney(contracts.reduce((s, cn) => s + Number(cn.value ?? 0), 0))} contract value
+            Rs {formatMoney(kpi.total)} drawn of Rs {formatMoney(kpi.budget)} {kpi.budgetLabel}
           </div>
         </div>
       </div>
+      )}
 
       {/* Monthly trend + vendor ranking */}
+      {view === 'spend' && (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="report-card glass p-6 lg:col-span-2 rise-in" style={{ animationDelay: '420ms' }}>
           <div className="mb-4 flex items-center justify-between">
@@ -754,8 +1059,10 @@ export default function ReportsPage() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Budget burn-down cards */}
+      {view === 'budget' && (
       <div className="rise-in" style={{ animationDelay: '540ms' }}>
         <div className="section-title">Budget burn-down</div>
         {budgetRows.length > 0 ? (
@@ -804,12 +1111,14 @@ export default function ReportsPage() {
           <EmptyState title="No contracts" description="Budget burn-down appears once contracts exist." />
         )}
       </div>
+      )}
 
       {/* Quarterly breakdown table */}
+      {view === 'overview' && (
       <div className="rise-in" style={{ animationDelay: '600ms' }}>
       <GlassCard className="overflow-hidden">
         <div className="px-5 pt-5">
-          <div className="section-title !mb-0">Quarterly breakdown</div>
+          <div className="section-title" style={{ marginBottom: 0 }}>{reportFy} quarterly breakdown</div>
         </div>
         <div className="mt-4 overflow-x-auto">
           <table className="data-table">
@@ -869,6 +1178,28 @@ export default function ReportsPage() {
         )}
       </GlassCard>
       </div>
+      )}
+
+      {view === 'aging' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {aging.map((b) => (
+              <div key={b.key} className="report-card glass p-5">
+                <div className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  <Clock size={13} className="text-[var(--accent)]" /> {b.label}
+                </div>
+                <div className="mt-2 text-2xl font-black tabular-nums">Rs {formatMoney(b.amount)}</div>
+                <div className="mt-1 text-xs text-[var(--text-dim)]">{b.count} open invoice{b.count === 1 ? '' : 's'}</div>
+              </div>
+            ))}
+          </div>
+          <GlassCard className="p-5">
+            <p className="text-sm text-[var(--text-dim)]">
+              Aging uses invoice date for Pending and Submitted rows in {reportFy}. Approved and rejected invoices are excluded.
+            </p>
+          </GlassCard>
+        </div>
+      )}
     </div>
   )
 }

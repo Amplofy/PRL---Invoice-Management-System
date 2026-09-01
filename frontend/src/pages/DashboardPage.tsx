@@ -11,7 +11,6 @@ import {
   FolderOpen,
   Activity,
   PieChart,
-  BarChart3,
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react'
@@ -19,7 +18,6 @@ import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  BarElement,
   PointElement,
   LineElement,
   ArcElement,
@@ -27,10 +25,12 @@ import {
   Legend,
   Filler,
 } from 'chart.js'
-import { Bar, Line, Doughnut } from 'react-chartjs-2'
+import { Line, Doughnut } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
 import { formatMoney, formatDate, timeAgo } from '../lib/format'
 import { useThemeColors } from '../lib/themeColors'
+import { currentFiscalYear, elapsedFyMonths, fiscalBounds, fiscalOf, fiscalShortRange, FY_MONTHS } from '../lib/fiscal'
+import { invoiceListPath } from '../lib/invoiceWindow'
 import KpiCard from '../components/ui/KpiCard'
 import GlassCard from '../components/ui/GlassCard'
 import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
@@ -41,7 +41,6 @@ import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
 ChartJS.register(
   CategoryScale,
   LinearScale,
-  BarElement,
   PointElement,
   LineElement,
   ArcElement,
@@ -100,8 +99,7 @@ function DashboardSkeleton() {
         <div className="skeleton h-72" />
       </div>
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <div className="skeleton h-64 lg:col-span-2" />
-        <div className="skeleton h-64" />
+        <div className="skeleton h-48 lg:col-span-3" />
       </div>
     </div>
   )
@@ -155,7 +153,7 @@ export default function DashboardPage() {
     try {
       const d = await apiGet<DashboardData>('/api/reports/dashboard')
       setData(d)
-      const inv = await apiGet<{ invoices: Array<Record<string, unknown>> }>('/api/invoices')
+      const inv = await apiGet<{ invoices: Array<Record<string, unknown>> }>(invoiceListPath({ fy: currentFiscalYear() }))
       setAllInvoices(inv.invoices)
     } catch (e) {
       setError((e as Error).message || 'Something went wrong while loading the dashboard.')
@@ -204,6 +202,57 @@ export default function DashboardPage() {
     }
   }, [data])
 
+  const fyNow = currentFiscalYear()
+  const fyElapsed = elapsedFyMonths()
+
+  const fyInvoices = useMemo(
+    () => allInvoices.filter((i) => fiscalOf(String(i.invoice_date ?? ''))?.fy === fyNow),
+    [allInvoices, fyNow],
+  )
+
+  const fyUtil = useMemo(() => {
+    const usedByNo: Record<string, { used: number; count: number }> = {}
+    for (const inv of fyInvoices) {
+      const rel = inv.contracts as { contract_no?: string } | null
+      const no = rel?.contract_no
+      if (!no) continue
+      usedByNo[no] ??= { used: 0, count: 0 }
+      usedByNo[no].count += 1
+      const st = String(inv.status ?? '')
+      if (st === 'Approved' || st === 'Accepted') {
+        usedByNo[no].used += Number(inv.amount ?? 0)
+      }
+    }
+    return (data?.utilization ?? [])
+      .map((u) => {
+        const hit = usedByNo[u.contractNo]
+        if (!hit) return null
+        const used = hit.used
+        const pct = u.value > 0 ? Math.min(100, (used / u.value) * 100) : 0
+        return { ...u, used, remaining: Math.max(0, u.value - used), pct, invoiceCount: hit.count }
+      })
+      .filter((u): u is NonNullable<typeof u> => Boolean(u))
+      .sort((a, b) => b.pct - a.pct)
+  }, [data, fyInvoices])
+
+  const fyVolume = useMemo(() => {
+    const bounds = fiscalBounds(fyNow)
+    if (!bounds) return []
+    return FY_MONTHS.slice(0, fyElapsed).map((label, idx) => {
+      const d = new Date(bounds.start.getFullYear(), bounds.start.getMonth() + idx, 1)
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      let count = 0
+      let total = 0
+      for (const inv of fyInvoices) {
+        if (String(inv.invoice_date ?? '').startsWith(key)) {
+          count += 1
+          total += Number(inv.amount ?? 0)
+        }
+      }
+      return { label, key, count, total, isCurrent: idx === fyElapsed - 1 }
+    })
+  }, [fyInvoices, fyNow, fyElapsed])
+
   const onTrendClick = (_e: unknown, els: Array<{ index?: number }>) => {
     if (!els.length || !data) return
     const idx = els[0].index ?? 0
@@ -233,7 +282,10 @@ export default function DashboardPage() {
 
   const hasTrendData = trendData.totals.length > 0 && trendData.totals.some((v) => v > 0)
   const statusTotal = data.statusBreakdown.approved + data.statusBreakdown.pending + data.statusBreakdown.rejected
-  const hasVolumeData = trendData.counts.slice(-6).some((v) => v > 0)
+  const hasFyUtil = fyUtil.length > 0
+  const hasFyVol = fyVolume.some((m) => m.count > 0)
+  const volMax = Math.max(0, ...fyVolume.map((m) => m.count))
+  const ytdCount = fyInvoices.length
 
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
@@ -413,92 +465,112 @@ export default function DashboardPage() {
         </Reveal>
       </div>
 
-      {/* Utilization + volume bento */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <Reveal className="lg:col-span-2" delay={80}>
-          <GlassCard className="h-full p-5 md:p-6" hoverable>
-            <div className="mb-4 flex items-center justify-between">
-              <div className="section-title !mb-0">Contract Utilization</div>
+      {/* Fiscal operations HUD */}
+      <Reveal delay={80}>
+        <section className="ct-fy glass">
+          <header className="ct-fy-head">
+            <div>
+              <h2 className="ct-fy-title">This fiscal year</h2>
+              <p className="ct-fy-sub">{fyNow} · {fiscalShortRange(fyNow)} · click a bar or contract to drill in</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <Link to="/contracts" className="flex items-center gap-1 text-xs font-semibold text-[var(--accent)]">
-                View all <ArrowUpRight size={14} />
+                Contracts <ArrowUpRight size={14} />
               </Link>
             </div>
-            <div className="flex min-h-[300px] flex-col justify-center space-y-4">
-              {data?.utilization.slice(0, 6).map((u) => (
-                <div key={u.contractNo} className="flex items-center gap-3">
-                  <div className="w-24 truncate text-sm font-medium md:w-40">{u.contractNo}</div>
-                  <div className={`util-bar flex-1 ${u.pct >= 90 ? 'err' : u.pct >= 70 ? 'warn' : 'ok'}`}>
-                    <span style={{ width: `${Math.min(100, u.pct)}%` }} />
+          </header>
+
+          {hasFyUtil || hasFyVol ? (
+            <div className={`ct-fy-grid${hasFyUtil && hasFyVol ? ' is-split' : ''}`}>
+              {hasFyUtil && (
+                <div className="ct-pane">
+                  <div className="ct-pane-head">
+                    <div className="ct-pane-title">Contract utilization</div>
+                    <div className="ct-pane-meta">{fyUtil.length} drawing {fyNow}</div>
                   </div>
-                  <div className="hidden w-36 shrink-0 text-right text-xs text-[var(--text-dim)] md:block">
-                    {formatMoney(u.used)} / {formatMoney(u.value)}
-                  </div>
-                  <div className="w-14 shrink-0 text-right text-xs font-bold tabular-nums">
-                    {formatMoney(u.pct, 0)}%
+                  <div className="ct-util-list">
+                    {fyUtil.map((u, i) => {
+                      const tone = u.pct >= 90 ? 'err' : u.pct >= 70 ? 'warn' : 'ok'
+                      return (
+                        <button
+                          key={u.contractNo}
+                          type="button"
+                          className="ct-util-row"
+                          style={{ ['--i' as string]: String(i) }}
+                          onClick={() => {
+                            const rows = fyInvoices
+                              .filter((i) => {
+                                const rel = i.contracts as { contract_no?: string } | null
+                                return rel?.contract_no === u.contractNo
+                              })
+                              .map(toDrillRow)
+                            setDrill({
+                              title: `${u.contractNo} · ${fyNow}`,
+                              subtitle: `${rows.length} invoices this fiscal year · Rs ${formatMoney(u.used)} used`,
+                              rows,
+                            })
+                          }}
+                        >
+                          <span className="ct-util-id">{u.contractNo}</span>
+                          <span className={`ct-track ${tone}`}>
+                            <span className="ct-fill" style={{ width: `${Math.min(100, u.pct)}%` }} />
+                          </span>
+                          <span className="ct-util-pct">{Math.round(u.pct)}%</span>
+                          <span className="ct-util-amt">Rs {formatMoney(u.used)} / {formatMoney(u.value)}</span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
-              ))}
-              {(data?.utilization.length ?? 0) === 0 && (
-                <EmptyState
-                  icon={<FolderOpen size={28} />}
-                  title="No contracts yet"
-                  description="Import or create contracts to see utilization."
-                />
+              )}
+              {hasFyVol && (
+                <div className="ct-pane">
+                  <div className="ct-pane-head">
+                    <div className="ct-pane-title">Monthly volume</div>
+                    <div className="ct-pane-meta">{ytdCount} YTD · {fyElapsed} mo</div>
+                  </div>
+                  <div className="ct-eq">
+                    {fyVolume.map((m, i) => {
+                      return (
+                        <button
+                          key={m.key}
+                          type="button"
+                          className={`ct-eq-col${m.isCurrent ? ' is-now' : ''}`}
+                          style={{ ['--h' as string]: String((m.count <= 0 ? 0.06 : Math.max(0.14, m.count / volMax)).toFixed(3)), ['--i' as string]: String(i) }}
+                          onClick={() => {
+                            const rows = allInvoices
+                              .filter((i) => String(i.invoice_date ?? '').startsWith(m.key))
+                              .map(toDrillRow)
+                            setDrill({
+                              title: `Invoices · ${m.label} ${fyNow}`,
+                              subtitle: `${rows.length} invoices · Rs ${formatMoney(m.total)}`,
+                              rows,
+                            })
+                          }}
+                        >
+                          <span className="ct-eq-val">{m.count || ''}</span>
+                          <span className="ct-eq-bar"><span className="ct-eq-fill" /></span>
+                          <span className="ct-eq-lab">{m.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               )}
             </div>
-          </GlassCard>
-        </Reveal>
-
-        <Reveal delay={140}>
-          <GlassCard className="h-full p-5 md:p-6" hoverable>
-            <div className="mb-3 flex items-center justify-between">
-              <div className="section-title !mb-0">Monthly Volume</div>
-              <Activity size={15} className="text-[var(--text-muted)]" />
+          ) : (
+            <div className="ct-fy-empty">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] text-[var(--text-muted)]">
+                <Activity size={18} />
+              </span>
+              <div className="text-sm font-bold">No {fyNow} activity yet</div>
+              <div className="max-w-sm text-xs leading-relaxed text-[var(--text-muted)]">
+                Invoices posted this fiscal year will populate utilization and monthly volume here.
+              </div>
             </div>
-            <div className="h-[300px]">
-              {hasVolumeData ? (
-                <Bar
-                  data={{
-                    labels: trendData.labels.slice(-6),
-                    datasets: [
-                      {
-                        label: 'Invoices',
-                        data: trendData.counts.slice(-6),
-                        backgroundColor: (context: { chart: ChartJS }) => {
-                          const { chartArea, ctx } = context.chart
-                          if (!chartArea) return withAlpha(c.accent2, 0.7)
-                          const g = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top)
-                          g.addColorStop(0, withAlpha(c.accent2, 0.25))
-                          g.addColorStop(1, withAlpha(c.accent2, 0.85))
-                          return g
-                        },
-                        borderRadius: 8,
-                        borderSkipped: false,
-                        maxBarThickness: 34,
-                      },
-                    ],
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                      x: { grid: { display: false }, ticks: { color: c.ticks } },
-                      y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
-                    },
-                  }}
-                />
-              ) : (
-                <ChartEmpty
-                  icon={BarChart3}
-                  title="No monthly volume yet"
-                  hint="The number of invoices raised each month will chart here."
-                />
-              )}
-            </div>
-          </GlassCard>
-        </Reveal>
-      </div>
+          )}
+        </section>
+      </Reveal>
 
       {/* Recent invoices */}
       <Reveal delay={100}>

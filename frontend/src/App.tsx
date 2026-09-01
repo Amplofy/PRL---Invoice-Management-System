@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom
 import { ThemeProvider } from './theme'
 import { ToastProvider } from './components/ui/Toast'
 import { AuthProvider } from './lib/auth'
+import { FyLockProvider } from './lib/FyLockProvider'
 import BootScreen from './components/ui/BootScreen'
 import AppShell from './components/AppShell'
 import AuthGuard from './components/AuthGuard'
@@ -64,8 +65,9 @@ export default function App() {
     <ThemeProvider>
       <ToastProvider>
         <AuthProvider>
-          {booting && <BootScreen onDone={() => setBooting(false)} />}
-          <BrowserRouter>
+          <FyLockProvider>
+            {booting && <BootScreen onDone={() => setBooting(false)} />}
+            <BrowserRouter>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/" element={<ProtectedLayout />}>
@@ -93,6 +95,7 @@ export default function App() {
               <Route path="*" element={<Navigate to="/control-tower" replace />} />
             </Routes>
           </BrowserRouter>
+          </FyLockProvider>
         </AuthProvider>
       </ToastProvider>
     </ThemeProvider>

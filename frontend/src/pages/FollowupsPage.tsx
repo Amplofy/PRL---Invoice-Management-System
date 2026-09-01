@@ -17,6 +17,8 @@ import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
+import { emitCrossModule } from '../lib/store'
+import { useFyLock } from '../lib/FyLockProvider'
 
 interface PendingFollowup {
   invoiceId: string
@@ -75,6 +77,7 @@ export default function FollowupsPage() {
     FOLLOWUP_DEFAULT_COLUMNS,
   )
   const toast = useToast()
+  const { guardWrite } = useFyLock()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -192,6 +195,8 @@ export default function FollowupsPage() {
   const vendorCount = useMemo(() => new Set(filtered.map((p) => p.vendorId)).size, [filtered])
 
   const send = async () => {
+    const rows = pending.filter((p) => selected.has(p.invoiceId))
+    if (!(await guardWrite(...rows.map((p) => p.invoiceDate)))) return
     setSending(true)
     try {
       const d = await apiPost<{ sent: string[]; failed: Array<{ invoiceId: string; reason: string }> }>(
@@ -201,6 +206,7 @@ export default function FollowupsPage() {
       setResult(d)
       if (d.failed.length) toast.warning('Some emails failed', `${d.failed.length} failed`)
       else toast.success('Follow-up emails sent', `${d.sent.length} sent`)
+      emitCrossModule('followup', 'bulk')
     } catch (e) {
       toast.error('Send failed', (e as Error).message)
     } finally {

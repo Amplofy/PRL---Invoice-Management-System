@@ -2,13 +2,19 @@ import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { audit } from '../services/auditService.js'
+import { LOCKED_FY_MESSAGE, fiscalBoundsIso, writeBlocked } from '../services/fyLock.js'
+import type { AuthUser } from '../types/index.js'
 
 export const invoicesRouter = Router()
+
+function actorKey(req: { user?: AuthUser }): string {
+  return req.user?.id || req.user?.email || 'anon'
+}
 
 invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
   try {
     const supabase = getSupabase()
-    const { status, contract, search } = req.query as Record<string, string | undefined>
+    const { status, contract, search, fy, limit } = req.query as Record<string, string | undefined>
     let query = supabase
       .from('invoices')
       .select('*, contracts(contract_no, service, vendors(name))')
@@ -20,6 +26,12 @@ invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
       const like = `%${search}%`
       query = query.or(`invoice_no.ilike.${like},serial_no.ilike.${like}`)
     }
+    if (fy && fy !== 'all') {
+      const bounds = fiscalBoundsIso(fy)
+      if (bounds) query = query.gte('invoice_date', bounds.start).lte('invoice_date', bounds.end)
+    }
+    const cap = Math.min(Math.max(Number(limit) || 0, 0), 500)
+    if (cap) query = query.limit(cap)
 
     const { data, error } = await query
     if (error) {
@@ -27,7 +39,8 @@ invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
       res.status(500).json({ error: `Failed to load invoices: ${error.message}` })
       return
     }
-    res.json({ invoices: data ?? [] })
+    const invoices = data ?? []
+    res.json({ invoices, fy: fy ?? 'all', total: invoices.length, hasMore: Boolean(cap) && invoices.length === cap })
   } catch (err) {
     next(err)
   }
@@ -56,6 +69,11 @@ invoicesRouter.post('/invoices', authRequired, async (req, res, next) => {
     const supabase = getSupabase()
     const body = req.body ?? {}
     const user = (req as { user?: { id?: string; email?: string } }).user
+    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), body.invoice_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('invoices')
@@ -98,6 +116,21 @@ invoicesRouter.put('/invoices/:id', authRequired, async (req, res, next) => {
     const supabase = getSupabase()
     const body = req.body ?? {}
     const user = (req as { user?: { email?: string } }).user
+    const { data: existing } = await supabase
+      .from('invoices')
+      .select('invoice_date')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    if (!existing) {
+      res.status(400).json({ error: 'Invoice not found' })
+      return
+    }
+    const key = actorKey(req as { user?: AuthUser })
+    const locked = writeBlocked(key, existing.invoice_date) || writeBlocked(key, body.invoice_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { row_version, ...updates } = body
     const { data, error } = await supabase
       .from('invoices')
@@ -123,6 +156,20 @@ invoicesRouter.put('/invoices/:id', authRequired, async (req, res, next) => {
 invoicesRouter.delete('/invoices/:id', authRequired, async (req, res, next) => {
   try {
     const supabase = getSupabase()
+    const { data: existing } = await supabase
+      .from('invoices')
+      .select('invoice_date')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    if (!existing) {
+      res.status(400).json({ error: 'Invoice not found' })
+      return
+    }
+    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), existing.invoice_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { data: pos } = await supabase.from('po_versions').select('id').eq('invoice_id', req.params.id)
     if ((pos ?? []).length) {
       res.status(400).json({ error: 'Cannot delete invoice with generated payment orders' })
@@ -178,12 +225,17 @@ invoicesRouter.post('/invoices/bulk-approve', authRequired, async (req, res, nex
     for (const id of ids) {
       const { data: inv } = await supabase
         .from('invoices')
-        .select('id, invoice_no, status')
+        .select('id, invoice_no, status, invoice_date')
         .eq('id', id)
         .maybeSingle()
       if (!inv) {
         failed.push(id)
         continue
+      }
+      const locked = writeBlocked(actorKey(req as { user?: AuthUser }), inv.invoice_date)
+      if (locked) {
+        res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+        return
       }
       const { error } = await supabase
         .from('invoices')
@@ -228,10 +280,15 @@ invoicesRouter.post('/invoices/bulk-reject', authRequired, async (req, res, next
     for (const id of ids) {
       const { data: inv } = await supabase
         .from('invoices')
-        .select('id, invoice_no')
+        .select('id, invoice_no, invoice_date')
         .eq('id', id)
         .maybeSingle()
       if (!inv) continue
+      const locked = writeBlocked(actorKey(req as { user?: AuthUser }), inv.invoice_date)
+      if (locked) {
+        res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+        return
+      }
       const { error } = await supabase
         .from('invoices')
         .update({
@@ -257,6 +314,16 @@ invoicesRouter.post('/invoices/:id/approve', authRequired, async (req, res, next
     const supabase = getSupabase()
     const user = (req as { user?: { email?: string } }).user
     const { remarks, approvedAmount } = req.body ?? {}
+    const { data: existing } = await supabase
+      .from('invoices')
+      .select('invoice_date')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), existing?.invoice_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { data, error } = await supabase
       .from('invoices')
       .update({
@@ -295,6 +362,16 @@ invoicesRouter.post('/invoices/:id/reject', authRequired, async (req, res, next)
       res.status(400).json({ error: 'Rejection reason is required' })
       return
     }
+    const { data: existing } = await supabase
+      .from('invoices')
+      .select('invoice_date')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), existing?.invoice_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { data, error } = await supabase
       .from('invoices')
       .update({
@@ -329,6 +406,11 @@ invoicesRouter.post('/invoices/:id/po', authRequired, async (req, res, next) => 
       .maybeSingle()
     if (!invoice) {
       res.status(404).json({ error: 'Invoice not found' })
+      return
+    }
+    const lockedPo = writeBlocked(actorKey(req as { user?: AuthUser }), invoice.invoice_date)
+    if (lockedPo) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: lockedPo, code: 'FY_LOCKED' })
       return
     }
     if (invoice.status !== 'Approved') {

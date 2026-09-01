@@ -4,6 +4,7 @@ import { CheckCircle2, XCircle, FileText, FolderOpen } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
 import { emitAppEvent } from '../lib/notify'
+import { emitCrossModule } from '../lib/store'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -14,6 +15,7 @@ import { Field } from '../components/ui/Field'
 import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { useFyLock } from '../lib/FyLockProvider'
 
 interface ApprovalInvoice {
   id: string
@@ -37,6 +39,7 @@ export default function ApprovalsPage() {
   const [sortBy, setSortBy] = useState('invoice_date')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
   const toast = useToast()
+  const { guardWrite } = useFyLock()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -68,6 +71,7 @@ export default function ApprovalsPage() {
   }
 
   const approve = async (inv: ApprovalInvoice) => {
+    if (!(await guardWrite(inv.invoice_date))) return
     try {
       const res = await apiPost<{ invoice: ApprovalInvoice; po?: { id: string } | null }>(
         `/api/invoices/${inv.id}/approve`,
@@ -84,6 +88,7 @@ export default function ApprovalsPage() {
         res.po ? '/payment-orders' : `/invoices/${inv.id}`,
       )
       load()
+      emitCrossModule('invoice', 'update', inv.id)
     } catch (e) {
       toast.error('Approval failed', (e as Error).message)
     }
@@ -134,6 +139,7 @@ export default function ApprovalsPage() {
       toast.error('A rejection reason is required')
       return
     }
+    if (!(await guardWrite(rejecting.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${rejecting.id}/reject`, { reason: reason.trim() })
       toast.success('Invoice rejected')
@@ -141,6 +147,7 @@ export default function ApprovalsPage() {
       setRejecting(null)
       setReason('')
       load()
+      emitCrossModule('invoice', 'update', rejecting.id)
     } catch (e) {
       toast.error('Reject failed', (e as Error).message)
     }

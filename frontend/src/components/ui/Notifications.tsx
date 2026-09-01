@@ -5,6 +5,8 @@ import { Bell, BellOff, X, CheckCircle2, AlertTriangle, XCircle, Info, CheckChec
 import { apiGet } from '../../lib/api'
 import { subscribeAppEvents, type AppEvent } from '../../lib/notify'
 import { timeAgo } from '../../lib/format'
+import { currentFiscalYear } from '../../lib/fiscal'
+import { invoiceListPath } from '../../lib/invoiceWindow'
 
 type NotifType = 'ok' | 'warn' | 'err' | 'info'
 
@@ -107,7 +109,7 @@ export default function Notifications() {
       try {
         const [c, i] = await Promise.all([
           apiGet<{ contracts: ContractRow[] }>('/api/contracts'),
-          apiGet<{ invoices: InvoiceRow[] }>('/api/invoices'),
+          apiGet<{ invoices: InvoiceRow[] }>(invoiceListPath({ fy: currentFiscalYear() })),
         ])
         if (!alive) return
         const signals: Notification[] = []
@@ -242,20 +244,25 @@ export default function Notifications() {
 
   return (
     <>
-      <button
-        className={`btn btn-ghost relative !px-3 ${open ? 'bg-[var(--surface-hover)] text-[var(--accent)]' : ''}`}
-        title="Notifications"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <Bell size={16} />
+      <div className="relative">
+        <button
+          className={`btn btn-ghost btn-icon ${open ? 'bg-[var(--surface-hover)] text-[var(--accent)]' : ''}`}
+          title="Notifications"
+          aria-label="Notifications"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <Bell size={16} />
+        </button>
         {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[0.6rem] font-bold text-white"
+          <span
+            className="pointer-events-none absolute -right-1 -top-1 z-10 flex h-4 min-w-4 items-center justify-center rounded-md px-1 text-[0.6rem] font-bold leading-none text-white"
             style={{ background: 'var(--gradient-danger)' }}
           >
             {unread > 9 ? '9+' : unread}
           </span>
         )}
-      </button>
+      </div>
 
       {/* Portal to body: the header's backdrop-filter makes it the containing
           block for fixed descendants, which would squash this overlay. */}

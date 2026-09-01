@@ -11,6 +11,7 @@ import { masterRouter } from './routes/master.js'
 import { invoicesRouter } from './routes/invoices.js'
 import { reportsRouter } from './routes/reports.js'
 import { paymentOrdersRouter } from './routes/paymentOrders.js'
+import { fyLockRouter } from './routes/fyLock.js'
 
 export const app = express()
 
@@ -30,6 +31,7 @@ app.use('/api/compare', compareRouter)
 app.use('/api/uploads', uploadsRouter)
 app.use('/api/followups', followupsRouter)
 app.use('/api/settings', settingsRouter)
+app.use('/api/fy-lock', fyLockRouter)
 app.use('/api', masterRouter)
 app.use('/api', invoicesRouter)
 app.use('/api', reportsRouter)

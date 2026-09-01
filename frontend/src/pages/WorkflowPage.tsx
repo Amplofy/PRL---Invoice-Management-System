@@ -4,6 +4,8 @@ import { Search, Kanban, Clock, ArrowRight } from 'lucide-react'
 import { apiGet } from '../lib/api'
 import { formatMoney, timeAgo } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
+import { currentFiscalYear } from '../lib/fiscal'
+import { invoiceListPath } from '../lib/invoiceWindow'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import StatusBadge from '../components/ui/StatusBadge'
@@ -61,7 +63,7 @@ export default function WorkflowPage() {
       try {
         const [m, i] = await Promise.all([
           apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
-          apiGet<{ invoices: InvoiceLite[] }>('/api/invoices'),
+          apiGet<{ invoices: InvoiceLite[] }>(invoiceListPath({ fy: currentFiscalYear() })),
         ])
         setMatrix(m.serviceMatrix)
         setInvoices(i.invoices)

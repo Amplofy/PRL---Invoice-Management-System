@@ -13,6 +13,7 @@ import {
   Banknote,
   ScrollText,
   Workflow,
+  Crosshair,
 } from 'lucide-react'
 import { supabase, isDemoMode, enterDemo } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
@@ -40,6 +41,11 @@ const CAPABILITIES: Array<{ icon: ComponentType<{ size?: number }>; title: strin
     icon: ScrollText,
     title: 'Immutable audit',
     text: 'Every action is stamped with actor, entity and time — fully traceable.',
+  },
+  {
+    icon: Crosshair,
+    title: 'Delta Analyst',
+    text: 'Drop two files and compare them in the browser — a demo session never uploads your files.',
   },
 ]
 
@@ -76,7 +82,7 @@ function AuthPanel() {
     enterDemo()
     await refresh()
     setDemoBusy(false)
-    toast.success('Demo session started', 'Exploring with simulated data')
+    toast.success('Demo session started', 'Simulated data plus a local Delta Analyst — your files stay in this browser')
     navigate('/control-tower', { replace: true })
   }
 
@@ -182,7 +188,7 @@ function AuthPanel() {
           )}
         </button>
         <p className="mt-3 text-center text-[0.7rem] leading-relaxed text-[var(--text-muted)]">
-          Sample data with simulated actions. Your real data is never touched.
+          Sample invoices with simulated actions. Delta Analyst compares your own files locally — nothing is uploaded.
         </p>
       </div>
 

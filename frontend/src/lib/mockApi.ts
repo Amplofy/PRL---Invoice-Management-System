@@ -1,4 +1,6 @@
-import { readWorkbook, detectHeaderRow, dataRows } from './importParser'
+import { parseLocalGroups } from './importParser'
+import { currentFiscalYear, fiscalOf, isClosedFiscalYear } from './fiscal'
+import { hashFyPassword, LOCKED_FY_MESSAGE, normalizeUnlockPassword, verifyFyPassword } from './fyCrypto'
 
 const R_ADMIN = '00000000-0000-0000-0000-000000000001'
 const R_APPROVER = '00000000-0000-0000-0000-000000000002'
@@ -60,6 +62,7 @@ interface Invoice {
 }
 interface PoVersion { id: string; invoice_id: string; serial_no: string; generated_at: string; generated_by: string | null }
 interface AuditEntry { id: string; timestamp: string; user_email: string | null; action: string; entity_type: string | null; entity_id: string | null; summary: string | null; entity: string | null; description: string | null }
+interface BudgetLine { id: string; fy: string; cost_element: string; amount: number; notes: string }
 
 function uid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -178,6 +181,23 @@ const settings: Setting[] = [
   { key: 'enable_audit', value: 'true' },
 ]
 
+let fyPasswordHash = ''
+let fyUnlockedUntil = 0
+let fyUnlockFails = 0
+let fyUnlockBlockedUntil = 0
+
+const yearlyBudgets: BudgetLine[] = [
+  { id: 'b-sur-25', fy: 'FY25', cost_element: 'SUR', amount: 3800000, notes: 'Prior year surveying' },
+  { id: 'b-thl-25', fy: 'FY25', cost_element: 'THL', amount: 6100000, notes: '' },
+  { id: 'b-sm-25', fy: 'FY25', cost_element: 'SM', amount: 2200000, notes: '' },
+  { id: 'b-sur-26', fy: 'FY26', cost_element: 'SUR', amount: 4500000, notes: 'Marine surveying' },
+  { id: 'b-thl-26', fy: 'FY26', cost_element: 'THL', amount: 7200000, notes: 'Tanker handling' },
+  { id: 'b-sm-26', fy: 'FY26', cost_element: 'SM', amount: 2800000, notes: 'Stock measurement' },
+  { id: 'b-sur-27', fy: 'FY27', cost_element: 'SUR', amount: 5200000, notes: '' },
+  { id: 'b-thl-27', fy: 'FY27', cost_element: 'THL', amount: 8600000, notes: '' },
+  { id: 'b-sm-27', fy: 'FY27', cost_element: 'SM', amount: 3100000, notes: '' },
+]
+
 function makeInvoice(partial: Partial<Invoice>): Invoice {
   const base: Invoice = {
     id: uid(),
@@ -257,6 +277,23 @@ function audit(action: string, entity_type: string, entity_id: string | null, su
 
 function fail(message: string): never {
   throw new Error(message)
+}
+
+function fyUnlocked(): boolean {
+  return Date.now() < fyUnlockedUntil
+}
+
+function assertOpenDate(dateStr: string | null | undefined): void {
+  const info = fiscalOf(dateStr)
+  if (!info || !isClosedFiscalYear(info.fy)) return
+  if (fyUnlocked()) return
+  fail(LOCKED_FY_MESSAGE)
+}
+
+function assertOpenFy(fy: string): void {
+  if (!fy || !isClosedFiscalYear(fy)) return
+  if (fyUnlocked()) return
+  fail(LOCKED_FY_MESSAGE)
 }
 
 function toMoney(v: unknown): number {
@@ -567,11 +604,16 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       const status = qs.get('status') ?? 'all'
       const contract = qs.get('contract') ?? 'all'
       const search = (qs.get('search') ?? '').toLowerCase()
+      const fy = qs.get('fy') ?? ''
+      const cap = Math.min(Math.max(Number(qs.get('limit') || 0) || 0, 0), 500)
       let list = invoices
       if (status && status !== 'all') list = list.filter((i) => i.status === status)
       if (contract && contract !== 'all') list = list.filter((i) => i.contract_id === contract)
       if (search) list = list.filter((i) => `${i.invoice_no} ${i.serial_no ?? ''}`.toLowerCase().includes(search))
-      return { invoices: [...list].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(listInvoice) } as T
+      if (fy && fy !== 'all') list = list.filter((i) => fiscalOf(i.invoice_date)?.fy === fy)
+      const sorted = [...list].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(listInvoice)
+      const sliced = cap ? sorted.slice(0, cap) : sorted
+      return { invoices: sliced, fy: fy || 'all', total: sorted.length, hasMore: cap > 0 && sorted.length > cap } as T
     }
     if (parts.length === 4 && parts[3] === 'po') {
       const list = pos.filter((p) => p.invoice_id === parts[2])
@@ -585,6 +627,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && parts.length === 2 && parts[0] === 'api' && parts[1] === 'invoices') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.invoice_no) fail('Invoice number is required')
+    assertOpenDate((b.invoice_date as string) ?? null)
     const inv = makeInvoice({
       serial_no: (b.serial_no as string) ?? null,
       processing_date: (b.processing_date as string) ?? (b.invoice_date as string) ?? null,
@@ -613,6 +656,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'invoices' && parts[3] === 'approve') {
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
+    assertOpenDate(inv.invoice_date)
     inv.status = 'Approved'
     inv.approved_by = 'admin@prl.com.pk'
     inv.approved_date = nowIso()
@@ -628,6 +672,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!reason) fail('Rejection reason is required')
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
+    assertOpenDate(inv.invoice_date)
     inv.status = 'Rejected'
     inv.approved_by = 'admin@prl.com.pk'
     inv.approved_date = nowIso()
@@ -640,6 +685,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'invoices' && parts[3] === 'po') {
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
+    assertOpenDate(inv.invoice_date)
     if (inv.status !== 'Approved') fail('Payment order requires an approved invoice')
     const po = makePoForInvoice(inv)
     return { po } as T
@@ -649,6 +695,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
     const updates = (body ?? {}) as Record<string, unknown>
+    assertOpenDate(inv.invoice_date)
+    if ('invoice_date' in updates) assertOpenDate((updates.invoice_date as string) ?? null)
     const fields: (keyof Invoice)[] = ['serial_no', 'processing_date', 'contract_id', 'invoice_no', 'invoice_date', 't1', 't2', 't3', 'tanker_name', 'trips', 'item_no', 'cost_element', 'service_from', 'service_to', 'amount', 'status', 'remarks']
     for (const f of fields) if (f in updates) inv[f] = updates[f] as never
     inv.updated_at = nowIso()
@@ -660,6 +708,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'invoices') {
     const idx = invoices.findIndex((i) => i.id === parts[2])
     if (idx === -1) fail('Invoice not found')
+    assertOpenDate(invoices[idx].invoice_date)
     if (pos.some((p) => p.invoice_id === parts[2])) fail('Cannot delete invoice with generated payment orders')
     invoices.splice(idx, 1)
     audit('Delete', 'Invoice', parts[2], 'Invoice deleted')
@@ -672,6 +721,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && path === '/api/contracts') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.contract_no || !b.vendor_id) fail('Contract number and vendor are required')
+    assertOpenDate((b.start_date as string) ?? null)
     const c: Contract = {
       id: uid(),
       contract_no: String(b.contract_no),
@@ -693,6 +743,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const c = contracts.find((x) => x.id === parts[2])
     if (!c) fail('Contract not found')
     const b = (body ?? {}) as Record<string, unknown>
+    assertOpenDate(c.start_date)
+    if ('start_date' in b) assertOpenDate((b.start_date as string) ?? null)
     const fields: (keyof Contract)[] = ['contract_no', 'vendor_id', 'service', 'start_date', 'end_date', 'value', 'status']
     for (const f of fields) if (f in b) c[f] = b[f] as never
     const v = vendors.find((x) => x.id === c.vendor_id)
@@ -702,6 +754,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'contracts') {
     const idx = contracts.findIndex((x) => x.id === parts[2])
     if (idx === -1) fail('Contract not found')
+    assertOpenDate(contracts[idx].start_date)
     if (invoices.some((i) => i.contract_id === parts[2])) fail('Cannot delete contract with linked invoices')
     contracts.splice(idx, 1)
     return { ok: true } as T
@@ -747,6 +800,18 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     serviceMatrix.push(row)
     return { service: row } as T
   }
+  if (m === 'PUT' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'service-matrix') {
+    const row = serviceMatrix.find((x) => x.id === parts[2])
+    if (!row) fail('Service row not found')
+    const b = (body ?? {}) as Record<string, unknown>
+    if (b.t1 !== undefined) row.t1 = String(b.t1)
+    if (b.t2 !== undefined) row.t2 = (b.t2 as string) || null
+    if (b.t3 !== undefined) row.t3 = (b.t3 as string) || null
+    if (b.cost_element !== undefined) row.cost_element = (b.cost_element as string) || null
+    if (b.tanker_required !== undefined) row.tanker_required = Boolean(b.tanker_required)
+    if (b.trips !== undefined) row.trips = Boolean(b.trips)
+    return { service: row } as T
+  }
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'service-matrix') {
     const idx = serviceMatrix.findIndex((x) => x.id === parts[2])
     if (idx === -1) fail('Service row not found')
@@ -760,6 +825,15 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!b.code) fail('Code is required')
     const row: CostRow = { code: String(b.code), name: (b.name as string) ?? null }
     costElements.push(row)
+    return { costElement: row } as T
+  }
+  if (m === 'PUT' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'cost-elements') {
+    const code = decodeURIComponent(parts[2])
+    const row = costElements.find((x) => x.code === code)
+    if (!row) fail('Cost element not found')
+    const name = ((body ?? {}) as Record<string, unknown>).name
+    if (!name || typeof name !== 'string') fail('Name is required')
+    row.name = name.trim()
     return { costElement: row } as T
   }
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'cost-elements') {
@@ -798,11 +872,52 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'GET' && path === '/api/permissions') return { permissions } as T
   if (m === 'GET' && path === '/api/audit-log') return { auditLog: auditLog.slice(0, 200) } as T
 
-  if (m === 'GET' && path === '/api/settings') return { settings } as T
+  if (m === 'GET' && matchPath(path) === '/api/fy-lock') {
+    return { passwordSet: Boolean(fyPasswordHash), unlocked: fyUnlocked(), currentFy: currentFiscalYear() } as T
+  }
+  if (m === 'POST' && matchPath(path) === '/api/fy-lock/password') {
+    const b = (body ?? {}) as { password?: string; currentPassword?: string }
+    const pw = normalizeUnlockPassword(String(b.password ?? ''))
+    if (pw.length < 8) fail('Password must be at least 8 characters')
+    if (pw.length > 128) fail('Password is too long')
+    if (fyPasswordHash) {
+      const current = normalizeUnlockPassword(String(b.currentPassword ?? ''))
+      if (!current) fail('Current password is required')
+      if (!(await verifyFyPassword(current, fyPasswordHash))) fail('Current password is incorrect')
+    }
+    fyPasswordHash = await hashFyPassword(pw)
+    fyUnlockedUntil = 0
+    return { ok: true, passwordSet: true } as T
+  }
+  if (m === 'POST' && matchPath(path) === '/api/fy-lock/unlock') {
+    if (Date.now() < fyUnlockBlockedUntil) fail('Too many attempts. Try again in a moment.')
+    const pw = normalizeUnlockPassword(String((body as { password?: string } | null)?.password ?? ''))
+    if (!fyPasswordHash) fail('No unlock password has been set. Ask an administrator to set one.')
+    if (!(await verifyFyPassword(pw, fyPasswordHash))) {
+      fyUnlockFails += 1
+      if (fyUnlockFails >= 5) {
+        fyUnlockBlockedUntil = Date.now() + 30_000
+        fyUnlockFails = 0
+      }
+      fail('Incorrect password')
+    }
+    fyUnlockFails = 0
+    fyUnlockedUntil = Date.now() + 8 * 60 * 60 * 1000
+    return { ok: true, unlocked: true } as T
+  }
+  if (m === 'POST' && matchPath(path) === '/api/fy-lock/lock') {
+    fyUnlockedUntil = 0
+    return { ok: true, unlocked: false } as T
+  }
+
+  if (m === 'GET' && path === '/api/settings') {
+    return { settings: settings.filter((s) => s.key !== 'fy_lock_password') } as T
+  }
   if (m === 'PUT' && path === '/api/settings') {
     const entries = (body as { settings?: { key: string; value: string }[] })?.settings ?? []
     if (!Array.isArray(entries) || !entries.length) fail('settings array is required')
     for (const entry of entries) {
+      if (entry.key === 'fy_lock_password') continue
       const s = settings.find((x) => x.key === entry.key)
       if (s) s.value = String(entry.value ?? '')
       else settings.push({ key: entry.key, value: String(entry.value ?? '') })
@@ -810,10 +925,44 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     return { ok: true, updated: entries.length } as T
   }
 
+  if (m === 'GET' && path === '/api/budgets') return { budgets: [...yearlyBudgets] } as T
+  if (m === 'PUT' && path === '/api/budgets') {
+    const fy = String(((body ?? {}) as { fy?: string }).fy ?? '').trim()
+    const incoming = ((body ?? {}) as { lines?: Array<{ id?: string; cost_element?: string; amount?: number; notes?: string }> }).lines
+    if (!fy) fail('fy is required')
+    if (!Array.isArray(incoming)) fail('lines array is required')
+    assertOpenFy(fy)
+    for (let i = yearlyBudgets.length - 1; i >= 0; i--) {
+      if (yearlyBudgets[i]!.fy === fy) yearlyBudgets.splice(i, 1)
+    }
+    const seen = new Set<string>()
+    const unique: BudgetLine[] = []
+    for (const row of incoming) {
+      const code = String(row.cost_element ?? '').trim()
+      if (!code) continue
+      const key = code.toUpperCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push({
+        id: String(row.id || uid()),
+        fy,
+        cost_element: code,
+        amount: Math.max(0, Number(row.amount ?? 0) || 0),
+        notes: String(row.notes ?? '').trim(),
+      })
+    }
+    yearlyBudgets.push(...unique)
+    return { budgets: unique, fy } as T
+  }
+
   if (m === 'GET' && path === '/api/followups/pending') return pendingFollowups() as T
   if (m === 'POST' && path === '/api/followups/send') {
     const ids = (body as { invoiceIds?: string[] })?.invoiceIds ?? []
     if (!Array.isArray(ids) || !ids.length) fail('invoiceIds array is required')
+    for (const id of ids) {
+      const inv = invoices.find((i) => i.id === id)
+      if (inv) assertOpenDate(inv.invoice_date)
+    }
     audit('SendFollowups', 'Email', null, `Sent ${ids.length} follow-up email(s)`)
     return { sent: ids, failed: [] } as T
   }
@@ -910,6 +1059,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     for (const id of ids) {
       const inv = invoices.find((x) => x.id === id)
       if (!inv) continue
+      assertOpenDate(inv.invoice_date)
       inv.status = 'Approved'
       approved++
       poCreated++
@@ -925,6 +1075,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     for (const id of (b.ids ?? []).map(String)) {
       const inv = invoices.find((x) => x.id === id)
       if (!inv) continue
+      assertOpenDate(inv.invoice_date)
       inv.status = 'Rejected'
       inv.remarks = reason
       rejected++
@@ -934,31 +1085,10 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   }
 
   if (m === 'POST' && parts.length === 3 && parts[1] === 'compare' && parts[2] === 'parse') {
-    // Demo mode still parses the user's real file locally (CSV/XLSX/XLS via
-    // the browser workbook reader); only PDF needs the server-side parser.
     const file = isForm ? (body as FormData).get('file') : null
-    const name = file instanceof File ? file.name : ''
     if (!file || !(file instanceof File)) fail('No file uploaded')
-    const lower = name.toLowerCase()
-    if (lower.endsWith('.pdf')) {
-      fail('Demo mode cannot parse PDF (it needs the server-side parser). Sign in with a real account to compare PDF files.')
-    }
     try {
-      const wb = await readWorkbook(file as File)
-      const groups = wb.sheets
-        .map((s) => {
-          const headerRowIdx = detectHeaderRow(s.matrix, new Set())
-          const rows = dataRows(s.matrix, headerRowIdx)
-          return {
-            name: s.name,
-            rowCount: rows.length,
-            rows,
-            columns: rows.length > 0 ? Object.keys(rows[0]!) : [],
-          }
-        })
-        .filter((g) => g.rows.length > 0)
-      if (groups.length === 0) fail('No readable rows found in the file')
-      return { fileName: name, format: lower.endsWith('.csv') ? 'csv' : 'xlsx', groups } as T
+      return (await parseLocalGroups(file)) as T
     } catch (e) {
       fail(`Could not read file in demo mode: ${(e as Error).message}`)
     }

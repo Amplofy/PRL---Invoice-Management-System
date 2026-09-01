@@ -49,62 +49,69 @@ export default function DataToolbar({ search, filters, sort, onExport, exportLab
           </div>
         )}
 
-        {filters?.map((f) => (
-          <select
-            key={f.key}
-            value={f.value}
-            onChange={(e) => f.onChange(e.target.value)}
-            aria-label={f.label}
-            className="input min-w-[150px] flex-1 sm:flex-none"
-          >
-            {f.options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
+        {filters && filters.length > 0 && (
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {filters.map((f) => (
+              <select
+                key={f.key}
+                value={f.value}
+                onChange={(e) => f.onChange(e.target.value)}
+                aria-label={f.label}
+                className="input w-[10.5rem] shrink-0"
+              >
+                {f.options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             ))}
-          </select>
-        ))}
+          </div>
+        )}
 
-        {sort && (
-          <div className="flex items-center gap-1.5">
-            <select
-              value={sort.value}
-              onChange={(e) => sort.onValueChange(e.target.value)}
-              aria-label="Sort by"
-              className="input min-w-[130px] flex-1 sm:flex-none"
-            >
-              <option value="">No sort</option>
-              {sort.columns.map((c) => (
-                <option key={c.key} value={c.key}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn btn-ghost !px-2.5"
-              title={sort.direction === 'asc' ? 'Ascending' : 'Descending'}
-              onClick={() => sort.onDirectionChange(sort.direction === 'asc' ? 'desc' : 'asc')}
-              disabled={!sort.value}
-            >
-              {sort.direction === 'asc' ? <ArrowDownWideNarrow size={15} /> : <ArrowUpDown size={15} />}
+        <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
+          {sort && (
+            <div className="flex shrink-0 items-center gap-2">
+              <select
+                value={sort.value}
+                onChange={(e) => sort.onValueChange(e.target.value)}
+                aria-label="Sort by"
+                className="input w-[9.5rem] shrink-0"
+              >
+                <option value="">No sort</option>
+                {sort.columns.map((c) => (
+                  <option key={c.key} value={c.key}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="sort-dir-btn"
+                title={sort.direction === 'asc' ? 'Ascending' : 'Descending'}
+                aria-label={sort.direction === 'asc' ? 'Sort ascending' : 'Sort descending'}
+                onClick={() => sort.onDirectionChange(sort.direction === 'asc' ? 'desc' : 'asc')}
+                disabled={!sort.value}
+              >
+                {sort.direction === 'asc' ? <ArrowDownWideNarrow size={15} aria-hidden /> : <ArrowUpDown size={15} aria-hidden />}
+              </button>
+            </div>
+          )}
+
+          {onExport && (
+            <button type="button" className="btn btn-ghost shrink-0 whitespace-nowrap" onClick={onExport}>
+              <Download size={15} /> {exportLabel ?? 'Export CSV'}
             </button>
-          </div>
-        )}
+          )}
 
-        {onExport && (
-          <button type="button" className="btn btn-ghost !px-3" onClick={onExport}>
-            <Download size={15} /> {exportLabel ?? 'Export CSV'}
-          </button>
-        )}
+          {resultsCount !== undefined && (
+            <div className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text-dim)]">
+              <span className="font-bold text-[var(--text)]">{resultsCount}</span> shown
+            </div>
+          )}
 
-        {resultsCount !== undefined && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text-dim)]">
-            <span className="font-bold text-[var(--text)]">{resultsCount}</span> shown
-          </div>
-        )}
-
-        {children}
+          {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
+        </div>
       </div>
 
       {filterBar && <div className="mt-3 border-t border-[var(--border)] pt-3">{filterBar}</div>}

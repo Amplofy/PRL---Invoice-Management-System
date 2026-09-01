@@ -1,8 +1,14 @@
 import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired, requireRole } from '../middleware/auth.js'
+import { LOCKED_FY_MESSAGE, writeBlocked, writeBlockedFy } from '../services/fyLock.js'
+import type { AuthUser } from '../types/index.js'
 
 export const masterRouter = Router()
+
+function actorKey(req: { user?: AuthUser }): string {
+  return req.user?.id || req.user?.email || 'anon'
+}
 
 // -------------------------------------------------------------
 // Vendors
@@ -123,6 +129,11 @@ masterRouter.post('/contracts', authRequired, requireRole('admin'), async (req, 
   try {
     const supabase = getSupabase()
     const body = req.body ?? {}
+    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), body.start_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { data, error } = await supabase
       .from('contracts')
       .insert({
@@ -150,6 +161,17 @@ masterRouter.put('/contracts/:id', authRequired, requireRole('admin'), async (re
   try {
     const supabase = getSupabase()
     const body = req.body ?? {}
+    const { data: existing } = await supabase
+      .from('contracts')
+      .select('start_date')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    const key = actorKey(req as { user?: AuthUser })
+    const locked = writeBlocked(key, existing?.start_date) || writeBlocked(key, body.start_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { data, error } = await supabase
       .from('contracts')
       .update({ ...body, updated_at: new Date().toISOString() })
@@ -169,6 +191,16 @@ masterRouter.put('/contracts/:id', authRequired, requireRole('admin'), async (re
 masterRouter.delete('/contracts/:id', authRequired, requireRole('admin'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
+    const { data: existing } = await supabase
+      .from('contracts')
+      .select('start_date')
+      .eq('id', req.params.id)
+      .maybeSingle()
+    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), existing?.start_date)
+    if (locked) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
+      return
+    }
     const { data: invoices } = await supabase.from('invoices').select('id').eq('contract_id', req.params.id)
     if ((invoices ?? []).length) {
       res.status(400).json({ error: 'Cannot delete contract with linked invoices' })
@@ -228,6 +260,33 @@ masterRouter.post('/service-matrix', authRequired, requireRole('admin'), async (
   }
 })
 
+masterRouter.put('/service-matrix/:id', authRequired, requireRole('admin'), async (req, res, next) => {
+  try {
+    const supabase = getSupabase()
+    const body = req.body ?? {}
+    const { data, error } = await supabase
+      .from('service_matrix')
+      .update({
+        t1: body.t1,
+        t2: body.t2,
+        t3: body.t3,
+        cost_element: body.cost_element,
+        tanker_required: body.tanker_required ?? false,
+        trips: body.trips ?? false,
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+    if (error || !data) {
+      res.status(400).json({ error: error?.message || 'Service row not found' })
+      return
+    }
+    res.json({ service: data })
+  } catch (err) {
+    next(err)
+  }
+})
+
 masterRouter.delete('/service-matrix/:id', authRequired, requireRole('admin'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
@@ -273,6 +332,30 @@ masterRouter.post('/cost-elements', authRequired, requireRole('admin'), async (r
       return
     }
     res.status(201).json({ costElement: data })
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.put('/cost-elements/:code', authRequired, requireRole('admin'), async (req, res, next) => {
+  try {
+    const supabase = getSupabase()
+    const name = req.body?.name
+    if (!name || typeof name !== 'string') {
+      res.status(400).json({ error: 'Name is required' })
+      return
+    }
+    const { data, error } = await supabase
+      .from('cost_elements')
+      .update({ name: name.trim() })
+      .eq('code', req.params.code)
+      .select()
+      .single()
+    if (error || !data) {
+      res.status(400).json({ error: error?.message || 'Cost element not found' })
+      return
+    }
+    res.json({ costElement: data })
   } catch (err) {
     next(err)
   }
@@ -414,6 +497,114 @@ masterRouter.get('/audit-log', authRequired, async (_req, res, next) => {
       return
     }
     res.json({ auditLog: data ?? [] })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// -------------------------------------------------------------
+// Yearly budgets (persisted as JSON in app_settings)
+// -------------------------------------------------------------
+const BUDGET_SETTING_KEY = 'yearly_budgets'
+
+interface BudgetLine {
+  id: string
+  fy: string
+  cost_element: string
+  amount: number
+  notes: string
+}
+
+function parseBudgetLines(raw: string | null | undefined): BudgetLine[] {
+  try {
+    const parsed = JSON.parse(raw || '[]') as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((row): row is Record<string, unknown> => !!row && typeof row === 'object')
+      .map((row) => ({
+        id: String(row.id ?? ''),
+        fy: String(row.fy ?? ''),
+        cost_element: String(row.cost_element ?? ''),
+        amount: Number(row.amount ?? 0) || 0,
+        notes: String(row.notes ?? ''),
+      }))
+      .filter((row) => row.fy && row.cost_element)
+  } catch {
+    return []
+  }
+}
+
+masterRouter.get('/budgets', authRequired, async (_req, res, next) => {
+  try {
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', BUDGET_SETTING_KEY)
+      .maybeSingle()
+    if (error) {
+      res.status(500).json({ error: `Failed to load budgets: ${error.message}` })
+      return
+    }
+    res.json({ budgets: parseBudgetLines(data?.value) })
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.put('/budgets', authRequired, requireRole('admin'), async (req, res, next) => {
+  try {
+    const fy = String(req.body?.fy ?? '').trim()
+    const incoming = req.body?.lines
+    if (!fy) {
+      res.status(400).json({ error: 'fy is required' })
+      return
+    }
+    if (!Array.isArray(incoming)) {
+      res.status(400).json({ error: 'lines array is required' })
+      return
+    }
+    if (writeBlockedFy(actorKey(req as { user?: AuthUser }), fy)) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy, code: 'FY_LOCKED' })
+      return
+    }
+    const supabase = getSupabase()
+    const { data: existing, error: loadError } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', BUDGET_SETTING_KEY)
+      .maybeSingle()
+    if (loadError) {
+      res.status(500).json({ error: `Failed to load budgets: ${loadError.message}` })
+      return
+    }
+    const kept = parseBudgetLines(existing?.value).filter((row) => row.fy !== fy)
+    const nextLines: BudgetLine[] = incoming
+      .filter((row: { cost_element?: string }) => String(row?.cost_element ?? '').trim())
+      .map((row: { id?: string; cost_element?: string; amount?: number; notes?: string }) => ({
+        id: String(row.id || crypto.randomUUID()),
+        fy,
+        cost_element: String(row.cost_element).trim(),
+        amount: Math.max(0, Number(row.amount ?? 0) || 0),
+        notes: String(row.notes ?? '').trim(),
+      }))
+    const seen = new Set<string>()
+    const unique: BudgetLine[] = []
+    for (const row of nextLines) {
+      const key = row.cost_element.toUpperCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push(row)
+    }
+    const all = [...kept, ...unique]
+    const { error: saveError } = await supabase
+      .from('app_settings')
+      .upsert({ key: BUDGET_SETTING_KEY, value: JSON.stringify(all) }, { onConflict: 'key' })
+    if (saveError) {
+      res.status(400).json({ error: saveError.message })
+      return
+    }
+    res.json({ budgets: unique, fy })
   } catch (err) {
     next(err)
   }

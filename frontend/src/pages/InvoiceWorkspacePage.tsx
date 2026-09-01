@@ -12,6 +12,7 @@ import {
   FolderOpen,
   Receipt,
   Landmark,
+  Lock,
 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDateTime, formatAmountWords, timeAgo } from '../lib/format'
@@ -30,6 +31,9 @@ import ValidationSummary from '../components/ui/ValidationSummary'
 import AmountWords from '../components/ui/AmountWords'
 import { Field } from '../components/ui/Field'
 import { useAuth, isAdmin } from '../lib/auth'
+import { useFyLock } from '../lib/FyLockProvider'
+import { currentFiscalYear, isClosedDate } from '../lib/fiscal'
+import { invoiceListPath } from '../lib/invoiceWindow'
 
 interface ContractFull {
   id: string
@@ -109,6 +113,7 @@ export default function InvoiceWorkspacePage() {
   const toast = useToast()
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
+  const { guardWrite } = useFyLock()
 
   const [invoice, setInvoice] = useState<WorkspaceInvoice | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -157,7 +162,9 @@ export default function InvoiceWorkspacePage() {
         apiGet<{ poVersions: PoVersionRow[] }>(`/api/invoices/${id}/po`),
         apiGet<{ auditLog: AuditEntry[] }>('/api/audit-log'),
         apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
-        apiGet<{ invoices: UtilizationInvoice[] }>('/api/invoices'),
+        apiGet<{ invoices: UtilizationInvoice[] }>(
+          inv.contract_id ? invoiceListPath({ contract: inv.contract_id }) : invoiceListPath({ fy: currentFiscalYear() }),
+        ),
         apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
         apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
       ])
@@ -251,6 +258,7 @@ export default function InvoiceWorkspacePage() {
       toast.error(`Resolve ${issues.length} validation issue${issues.length > 1 ? 's' : ''} first`)
       return
     }
+    if (!(await guardWrite(invoice.invoice_date, form.invoice_date))) return
     setSaving(true)
     try {
       await apiPut(`/api/invoices/${invoice.id}`, {
@@ -282,6 +290,7 @@ export default function InvoiceWorkspacePage() {
 
   const approve = async () => {
     if (!invoice) return
+    if (!(await guardWrite(invoice.invoice_date))) return
     try {
       const res = await apiPost<{ po?: { id: string } | null }>(`/api/invoices/${invoice.id}/approve`, {})
       toast.success('Invoice approved', res.po ? 'Payment order generated automatically' : undefined)
@@ -303,6 +312,7 @@ export default function InvoiceWorkspacePage() {
       toast.error('A rejection reason is required')
       return
     }
+    if (!(await guardWrite(invoice.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${invoice.id}/reject`, { reason: rejectReason.trim() })
       toast.success('Invoice rejected')
@@ -317,6 +327,7 @@ export default function InvoiceWorkspacePage() {
 
   const generatePo = async () => {
     if (!invoice) return
+    if (!(await guardWrite(invoice.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${invoice.id}/po`, {})
       toast.success('Payment order generated')
@@ -329,6 +340,7 @@ export default function InvoiceWorkspacePage() {
 
   const doDelete = async () => {
     if (!invoice) return
+    if (!(await guardWrite(invoice.invoice_date))) return
     try {
       await apiDelete(`/api/invoices/${invoice.id}`)
       toast.success('Invoice deleted')
@@ -404,6 +416,11 @@ export default function InvoiceWorkspacePage() {
                 {invoice.invoice_no ?? '—'}
               </h1>
               <StatusBadge tone={statusTone(status)}>{status}</StatusBadge>
+              {isClosedDate(invoice.invoice_date) && (
+                <span className="badge badge-warn">
+                  <Lock size={12} /> Closed FY
+                </span>
+              )}
             </div>
           </div>
         </div>

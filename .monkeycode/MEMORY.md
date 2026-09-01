@@ -47,5 +47,12 @@ Entries discovered by the Agent during task execution should follow this format:
 - Context: Invoice entry form redesign iterations
 - Instructions:
   - Form fields must follow the sequence they will actually be filled in (contract first, then identity fields, service scope, amount, remarks last); no random grouping.
-  - Auto-generated serial number format is "XXX - YY" (XXX = running invoice count for the Gregorian year, YY = fiscal-year tag, Pakistan FY Jul–Jun labelled by ending year); display it compactly inline, never as a large dedicated card.
+  - Auto-generated serial number format is "XXX - YY" (XXX = running invoice count for the Gregorian year, YY = fiscal-year tag, Pakistan FY Jul-Jun labelled by starting year so 2026-27 = 26); display it compactly inline, never as a large dedicated card.
   - Validation errors should only appear when the user attempts to save; after a blocked save, mark fields and clear each error live as it is fixed.
+
+[User Instruction Summary]
+- Date: 2026-09-01
+- Context: Admin and Reports fiscal-year convention
+- Instructions:
+  - Pakistan FY Jul-Jun is labelled by the starting year: 2026-27 displays as FY26.
+  - The running fiscal year is date-driven. Do not offer a manual FY switch in Admin company rules.

@@ -11,6 +11,13 @@ export interface ParsedWorkbook {
   sheets: ParsedSheet[]
 }
 
+export interface LocalParsedGroup {
+  name: string
+  rowCount: number
+  rows: Record<string, unknown>[]
+  columns: string[]
+}
+
 export interface SourceColumn {
   key: string
   letter: string
@@ -127,4 +134,38 @@ export function dataRows(matrix: unknown[][], headerRowIdx: number): Record<stri
     })
     return obj
   })
+}
+
+/** Browser-side CSV/XLSX/XLS parse used by demo mode (files never leave the device). */
+export async function parseLocalGroups(file: File): Promise<{
+  fileName: string
+  format: 'csv' | 'xlsx'
+  groups: LocalParsedGroup[]
+}> {
+  const name = file.name
+  const lower = name.toLowerCase()
+  if (lower.endsWith('.pdf')) {
+    throw new Error(
+      'PDF comparison needs a signed-in session (server parser). Drop CSV, XLSX or XLS to compare locally.',
+    )
+  }
+  const wb = await readWorkbook(file)
+  const groups = wb.sheets
+    .map((s) => {
+      const headerRowIdx = detectHeaderRow(s.matrix, new Set())
+      const rows = dataRows(s.matrix, headerRowIdx)
+      return {
+        name: s.name,
+        rowCount: rows.length,
+        rows,
+        columns: rows.length > 0 ? Object.keys(rows[0]!) : [],
+      }
+    })
+    .filter((g) => g.rows.length > 0)
+  if (groups.length === 0) throw new Error('No readable rows found in the file')
+  return {
+    fileName: name,
+    format: lower.endsWith('.csv') ? 'csv' : 'xlsx',
+    groups,
+  }
 }

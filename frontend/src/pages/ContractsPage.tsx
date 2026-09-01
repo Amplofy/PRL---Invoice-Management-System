@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
-import { Plus, Pencil, Trash2, AlertTriangle, Banknote, Truck, Layers } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Plus, Pencil, Trash2, AlertTriangle, Banknote, Truck, Layers, Lock } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -20,6 +21,8 @@ import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
+import { useFyLock } from '../lib/FyLockProvider'
+import { isClosedDate } from '../lib/fiscal'
 
 interface Vendor {
   id: string
@@ -87,6 +90,9 @@ export default function ContractsPage() {
   const toast = useToast()
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
+  const { guardWrite } = useFyLock()
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -108,6 +114,13 @@ export default function ContractsPage() {
     load()
   }, [load])
 
+  useEffect(() => {
+    const st = location.state as { newContract?: boolean } | null
+    if (!st?.newContract) return
+    if (admin) setCreating(true)
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [location.state, location.pathname, navigate, admin])
+
   const vendorName = (c: Contract) => c.vendors?.[0]?.name ?? '—'
 
   const daysLeft = (c: Contract): number | null => {
@@ -125,6 +138,7 @@ export default function ContractsPage() {
 
   const remove = async (c: Contract) => {
     if (!window.confirm(`Delete contract ${c.contract_no}?`)) return
+    if (!(await guardWrite(c.start_date))) return
     try {
       await apiDelete(`/api/contracts/${c.id}`)
       toast.success('Contract deleted')
@@ -322,7 +336,16 @@ export default function ContractsPage() {
               {(() => {
                 const renderRow = (c: Contract) => (
                   <tr key={c.id}>
-                    {col.show('contract_no') && <td className="font-semibold">{c.contract_no}</td>}
+                    {col.show('contract_no') && (
+                      <td className="font-semibold">
+                        <span className="inline-flex items-center gap-1.5">
+                          {c.contract_no}
+                          {isClosedDate(c.start_date) && (
+                            <Lock size={12} className="text-[var(--warn)]" aria-label="Closed fiscal year" />
+                          )}
+                        </span>
+                      </td>
+                    )}
                     {col.show('vendor') && <td>{vendorName(c)}</td>}
                     {col.show('service') && <td className="text-xs">{c.service ?? '—'}</td>}
                     {col.show('start_date') && <td>{formatDate(c.start_date)}</td>}
@@ -438,6 +461,7 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const toast = useToast()
+  const { guardWrite } = useFyLock()
 
   useEffect(() => {
     if (!open) return
@@ -460,6 +484,7 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
       toast.error('Contract number and vendor are required')
       return
     }
+    if (!(await guardWrite(contract?.start_date, form.start_date))) return
     setSaving(true)
     try {
       const body = {

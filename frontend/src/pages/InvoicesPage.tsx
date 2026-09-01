@@ -25,7 +25,10 @@ import { groupRows } from '../lib/grouping'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { currentFiscalYear, isClosedDate, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
+import { useFyLock } from '../lib/FyLockProvider'
+import { invoiceListPath } from '../lib/invoiceWindow'
 
 interface VendorRef {
   name: string | null
@@ -114,10 +117,15 @@ export default function InvoicesPage() {
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
 
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [fyScope, setFyScope] = useState(currentFiscalYear)
+  const { guardWrite } = useFyLock()
+  const fyChoices = useMemo(() => nearbyFiscalYears(undefined, 2, 1), [])
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const d = await apiGet<{ invoices: Invoice[] }>('/api/invoices')
+      const d = await apiGet<{ invoices: Invoice[] }>(invoiceListPath({ fy: fyScope }))
       setInvoices(d.invoices)
       const c = await apiGet<{ contracts: Contract[] }>('/api/contracts')
       setContracts(c.contracts)
@@ -126,16 +134,29 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [toast, fyScope])
 
   useEffect(() => {
     load()
   }, [load])
 
+  useEffect(() => {
+    const st = location.state as { newInvoice?: boolean } | null
+    if (!st?.newInvoice) return
+    setCreating(true)
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [location.state, location.pathname, navigate])
+
+  useEffect(() => {
+    document.body.classList.toggle('qa-lift', selected.size > 0)
+    return () => document.body.classList.remove('qa-lift')
+  }, [selected.size])
+
   const reload = useCallback(() => load(), [load])
 
   const deleteInvoice = async (inv: Invoice) => {
     if (!window.confirm(`Delete invoice ${inv.invoice_no ?? ''}?`)) return
+    if (!(await guardWrite(inv.invoice_date))) return
     try {
       await apiDelete(`/api/invoices/${inv.id}`)
       toast.success('Invoice deleted')
@@ -147,6 +168,7 @@ export default function InvoicesPage() {
   }
 
   const approve = async (inv: Invoice) => {
+    if (!(await guardWrite(inv.invoice_date))) return
     try {
       const res = await apiPost<{ invoice: Invoice; po?: { id: string } | null }>(`/api/invoices/${inv.id}/approve`, {})
       if (res.po) {
@@ -174,6 +196,7 @@ export default function InvoicesPage() {
       toast.error('Rejection reason is required')
       return
     }
+    if (!(await guardWrite(rejecting.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${rejecting.id}/reject`, { reason: rejectReason })
       toast.success('Invoice rejected')
@@ -188,6 +211,7 @@ export default function InvoicesPage() {
 
   const generatePo = async () => {
     if (!generatingPo) return
+    if (!(await guardWrite(generatingPo.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${generatingPo.id}/po`, {})
       setPoReady((m) => ({ ...m, [generatingPo.id]: true }))
@@ -327,6 +351,8 @@ export default function InvoicesPage() {
   const bulkApprove = async () => {
     const ids = [...selected]
     if (ids.length === 0) return
+    const rows = invoices.filter((i) => selected.has(i.id))
+    if (!(await guardWrite(...rows.map((i) => i.invoice_date)))) return
     setBulkBusy(true)
     try {
       const d = await apiPost<{ approved: number; poCreated: number; failed: string[] }>(
@@ -352,6 +378,8 @@ export default function InvoicesPage() {
       toast.error('Rejection reason is required')
       return
     }
+    const rows = invoices.filter((i) => selected.has(i.id))
+    if (!(await guardWrite(...rows.map((i) => i.invoice_date)))) return
     setBulkBusy(true)
     try {
       const d = await apiPost<{ rejected: number }>('/api/invoices/bulk-reject', {
@@ -430,6 +458,30 @@ export default function InvoicesPage() {
           </Button>
         }
       />
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        {fyChoices.map((fy) => (
+          <button
+            key={fy}
+            type="button"
+            className={`chip ${fyScope === fy ? 'active' : ''}`}
+            onClick={() => setFyScope(fy)}
+            aria-pressed={fyScope === fy}
+          >
+            {isClosedFiscalYear(fy) ? <Lock size={11} /> : null}
+            {fy}
+            {fy === currentFiscalYear() ? ' · now' : ''}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`chip ${fyScope === 'all' ? 'active' : ''}`}
+          onClick={() => setFyScope('all')}
+          aria-pressed={fyScope === 'all'}
+        >
+          All years
+        </button>
+      </div>
 
       <SummaryCards
         items={[
@@ -560,6 +612,9 @@ export default function InvoicesPage() {
                       >
                         {inv.invoice_no ?? '—'}
                       </Link>
+                      {isClosedDate(inv.invoice_date) && (
+                        <Lock size={12} className="ml-1.5 inline text-[var(--text-muted)]" aria-label="Closed fiscal year" />
+                      )}
                     </td>
                   )}
                   {col.show('serial') && <td className="text-xs text-[var(--text-muted)]">{inv.serial_no ?? '—'}</td>}
@@ -852,6 +907,7 @@ function toContractLite(c: ContractFull): ContractLite {
 function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: InvoiceFormModalProps) {
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const { guardWrite } = useFyLock()
   /** Errors stay hidden until the user attempts to save; they then clear per-field as fixed. */
   const [showErrors, setShowErrors] = useState(false)
   /** Processing date is stamped at entry time and never edited by hand. */
@@ -887,7 +943,11 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     })
     Promise.all([
       apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
-      apiGet<{ invoices: UtilizationInvoice[] }>('/api/invoices'),
+      apiGet<{ invoices: UtilizationInvoice[] }>(
+        invoice?.contract_id
+          ? invoiceListPath({ contract: invoice.contract_id })
+          : invoiceListPath({ fy: currentFiscalYear() }),
+      ),
       apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
       apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
     ])
@@ -970,6 +1030,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       focusFirstIssue()
       return
     }
+    if (!(await guardWrite(invoice?.invoice_date, form.invoice_date))) return
     setSaving(true)
     try {
       const body = {

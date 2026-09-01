@@ -9,6 +9,7 @@ import {
   Menu,
   X,
   FlaskConical,
+  Palette,
   LayoutDashboard,
   Receipt,
   Kanban,
@@ -25,7 +26,6 @@ import {
   Users,
 } from 'lucide-react'
 import ThemePanel from './ThemePanel'
-import { THEME_META, useTheme } from '../theme'
 import CommandPalette, { type CommandItem } from './ui/CommandPalette'
 import Notifications from './ui/Notifications'
 import { useAuth } from '../lib/auth'
@@ -47,7 +47,7 @@ const TITLES: Record<string, string> = {
   '/import': 'Data Import',
   '/followups': 'Follow-ups',
   '/delta': 'Delta Analyst',
-  '/admin': 'System Admin',
+  '/admin': 'Administration',
   '/users': 'Users & Roles',
 }
 
@@ -64,7 +64,7 @@ const COMMAND_ITEMS: CommandItem[] = [
   { id: 'import', label: 'Import Data', icon: <Upload size={16} />, path: '/import' },
   { id: 'followups', label: 'Follow-up Emails', icon: <Mail size={16} />, path: '/followups' },
   { id: 'delta', label: 'Delta Analyst', icon: <Crosshair size={16} />, path: '/delta' },
-  { id: 'admin', label: 'Admin Settings', icon: <Settings size={16} />, path: '/admin' },
+  { id: 'admin', label: 'Administration', icon: <Settings size={16} />, path: '/admin' },
   { id: 'users', label: 'Users & Roles', icon: <Users size={16} />, path: '/users' },
 ]
 
@@ -88,7 +88,6 @@ function LiveClock() {
 
 export default function Header() {
   const { user, signOut, demo } = useAuth()
-  const { theme } = useTheme()
   const location = useLocation()
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -106,15 +105,18 @@ export default function Header() {
         setPaletteOpen((v) => !v)
       }
     }
+    const onPalette = () => setPaletteOpen(true)
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('prl:open-palette', onPalette)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('prl:open-palette', onPalette)
+    }
   }, [])
 
   const title = location.pathname.startsWith('/invoices/')
     ? 'Invoice Workspace'
     : (TITLES[location.pathname] ?? 'PRL-EOMS')
-
-  const activeSwatch = THEME_META.find((t) => t.id === theme)?.swatch ?? 'var(--gradient-primary)'
 
   return (
     <>
@@ -122,7 +124,7 @@ export default function Header() {
         <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={() => setMobileOpen(true)}
-            className="btn btn-ghost !px-2.5 lg:hidden"
+            className="btn btn-ghost btn-icon lg:hidden"
             aria-label="Open navigation"
           >
             <Menu size={18} />
@@ -155,25 +157,16 @@ export default function Header() {
               <Command size={10} /> K
             </span>
           </button>
-          <button onClick={() => setPaletteOpen(true)} className="btn btn-ghost !px-3 md:hidden" aria-label="Search">
+          <button onClick={() => setPaletteOpen(true)} className="btn btn-ghost btn-icon md:hidden" aria-label="Search">
             <Search size={16} />
           </button>
           <button
             onClick={() => setThemeOpen((v) => !v)}
-            className="btn btn-ghost !px-2.5"
+            className="btn btn-ghost btn-icon"
             title="Appearance"
             aria-label="Appearance settings"
           >
-            <span className="relative flex h-6 w-6 items-center justify-center">
-              <span
-                className="h-5 w-5 rounded-full border border-white/25 shadow-sm"
-                style={{ background: activeSwatch }}
-              />
-              <span
-                className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--surface)]"
-                style={{ background: 'var(--accent)' }}
-              />
-            </span>
+            <Palette size={16} />
           </button>
           <Notifications />
           <div className="relative">
@@ -197,7 +190,7 @@ export default function Header() {
               <UserIcon size={14} className="text-[var(--text-muted)]" />
             </button>
           </div>
-          <button onClick={() => signOut()} className="btn btn-ghost !px-3" title="Sign out">
+          <button onClick={() => signOut()} className="btn btn-ghost btn-icon" title="Sign out" aria-label="Sign out">
             <LogOut size={16} />
           </button>
         </div>
@@ -229,7 +222,7 @@ export default function Header() {
                   </div>
                 </div>
               </div>
-              <button onClick={() => setMobileOpen(false)} className="btn btn-ghost !px-2.5" aria-label="Close navigation">
+              <button onClick={() => setMobileOpen(false)} className="btn btn-ghost btn-icon" aria-label="Close navigation">
                 <X size={18} />
               </button>
             </div>

@@ -1,4 +1,5 @@
 import { formatMoney } from './format'
+import { fiscalYearLabel } from './fiscal'
 
 export interface ServiceMatrixRow {
   id: string
@@ -221,15 +222,13 @@ export interface SerialInvoiceLike {
 }
 
 /**
- * Fiscal year tag (YY) for a date. Pakistan fiscal year runs July-June and is
- * labelled by its ending year, e.g. 2026-08 -> FY 27 (ends June 2027).
+ * Fiscal year tag (YY) for a date. Pakistan FY runs July-June and is labelled
+ * by its starting year, e.g. 2026-08 -> 26 (FY26 = Jul 2026 - Jun 2027).
  */
 export function fiscalYearTag(dateStr: string | undefined | null): string {
   const d = dateStr ? new Date(dateStr) : new Date()
   const safe = Number.isNaN(d.getTime()) ? new Date() : d
-  const y = safe.getFullYear()
-  const fy = safe.getMonth() + 1 >= 7 ? y + 1 : y
-  return String(fy % 100).padStart(2, '0')
+  return fiscalYearLabel(safe).replace(/^FY/i, '').padStart(2, '0')
 }
 
 /**

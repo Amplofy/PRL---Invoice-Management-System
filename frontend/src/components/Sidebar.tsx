@@ -60,7 +60,7 @@ export const NAV_GROUPS: NavGroup[] = [
     title: 'Administration',
     entries: [
       { to: '/import', label: 'Data Import', icon: Upload },
-      { to: '/admin', label: 'System Admin', icon: Settings, adminOnly: true },
+      { to: '/admin', label: 'Administration', icon: Settings, adminOnly: true },
       { to: '/users', label: 'Users & Roles', icon: Users, adminOnly: true },
     ],
   },

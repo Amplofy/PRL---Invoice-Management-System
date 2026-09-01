@@ -12,7 +12,8 @@ settingsRouter.get('/', authRequired, async (_req, res, next) => {
       res.status(500).json({ error: `Failed to load settings: ${error?.message}` })
       return
     }
-    res.json({ settings: data ?? [] })
+    const settings = (data ?? []).filter((row) => (row as { key?: string }).key !== 'fy_lock_password')
+    res.json({ settings })
   } catch (err) {
     next(err)
   }
@@ -27,7 +28,7 @@ settingsRouter.put('/', authRequired, requireRole('admin'), async (req, res, nex
     }
     const supabase = getSupabase()
     for (const entry of entries) {
-      if (!entry?.key) continue
+      if (!entry?.key || entry.key === 'fy_lock_password') continue
       await supabase
         .from('app_settings')
         .upsert({ key: entry.key, value: String(entry.value ?? '') }, { onConflict: 'key' })

@@ -3,9 +3,14 @@ import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
 import { getSetting } from '../services/settingsService.js'
-import type { PendingFollowup } from '../types/index.js'
+import { LOCKED_FY_MESSAGE, writeBlocked } from '../services/fyLock.js'
+import type { AuthUser, PendingFollowup } from '../types/index.js'
 
 export const followupsRouter = Router()
+
+function actorKey(req: { user?: AuthUser }): string {
+  return req.user?.id || req.user?.email || 'anon'
+}
 
 function fmtMoney(n: number): string {
   return new Intl.NumberFormat('en-PK', {
@@ -82,6 +87,11 @@ followupsRouter.post('/send', authRequired, async (req, res, next) => {
     const failed: { invoiceId: string; reason: string }[] = []
 
     for (const inv of invoices ?? []) {
+      const locked = writeBlocked(actorKey(req as { user?: AuthUser }), inv.invoice_date as string | null)
+      if (locked) {
+        failed.push({ invoiceId: inv.id, reason: LOCKED_FY_MESSAGE })
+        continue
+      }
       const rel = inv.contracts as unknown as
         | { contract_no: string; vendor_id: string; vendors: { name: string; email: string | null }[] | null }
         | null

@@ -38,3 +38,48 @@ export function emitAppEvent(type: AppEventType, title: string, message: string,
     }
   }
 }
+
+// ---- Domain event bus: cross-module real-time linkage -----------------------
+// Any write in one module (approve invoice, change budget, add vendor, …)
+// emits a domain signal so other pages can refresh their derived state.
+
+export type DomainEntity =
+  | 'invoice'
+  | 'contract'
+  | 'vendor'
+  | 'budget'
+  | 'costElement'
+  | 'serviceMatrix'
+  | 'setting'
+  | 'followup'
+  | 'paymentOrder'
+  | 'user'
+  | 'import'
+
+export interface DomainEvent {
+  entity: DomainEntity
+  action: 'create' | 'update' | 'delete' | 'bulk'
+  at: number
+  id?: string
+}
+
+type DomainListener = (e: DomainEvent) => void
+const domainListeners = new Set<DomainListener>()
+
+export function subscribeDomain(fn: DomainListener): () => void {
+  domainListeners.add(fn)
+  return () => {
+    domainListeners.delete(fn)
+  }
+}
+
+export function emitDomain(entity: DomainEntity, action: DomainEvent['action'], id?: string): void {
+  const e: DomainEvent = { entity, action, at: Date.now(), id }
+  for (const fn of domainListeners) {
+    try {
+      fn(e)
+    } catch {
+      // a broken subscriber must not block the mutation
+    }
+  }
+}

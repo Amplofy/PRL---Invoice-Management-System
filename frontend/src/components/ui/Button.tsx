@@ -17,9 +17,9 @@ const VARIANT_CLASS: Record<Variant, string> = {
 }
 
 const SIZE_CLASS = {
-  sm: '!py-1.5 !px-2.5 !text-xs',
+  sm: 'btn-sm',
   md: '',
-  lg: '!py-3 !px-6 !text-base',
+  lg: 'btn-lg',
 }
 
 export default function Button({

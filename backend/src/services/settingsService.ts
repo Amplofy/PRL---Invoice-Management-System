@@ -15,3 +15,9 @@ export async function getSettingsMap(): Promise<Record<string, string>> {
   }
   return map
 }
+
+export async function upsertSetting(key: string, value: string): Promise<void> {
+  const supabase = getSupabase()
+  const { error } = await supabase.from('app_settings').upsert({ key, value }, { onConflict: 'key' })
+  if (error) throw new Error(error.message)
+}

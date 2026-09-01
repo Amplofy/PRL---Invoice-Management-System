@@ -484,6 +484,32 @@ function matchRows(
   return matches
 }
 
+/**
+ * Build a user-defined alignment candidate and score it against the current files.
+ * Exact/composite join on the given columns; fuzzy/numeric use the first column pair.
+ */
+export function customCandidate(
+  baseRows: Record<string, unknown>[],
+  compareRows: Record<string, unknown>[],
+  strategy: MatchStrategy,
+  baseCols: string[],
+  compareCols: string[],
+): KeyCandidate {
+  const id = `custom:${strategy}:${baseCols.join('+')}|${compareCols.join('+')}`
+  const cand: KeyCandidate = {
+    id,
+    strategy,
+    baseCols,
+    compareCols,
+    matchRate: 0,
+    score: 2,
+  }
+  const matches = matchRows(baseRows, compareRows, cand)
+  const hit = matches.filter((m) => m.compareIdx !== null).length
+  cand.matchRate = baseRows.length === 0 ? 0 : hit / baseRows.length
+  return cand
+}
+
 // ------------------------------------------------------------- verification
 
 interface UnitInfoCache {

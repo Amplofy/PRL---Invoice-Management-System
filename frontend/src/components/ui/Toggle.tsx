@@ -16,15 +16,23 @@ export default function Toggle({ checked, onChange, label, disabled }: TogglePro
       aria-checked={checked}
     >
       <span
-        className="relative h-6 w-11 rounded-full transition-colors duration-200"
+        className="relative inline-flex shrink-0 items-center overflow-hidden rounded-full transition-colors duration-200"
         style={{
+          width: 44,
+          height: 24,
+          padding: 3,
+          boxSizing: 'border-box',
           background: checked ? 'var(--gradient-primary)' : 'var(--surface-hover)',
-          border: '1px solid var(--border)',
+          boxShadow: 'inset 0 0 0 1px var(--border)',
         }}
       >
         <span
-          className="absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white shadow transition-transform duration-200"
-          style={{ transform: checked ? 'translateX(20px)' : 'translateX(2px)' }}
+          className="block shrink-0 rounded-full bg-white shadow-sm transition-transform duration-200"
+          style={{
+            width: 18,
+            height: 18,
+            transform: checked ? 'translateX(20px)' : 'translateX(0)',
+          }}
         />
       </span>
       {label && <span className="text-sm text-[var(--text-dim)]">{label}</span>}
