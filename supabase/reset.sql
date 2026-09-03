@@ -12,6 +12,7 @@ drop table if exists public.import_logs cascade;
 drop table if exists public.app_settings cascade;
 drop table if exists public.notifications cascade;
 drop table if exists public.audit_log cascade;
+drop table if exists public.po_history cascade;
 drop table if exists public.po_versions cascade;
 drop table if exists public.invoices cascade;
 drop table if exists public.cost_elements cascade;

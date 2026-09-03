@@ -71,7 +71,7 @@ export function SidebarNav() {
   const admin = isAdmin(user?.role)
 
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4">
+    <nav className="scroll-y flex-1 space-y-5 px-3 pb-4">
       {NAV_GROUPS.map((group) => {
         const visible = group.entries.filter((e) => !e.adminOnly || admin)
         if (visible.length === 0) return null

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Search, Kanban, Clock, ArrowRight } from 'lucide-react'
 import { apiGet } from '../lib/api'
@@ -10,6 +10,8 @@ import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
+import { useLiveDomain } from '../lib/store'
+import type { BadgeTone } from '../components/ui/StatusBadge'
 
 interface ServiceMatrixRow {
   id: string
@@ -38,13 +40,14 @@ interface InvoiceLite {
 interface ColumnDef {
   status: string
   title: string
-  tone: 'warn' | 'ok' | 'err'
+  tone: BadgeTone
   hint: string
 }
 
 const COLUMNS: ColumnDef[] = [
   { status: 'Pending', title: 'Pending', tone: 'warn', hint: 'Awaiting decision' },
-  { status: 'Approved', title: 'Approved', tone: 'ok', hint: 'Cleared for payment' },
+  { status: 'Approved', title: 'Approved', tone: 'ok', hint: 'Cleared for pay order' },
+  { status: 'Paid', title: 'Paid', tone: 'purple', hint: 'Payment released' },
   { status: 'Rejected', title: 'Rejected', tone: 'err', hint: 'Sent back to vendor' },
 ]
 
@@ -58,23 +61,30 @@ export default function WorkflowPage() {
   const [loading, setLoading] = useState(true)
   const toast = useToast()
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [m, i] = await Promise.all([
-          apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
-          apiGet<{ invoices: InvoiceLite[] }>(invoiceListPath({ fy: currentFiscalYear() })),
-        ])
-        setMatrix(m.serviceMatrix)
-        setInvoices(i.invoices)
-      } catch (e) {
-        toast.error('Failed to load workflow data', (e as Error).message)
-      } finally {
-        setLoading(false)
-      }
+  const load = useCallback(async () => {
+    try {
+      const [m, i] = await Promise.all([
+        apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
+        apiGet<{ invoices: InvoiceLite[] }>(invoiceListPath({ fy: currentFiscalYear() })),
+      ])
+      setMatrix(m.serviceMatrix)
+      setInvoices(i.invoices)
+    } catch (e) {
+      toast.error('Failed to load workflow data', (e as Error).message)
+    } finally {
+      setLoading(false)
     }
-    load()
   }, [toast])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const [, liveVersion] = useLiveDomain(['invoices', 'paymentOrders'])
+  useEffect(() => {
+    if (liveVersion === 0) return
+    void load()
+  }, [liveVersion, load])
 
   const t1Options = useMemo(() => Array.from(new Set(matrix.map((m) => m.t1))).sort(), [matrix])
   const t2Options = useMemo(() => {
@@ -159,7 +169,7 @@ export default function WorkflowPage() {
         </div>
       </GlassCard>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {COLUMNS.map((col) => {
           const items = filtered.filter((i) => i.status === col.status)
           const value = items.reduce((s, i) => s + Number(i.amount ?? 0), 0)

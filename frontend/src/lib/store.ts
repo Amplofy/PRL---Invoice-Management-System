@@ -57,6 +57,9 @@ export interface PaymentOrderLite {
   amount: number
   generated_at: string
   status: string
+  released_amount?: number | null
+  released_at?: string | null
+  released_by?: string | null
 }
 
 export interface DomainSnapshot {
@@ -239,6 +242,12 @@ export function emitCrossModule(entity: DomainEntity, action: DomainEvent['actio
       break
     case 'setting':
       void domain.refreshSettings()
+      break
+    case 'paymentOrder':
+      void domain.refreshPaymentOrders()
+      void domain.refreshBudgets()
+      invalidateInvoiceWindow()
+      void domain.refreshInvoices()
       break
     default:
       break

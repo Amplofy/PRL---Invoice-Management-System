@@ -40,7 +40,7 @@ export default function MultiSlicer({ label, options, selected, onChange }: Mult
           setOpen((v) => !v)
           setQuery('')
         }}
-        className={`btn btn-ghost !px-3 ${count > 0 ? 'border border-[var(--accent)] text-[var(--accent)]' : ''}`}
+        className={`btn btn-ghost btn-sm ${count > 0 ? 'border border-[var(--accent)] text-[var(--accent)]' : ''}`}
         title={`Filter by ${label.toLowerCase()}`}
       >
         <SquareDashedMousePointer size={14} />

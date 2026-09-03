@@ -1,5 +1,5 @@
-import { type ReactNode } from 'react'
-import { ArrowDownWideNarrow, ArrowUpDown, Download, Search } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { ArrowDown, ArrowUp, Download, Search } from 'lucide-react'
 import { type SortDirection } from '../../lib/export'
 
 export interface FilterDef {
@@ -35,18 +35,10 @@ interface DataToolbarProps {
 
 export default function DataToolbar({ search, filters, sort, onExport, exportLabel, resultsCount, filterBar, children }: DataToolbarProps) {
   return (
-    <div className="glass p-4">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="glass p-3.5">
+      <div className="flex flex-wrap items-center gap-2.5">
         {search && (
-          <div className="relative min-w-[200px] flex-1">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input
-              value={search.value}
-              onChange={(e) => search.onChange(e.target.value)}
-              placeholder={search.placeholder ?? 'Search…'}
-              className="input pl-10"
-            />
-          </div>
+          <SearchField value={search.value} onChange={search.onChange} placeholder={search.placeholder} />
         )}
 
         {filters && filters.length > 0 && (
@@ -88,18 +80,18 @@ export default function DataToolbar({ search, filters, sort, onExport, exportLab
               <button
                 type="button"
                 className="sort-dir-btn"
-                title={sort.direction === 'asc' ? 'Ascending' : 'Descending'}
+                title={sort.direction === 'asc' ? 'Ascending (click for descending)' : 'Descending (click for ascending)'}
                 aria-label={sort.direction === 'asc' ? 'Sort ascending' : 'Sort descending'}
                 onClick={() => sort.onDirectionChange(sort.direction === 'asc' ? 'desc' : 'asc')}
                 disabled={!sort.value}
               >
-                {sort.direction === 'asc' ? <ArrowDownWideNarrow size={15} aria-hidden /> : <ArrowUpDown size={15} aria-hidden />}
+                {sort.direction === 'asc' ? <ArrowUp size={15} aria-hidden /> : <ArrowDown size={15} aria-hidden />}
               </button>
             </div>
           )}
 
           {onExport && (
-            <button type="button" className="btn btn-ghost shrink-0 whitespace-nowrap" onClick={onExport}>
+            <button type="button" className="btn btn-ghost btn-sm shrink-0 whitespace-nowrap" onClick={onExport}>
               <Download size={15} /> {exportLabel ?? 'Export CSV'}
             </button>
           )}
@@ -115,6 +107,42 @@ export default function DataToolbar({ search, filters, sort, onExport, exportLab
       </div>
 
       {filterBar && <div className="mt-3 border-t border-[var(--border)] pt-3">{filterBar}</div>}
+    </div>
+  )
+}
+
+function SearchField({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const [draft, setDraft] = useState(value)
+
+  useEffect(() => {
+    setDraft(value)
+  }, [value])
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      if (draft !== value) onChange(draft)
+    }, 180)
+    return () => window.clearTimeout(id)
+  }, [draft, onChange, value])
+
+  return (
+    <div className="relative min-w-[200px] flex-1">
+      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={placeholder ?? 'Search…'}
+        className="input pl-10"
+        aria-label="Search"
+      />
     </div>
   )
 }

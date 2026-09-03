@@ -36,7 +36,7 @@ export const IMPORT_SCHEMAS: Record<ImportType, ElementDef[]> = {
     { key: 'service_from', label: 'Service From', type: 'date', required: false, aliases: ['service from', 'service start', 'period from', 'period start', 'from'] },
     { key: 'service_to', label: 'Service To', type: 'date', required: false, aliases: ['service to', 'service end', 'period to', 'period end', 'to'] },
     { key: 'amount', label: 'Amount', type: 'number', required: true, aliases: ['amount', 'invoice amount', 'bill amount', 'net amount', 'total amount', 'value', 'net value', 'total', 'amount rs', 'gross amount'] },
-    { key: 'status', label: 'Status', type: 'status', required: false, allowed: ['pending', 'approved', 'rejected', 'draft', 'void'], aliases: ['status', 'invoice status', 'approval status', 'state'] },
+    { key: 'status', label: 'Status', type: 'status', required: false, allowed: ['pending', 'approved', 'rejected', 'draft', 'void', 'paid'], aliases: ['status', 'invoice status', 'approval status', 'state'] },
     { key: 'approved_by', label: 'Approved By', type: 'text', required: false, aliases: ['approved by', 'approver', 'approved person', 'authorized by', 'authorised by'] },
     { key: 'approved_date', label: 'Approved Date', type: 'date', required: false, aliases: ['approved date', 'approval date', 'approved on', 'date approved', 'approval on'] },
     { key: 'approved_amount', label: 'Approved Amount', type: 'number', required: false, aliases: ['approved amount', 'approved value', 'sanctioned amount', 'approved amt', 'approved total'] },

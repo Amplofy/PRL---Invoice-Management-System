@@ -591,7 +591,7 @@ export default function ImportPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto" style={{ maxHeight: '26rem', overflowY: 'auto' }}>
+          <div className="table-scroll scroll-y" style={{ maxHeight: '26rem' }}>
             <table className="data-table">
               <thead>
                 <tr>

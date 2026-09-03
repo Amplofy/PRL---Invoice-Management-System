@@ -19,10 +19,11 @@ import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
-import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
 import { useFyLock } from '../lib/FyLockProvider'
 import { isClosedDate } from '../lib/fiscal'
+import SortableTh from '../components/ui/SortableTh'
 
 interface Vendor {
   id: string
@@ -80,7 +81,12 @@ export default function ContractsPage() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('end_date')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
+  const onSort = (key: string, dir: SortDirection) => {
+    setSortBy(key)
+    setSortDir(dir)
+  }
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [groupKey, setGroupKey] = useState<string | null>(null)
   const col = useColumnVisibility(
     'prl-eoms-cols-contracts',
@@ -179,8 +185,8 @@ export default function ContractsPage() {
     return applyFilters(searched, filters, filterColumns, (c, key) => {
       if (key === 'vendor') return vendorName(c)
       return (c as unknown as Record<string, string | number | null>)[key] ?? null
-    })
-  }, [contracts, search, filters, filterColumns])
+    }, filterLogic)
+  }, [contracts, search, filters, filterColumns, filterLogic])
 
   const totalValue = useMemo(() => filtered.reduce((s, c) => s + Number(c.value ?? 0), 0), [filtered])
   const vendorCount = useMemo(() => new Set(filtered.map((c) => vendorName(c))).size, [filtered])
@@ -209,9 +215,11 @@ export default function ContractsPage() {
               ? dateSortValue(row.end_date)
               : key === 'value'
                 ? Number(row.value ?? 0)
-                : key === 'vendor'
-                  ? String(vendorName(row))
-                  : String((row as unknown as Record<string, unknown>)[key] ?? ''),
+              : key === 'vendor'
+                ? String(vendorName(row))
+                  : key === 'period_days'
+                    ? Number(contractPeriodDays(row) ?? 0)
+                    : String((row as unknown as Record<string, unknown>)[key] ?? ''),
       ),
     [filtered, sortBy, sortDir],
   )
@@ -288,7 +296,7 @@ export default function ContractsPage() {
 
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search contract, vendor, service…' }}
-        filterBar={<AdvancedFilter columns={CONTRACT_FILTER_COLUMNS} filters={filters} onChange={setFilters} />}
+        filterBar={<AdvancedFilter columns={CONTRACT_FILTER_COLUMNS} filters={filters} onChange={setFilters} logic={filterLogic} onLogicChange={setFilterLogic} />}
         sort={{
           columns: [
             { key: 'contract_no', label: 'Contract no' },
@@ -317,18 +325,18 @@ export default function ContractsPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
-                {col.show('contract_no') && <th>Contract No</th>}
-                {col.show('vendor') && <th>Vendor</th>}
-                {col.show('service') && <th>Service</th>}
-                {col.show('start_date') && <th>Start</th>}
-                {col.show('end_date') && <th>End</th>}
-                {col.show('period_days') && <th className="text-right">Period (days)</th>}
-                {col.show('value') && <th className="text-right">Value</th>}
-                {col.show('status') && <th>Status</th>}
+                {col.show('contract_no') && <SortableTh label="Contract No" columnKey="contract_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('vendor') && <SortableTh label="Vendor" columnKey="vendor" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('service') && <SortableTh label="Service" columnKey="service" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('start_date') && <SortableTh label="Start" columnKey="start_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
+                {col.show('end_date') && <SortableTh label="End" columnKey="end_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
+                {col.show('period_days') && <SortableTh label="Period (days)" columnKey="period_days" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('value') && <SortableTh label="Value" columnKey="value" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {admin && <th className="text-right">Actions</th>}
               </tr>
             </thead>
@@ -358,10 +366,10 @@ export default function ContractsPage() {
                     {admin && (
                       <td>
                         <div className="flex items-center justify-end gap-1.5">
-                          <button className="btn btn-ghost !px-2.5 !py-1.5" title="Edit" onClick={() => setEditing(c)}>
+                          <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditing(c)}>
                             <Pencil size={14} />
                           </button>
-                          <button className="btn btn-ghost !px-2.5 !py-1.5" title="Delete" onClick={() => remove(c)}>
+                          <button className="btn btn-ghost btn-sm" title="Delete" onClick={() => remove(c)}>
                             <Trash2 size={14} className="text-[var(--danger)]" />
                           </button>
                         </div>

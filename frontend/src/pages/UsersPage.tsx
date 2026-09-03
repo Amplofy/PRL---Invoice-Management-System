@@ -16,7 +16,8 @@ import AdvancedFilter from '../components/ui/AdvancedFilter'
 import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, type SortDirection } from '../lib/export'
 import { useColumnVisibility } from '../lib/columns'
-import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
+import SortableTh from '../components/ui/SortableTh'
 
 interface Role {
   id: string
@@ -75,8 +76,13 @@ export default function UsersPage() {
   const [creating, setCreating] = useState(false)
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [sortBy, setSortBy] = useState('username')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
+  const onSort = (key: string, dir: SortDirection) => {
+    setSortBy(key)
+    setSortDir(dir)
+  }
   const toast = useToast()
 
   const load = useCallback(async () => {
@@ -135,8 +141,8 @@ export default function UsersPage() {
     return applyFilters(searched, filters, filterColumns, (u, key) => {
       if (key === 'role') return u.roles?.name ?? null
       return (u as unknown as Record<string, string | null>)[key] ?? null
-    })
-  }, [users, search, filters, filterColumns])
+    }, filterLogic)
+  }, [users, search, filters, filterColumns, filterLogic])
 
   const activeCount = useMemo(() => filteredUsers.filter((u) => u.status === 'active').length, [filteredUsers])
 
@@ -153,7 +159,9 @@ export default function UsersPage() {
               ? String(row.full_name ?? '')
               : key === 'email'
                 ? String(row.email ?? '')
-                : String(row.status ?? ''),
+                : key === 'role'
+                  ? String(row.roles?.name ?? '')
+                  : String(row.status ?? ''),
       ),
     [filteredUsers, sortBy, sortDir],
   )
@@ -220,7 +228,7 @@ export default function UsersPage() {
           />
           <DataToolbar
             search={{ value: search, onChange: setSearch, placeholder: 'Search users…' }}
-            filterBar={<AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} />}
+            filterBar={<AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} logic={filterLogic} onLogicChange={setFilterLogic} />}
             sort={{
               columns: [
                 { key: 'username', label: 'Username' },
@@ -246,15 +254,15 @@ export default function UsersPage() {
             />
           </DataToolbar>
           <GlassCard className="overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="table-scroll">
               <table className="data-table">
               <thead>
                 <tr>
-                  {col.show('username') && <th>Username</th>}
-                  {col.show('full_name') && <th>Full Name</th>}
-                  {col.show('email') && <th>Email</th>}
-                  {col.show('role') && <th>Role</th>}
-                  {col.show('status') && <th>Status</th>}
+                  {col.show('username') && <SortableTh label="Username" columnKey="username" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                  {col.show('full_name') && <SortableTh label="Full Name" columnKey="full_name" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                  {col.show('email') && <SortableTh label="Email" columnKey="email" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                  {col.show('role') && <SortableTh label="Role" columnKey="role" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                  {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                   <th className="text-right">Actions</th>
                 </tr>
               </thead>
@@ -276,10 +284,10 @@ export default function UsersPage() {
                     )}
                     <td>
                       <div className="flex items-center justify-end gap-1.5">
-                        <button className="btn btn-ghost !px-2.5 !py-1.5" onClick={() => setEditing(u)}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setEditing(u)}>
                           <Pencil size={14} />
                         </button>
-                        <button className="btn btn-ghost !px-2.5 !py-1.5" title="Delete user" onClick={() => remove(u)}>
+                        <button className="btn btn-ghost btn-sm" title="Delete user" onClick={() => remove(u)}>
                           <Trash2 size={14} className="text-[var(--danger)]" />
                         </button>
                       </div>

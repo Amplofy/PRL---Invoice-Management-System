@@ -29,7 +29,7 @@ export default function GroupByPicker({ options, value, onChange }: GroupByPicke
       <button
         ref={btnRef}
         type="button"
-        className={`btn btn-ghost !px-3 ${value ? 'text-[var(--accent)]' : ''}`}
+        className={`btn btn-ghost btn-sm ${value ? 'text-[var(--accent)]' : ''}`}
         onClick={() => {
           setRect(btnRef.current?.getBoundingClientRect() ?? null)
           setOpen((v) => !v)

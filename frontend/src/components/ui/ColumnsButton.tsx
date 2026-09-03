@@ -35,7 +35,7 @@ export default function ColumnsButton({ columns, isVisible, onToggle, onReset, h
       <button
         ref={btnRef}
         type="button"
-        className={`btn btn-ghost !px-3 ${open ? 'bg-[var(--surface-hover)]' : ''}`}
+        className={`btn btn-ghost btn-sm ${open ? 'bg-[var(--surface-hover)]' : ''}`}
         onClick={() => (open ? setOpen(false) : openPanel())}
         title="Show or hide columns"
       >
@@ -75,7 +75,7 @@ export default function ColumnsButton({ columns, isVisible, onToggle, onReset, h
                   <RotateCcw size={10} /> Reset
                 </button>
               </div>
-              <div className="max-h-72 space-y-0.5 overflow-y-auto">
+              <div className="scroll-y max-h-72 space-y-0.5">
                 {columns.map((c) => {
                   const active = isVisible(c.key)
                   return (

@@ -129,7 +129,7 @@ create table if not exists public.invoices (
   service_from    date,
   service_to      date,
   amount          numeric(18,2) not null default 0 check (amount >= 0),
-  status          text not null default 'Pending' check (status in ('Pending','Approved','Rejected','Draft','Void')),
+  status          text not null default 'Pending' check (status in ('Pending','Approved','Rejected','Draft','Void','Paid')),
   approved_by     text,
   approved_date   timestamptz,
   approved_amount numeric(18,2),
@@ -149,7 +149,29 @@ create table if not exists public.po_versions (
   invoice_id   uuid not null references public.invoices(id) on delete cascade,
   serial_no    text not null,
   generated_at timestamptz not null default now(),
-  generated_by text
+  generated_by text,
+  status       text not null default 'Generated' check (status in ('Generated','Cleared','Rejected')),
+  amount       numeric(18,2) not null default 0 check (amount >= 0),
+  finance_approved_by text,
+  finance_approved_at timestamptz,
+  finance_remarks     text,
+  released_amount     numeric(18,2),
+  released_by         text,
+  released_at         timestamptz
+);
+
+-- -------------------------------------------------------------
+-- Payment Order history (finance decisions and payment releases)
+-- -------------------------------------------------------------
+create table if not exists public.po_history (
+  id          uuid primary key default gen_random_uuid(),
+  po_id       uuid not null references public.po_versions(id) on delete cascade,
+  invoice_id  uuid references public.invoices(id) on delete set null,
+  action      text not null,
+  actor       text,
+  amount      numeric(18,2),
+  remarks     text,
+  created_at  timestamptz not null default now()
 );
 
 -- -------------------------------------------------------------
@@ -268,3 +290,6 @@ create index if not exists idx_contracts_vendor on public.contracts(vendor_id);
 create index if not exists idx_comparison_results_cmp on public.comparison_results(comparison_id);
 create index if not exists idx_audit_timestamp on public.audit_log(timestamp);
 create index if not exists idx_po_versions_invoice on public.po_versions(invoice_id);
+create index if not exists idx_po_versions_status on public.po_versions(status);
+create index if not exists idx_po_history_po on public.po_history(po_id);
+create index if not exists idx_po_history_created on public.po_history(created_at);

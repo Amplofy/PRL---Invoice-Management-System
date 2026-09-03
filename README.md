@@ -41,9 +41,10 @@ Built by **Abdul Moiz**.
 | **Invoices** | Full CRUD, status filters, search, approve/reject with mandatory reason |
 | **Workflow** | T1 → T2 → T3 cascading drill-down over the service matrix |
 | **Approvals** | Queue of pending invoices with one-click approve/reject |
-| **Payment Orders** | Generate and print PO/cheque-request documents for approved invoices |
+| **Payment Orders** | Finance last-decision queue: approve & release payment (clears budget remaining) or reject. Print PO documents. |
+| **PO History** | Immutable record of generated, cleared, and rejected pay orders, including released amounts |
 | **Contracts** | Vendor service contracts with expiry badges and utilization |
-| **Reports** | Spend by vendor/service, approval mix, CSV export |
+| **Reports** | Spend by vendor/service, cash pipeline (invoice approved / PO generated / payment released), CSV export |
 | **Data Import** | Upload CSV/XLSX/XLS/PDF → validate → admin-confirm → commit |
 | **Follow-ups** | One-click pending-invoice reminders to surveyor emails |
 | **Compare** | Two-file diff with join key + column mapping + tolerance + discrepancy email |
@@ -73,8 +74,9 @@ Built by **Abdul Moiz**.
 │   ├── test/            # 20 unit tests (node:test)
 │   └── .env.example
 └── supabase/
-    ├── schema.sql       # 20 tables + RLS
-    └── seed.sql         # roles, permissions, settings, sample data
+    ├── schema.sql       # tables + RLS (fresh installs)
+    ├── seed.sql         # roles, permissions, settings, sample data
+    └── finance_po.sql   # additive migration for existing databases (PO finance + Paid)
 ```
 
 ---
@@ -166,23 +168,11 @@ The Vite dev server proxies `/api` to `http://localhost:3001`, so `VITE_API_URL`
 
 ### Demo mode (no Supabase or backend needed)
 
-To preview the UI fully offline with sample data, set `VITE_DEMO_MODE=true` in `frontend/.env` and restart the dev server:
+On the Login page, click **Enter demo**. That writes `prl-eoms-demo=1` to `sessionStorage` and loads in-memory data from `frontend/src/lib/mockApi.ts` — no backend, no database, no emails sent.
 
-```bash
-# frontend/.env
-VITE_DEMO_MODE=true
-VITE_API_URL=
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-```
+Demo finance user: `f.hussain@prl.com.pk`. Admin and superadmin can also clear pay orders (`isFinanceOfficial`).
 
-In demo mode:
-
-- Any email/password signs you in as an admin (a banner appears on the login page).
-- All `/api/*` calls are served from `frontend/src/lib/mockApi.ts` with realistic in-memory data — no backend, no database, no emails actually sent.
-- Every module works: dashboard, invoices (approve/reject/PO), workflow cascade, approvals, contracts, reports, import wizard, follow-ups, compare, payment orders, users/roles, admin settings and audit log.
-
-Set `VITE_DEMO_MODE=false` (or remove it) to go back to the real Supabase + backend.
+Refresh the tab or click sign out to leave demo. `VITE_DEMO_MODE` is unused.
 
 ### Tests & checks
 
@@ -212,3 +202,15 @@ Stored in `app_settings` and editable from **Admin → Email Templates**:
 `profiles` · `roles` · `permissions` · `role_permissions` · `users` · `vendors` · `contracts` · `service_matrix` · `cost_elements` · `invoices` · `po_versions` · `audit_log` · `notifications` · `app_settings` · `import_logs` · `comparisons` · `comparison_results` · `discrepancy_emails` · `followup_emails`
 
 See `supabase/schema.sql` for the canonical DDL.
+
+### Invoice and payment lifecycle
+
+Invoice statuses (DB check constraint): `Pending` | `Approved` | `Rejected` | `Draft` | `Void` | `Paid`.
+
+1. Operations approve an invoice (`Approved`).
+2. A pay order is generated (`po_versions.status = Generated`) and sits in Payment Orders awaiting finance.
+3. A finance official (`admin` / `superadmin` / `finance`) **Approve & Release**. The PO becomes `Cleared`, `released_amount` is stored, the invoice becomes `Paid`, and remaining budget is reduced by the released amount. Original yearly budget lines are not mutated.
+4. Finance may instead **Reject** the PO (`Rejected`). The invoice stays `Approved`.
+5. PO History records generate / clear / reject events. Reports show invoice approved, PO generated, and payment released side by side.
+
+Existing databases: run `supabase/finance_po.sql` after the original schema. Fresh installs use the updated `schema.sql` + `seed.sql`.

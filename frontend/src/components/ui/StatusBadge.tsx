@@ -19,11 +19,15 @@ export function statusTone(status: string | null | undefined): BadgeTone {
   switch ((status ?? '').toLowerCase()) {
     case 'approved':
     case 'approved_paid':
-    case 'paid':
+    case 'cleared':
+    case 'released':
+    case 'payment released':
     case 'completed':
     case 'active':
     case 'sent':
       return 'ok'
+    case 'paid':
+      return 'purple'
     case 'pending':
     case 'pending_approval':
     case 'draft':
@@ -39,6 +43,8 @@ export function statusTone(status: string | null | undefined): BadgeTone {
     case 'submitted':
     case 'follow_up':
     case 'in_progress':
+    case 'generated':
+    case 'awaiting finance':
       return 'warn'
     default:
       return 'neutral'

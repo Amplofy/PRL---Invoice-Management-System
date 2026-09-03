@@ -148,7 +148,7 @@ export default function Header() {
           <LiveClock />
           <button
             onClick={() => setPaletteOpen(true)}
-            className="btn btn-ghost hidden !px-3 md:flex"
+            className="btn btn-ghost btn-sm hidden md:flex"
             title="Search (Ctrl+K)"
           >
             <Search size={16} />
