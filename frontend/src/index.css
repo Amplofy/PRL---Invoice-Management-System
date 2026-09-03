@@ -352,18 +352,18 @@ body::after {
 
 ::selection { background: color-mix(in srgb, var(--accent) 34%, transparent); color: inherit; }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 45%, transparent), color-mix(in srgb, var(--accent-2) 45%, transparent));
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+html {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 42%, transparent) transparent;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 70%, transparent), color-mix(in srgb, var(--accent-2) 70%, transparent));
-  background-clip: padding-box;
-  border: 2px solid transparent;
+html::-webkit-scrollbar { width: 8px; }
+html::-webkit-scrollbar-track { background: transparent; }
+html::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: 999px;
+}
+html::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 68%, transparent);
 }
 
 :focus-visible {
@@ -534,6 +534,11 @@ body::after {
   padding: 0;
   flex-shrink: 0;
   overflow: visible;
+}
+.btn.btn-sm.btn-icon {
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
 }
 .badge {
   display: inline-flex;
@@ -723,7 +728,121 @@ select.input {
   width: 100%;
   border-radius: var(--radius-md);
   overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
   border: 1px solid var(--table-border);
+}
+
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.table-container:hover,
+.table-container:focus-within,
+.table-scroll:hover,
+.table-scroll:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--accent) 48%, transparent) transparent;
+}
+.table-container::-webkit-scrollbar,
+.table-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.table-container::-webkit-scrollbar-track,
+.table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 0 10px;
+}
+.table-container::-webkit-scrollbar-thumb,
+.table-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+.table-container:hover::-webkit-scrollbar-thumb,
+.table-container:focus-within::-webkit-scrollbar-thumb,
+.table-scroll:hover::-webkit-scrollbar-thumb,
+.table-scroll:focus-within::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.table-scroll.scroll-y {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.scroll-y {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 35%, transparent) transparent;
+}
+.scroll-y::-webkit-scrollbar { width: 6px; }
+.scroll-y::-webkit-scrollbar-track { background: transparent; }
+.scroll-y::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 999px;
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: -0.15rem -0.3rem;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  max-width: 100%;
+}
+.th-sort:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+.th-sort.is-active { color: var(--accent); }
+.th-sort-icon {
+  display: inline-flex;
+  opacity: 0.28;
+  flex-shrink: 0;
+}
+.th-sort:hover .th-sort-icon,
+.th-sort.is-active .th-sort-icon { opacity: 1; }
+
+.filter-logic {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.filter-logic button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.filter-logic button.is-active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
 }
 table.data-table {
   width: 100%;
@@ -752,6 +871,32 @@ table.data-table {
 }
 .data-table td.cell-wrap { white-space: normal; }
 .data-table td.max-w-md { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; }
+.data-table th.col-actions,
+.data-table td.col-actions {
+  position: sticky;
+  right: 0;
+  white-space: nowrap;
+}
+.data-table th.col-actions {
+  z-index: 3;
+  background: var(--table-head-bg);
+  box-shadow: -10px 0 14px -10px color-mix(in srgb, #000 28%, transparent);
+  min-width: 7.5rem;
+  width: 7.5rem;
+  text-align: right;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.data-table td.col-actions {
+  z-index: 2;
+  background: color-mix(in srgb, var(--table-head-bg) 88%, var(--surface));
+  box-shadow: -10px 0 14px -10px color-mix(in srgb, #000 22%, transparent);
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.data-table tbody tr:hover td.col-actions {
+  background: var(--table-row-hover);
+}
 .data-table tbody tr { transition: background 0.18s ease, transform 0.18s ease; }
 .data-table tbody tr:hover { background: var(--table-row-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
@@ -833,6 +978,7 @@ tr.grand-total-row td {
 .kanban-card.pending::before { background: var(--gradient-warn); }
 .kanban-card.approved::before { background: var(--gradient-success); }
 .kanban-card.rejected::before { background: var(--gradient-danger); }
+.kanban-card.paid::before { background: var(--gradient-primary); }
 
 /* ================= Timeline ================= */
 .timeline {
@@ -1536,16 +1682,18 @@ body.qa-lift .qa-root {
 }
 .ct-fy-grid.is-split {
   grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
 }
 @media (max-width: 900px) {
   .ct-fy-grid.is-split { grid-template-columns: 1fr; }
 }
 .ct-pane {
+  min-width: 0;
   border-radius: 16px;
-  padding: 0.15rem 0 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
+  padding: 0.9rem 1rem 1rem;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  border: 1px solid var(--glass-border);
 }
 .ct-pane-head {
   display: flex;
@@ -1571,7 +1719,9 @@ body.qa-lift .qa-root {
   flex-direction: column;
   gap: 0.65rem;
   max-height: 280px;
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-width: thin;
 }
 .ct-util-row {
   display: grid;

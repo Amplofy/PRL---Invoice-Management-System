@@ -15,6 +15,7 @@ insert into public.permissions (id, name, category) values
   ('invoice.approve',     'Approve Invoices',       'Invoices'),
   ('invoice.reject',      'Reject Invoices',        'Invoices'),
   ('po.generate',         'Generate Payment Orders','Invoices'),
+  ('po.approve',          'Approve Payment Orders', 'Finance'),
   ('contract.view',       'View Contracts',         'Contracts'),
   ('contract.create',     'Create Contracts',       'Contracts'),
   ('contract.update',     'Update Contracts',       'Contracts'),
@@ -37,7 +38,8 @@ insert into public.roles (id, name, description, color) values
   ('00000000-0000-0000-0000-000000000002', 'approver',  'Review and approve invoices', '#34d399'),
   ('00000000-0000-0000-0000-000000000003', 'processor', 'Create and process invoices', '#f472b6'),
   ('00000000-0000-0000-0000-000000000004', 'viewer',    'Read-only access', '#94a3b8'),
-  ('00000000-0000-0000-0000-000000000005', 'auditor',   'Reports and audit access', '#fbbf24')
+  ('00000000-0000-0000-0000-000000000005', 'auditor',   'Reports and audit access', '#fbbf24'),
+  ('00000000-0000-0000-0000-000000000006', 'finance',   'Final pay-order approval and payment release', '#22d3ee')
 on conflict (id) do nothing;
 
 -- -------------------------------------------------------------
@@ -77,6 +79,14 @@ insert into public.role_permissions (role_id, permission_id) values
   ('00000000-0000-0000-0000-000000000005', 'invoice.view'),
   ('00000000-0000-0000-0000-000000000005', 'contract.view'),
   ('00000000-0000-0000-0000-000000000005', 'reports.view')
+on conflict do nothing;
+
+-- finance: last decision on payment orders, then release to surveyor
+insert into public.role_permissions (role_id, permission_id) values
+  ('00000000-0000-0000-0000-000000000006', 'invoice.view'),
+  ('00000000-0000-0000-0000-000000000006', 'contract.view'),
+  ('00000000-0000-0000-0000-000000000006', 'reports.view'),
+  ('00000000-0000-0000-0000-000000000006', 'po.approve')
 on conflict do nothing;
 
 -- -------------------------------------------------------------

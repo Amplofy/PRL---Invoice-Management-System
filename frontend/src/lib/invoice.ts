@@ -64,6 +64,18 @@ export interface ValidateInvoiceOptions {
   futureDateAllowed?: boolean
 }
 
+/** Contract usage: operationally approved or already paid. */
+export function countsTowardUtilization(status: string | null | undefined): boolean {
+  const s = String(status ?? '')
+  return s === 'Approved' || s === 'Accepted' || s === 'Paid'
+}
+
+/** Signed off by operations, including invoices whose payment has been released. */
+export function isSignedOff(status: string | null | undefined): boolean {
+  const s = String(status ?? '')
+  return s === 'Approved' || s === 'Accepted' || s === 'Paid'
+}
+
 export function t1Options(matrix: ServiceMatrixRow[]): string[] {
   return Array.from(new Set(matrix.map((m) => m.t1))).sort()
 }
@@ -117,7 +129,7 @@ export function contractUtilization(
   const matched = invoices.filter(
     (i) => i.contract_id === contractId && i.id !== excludeInvoiceId,
   )
-  const approved = matched.filter((i) => i.status === 'Approved' || i.status === 'Accepted')
+  const approved = matched.filter((i) => countsTowardUtilization(i.status))
   const used = approved.reduce((s, i) => s + Number(i.amount || 0), 0)
   const value = Number(contract?.value ?? 0)
   const remaining = value - used

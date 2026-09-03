@@ -11,7 +11,9 @@ import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import SummaryCards from '../components/ui/SummaryCards'
 import { useColumnVisibility } from '../lib/columns'
-import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
+import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import SortableTh from '../components/ui/SortableTh'
 
 interface AuditEntry {
   id: string
@@ -66,6 +68,13 @@ export default function AuditLogPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
+  const [sortBy, setSortBy] = useState('timestamp')
+  const [sortDir, setSortDir] = useState<SortDirection>('desc')
+  const onSort = (key: string, dir: SortDirection) => {
+    setSortBy(key)
+    setSortDir(dir)
+  }
   const col = useColumnVisibility(
     'prl-eoms-cols-audit-log',
     AUDIT_COLUMN_DEFS.map((c) => c.key),
@@ -116,9 +125,27 @@ export default function AuditLogPage() {
         )
       : entries
     return applyFilters(searched, filters, filterColumns, (e, key) =>
-      (e as unknown as Record<string, string | null>)[key] ?? null,
-    )
-  }, [entries, search, filters, filterColumns])
+      key === 'user' ? e.user_email : (e as unknown as Record<string, string | null>)[key] ?? null,
+    filterLogic)
+  }, [entries, search, filters, filterColumns, filterLogic])
+
+  const sorted = useMemo(
+    () =>
+      sortRows(
+        filtered,
+        sortBy || null,
+        sortDir,
+        (row, key) =>
+          key === 'timestamp' || key === 'when' || key === 'exact_time'
+            ? dateSortValue(row.timestamp)
+            : key === 'user'
+              ? String(row.user_email ?? '')
+              : key === 'entity'
+                ? String(row.entity_type ?? '')
+                : String((row as unknown as Record<string, string | null>)[key] ?? ''),
+      ),
+    [filtered, sortBy, sortDir],
+  )
 
   const usersCount = useMemo(() => new Set(filtered.map((e) => e.user_email ?? 'system')).size, [filtered])
   const todayCount = useMemo(() => {
@@ -162,8 +189,20 @@ export default function AuditLogPage() {
 
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search summary, entity id, user…' }}
-        filterBar={<AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} />}
-        resultsCount={filtered.length}
+        filterBar={<AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} logic={filterLogic} onLogicChange={setFilterLogic} />}
+        sort={{
+          columns: [
+            { key: 'timestamp', label: 'When' },
+            { key: 'action', label: 'Action' },
+            { key: 'entity', label: 'Entity' },
+            { key: 'user', label: 'User' },
+          ],
+          value: sortBy,
+          direction: sortDir,
+          onValueChange: setSortBy,
+          onDirectionChange: setSortDir,
+        }}
+        resultsCount={sorted.length}
       >
         <ColumnsButton
           columns={AUDIT_COLUMN_DEFS}
@@ -175,21 +214,21 @@ export default function AuditLogPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
-                {col.show('action') && <th>Action</th>}
-                {col.show('entity') && <th>Entity</th>}
-                {col.show('entity_id') && <th>Entity ID</th>}
+                {col.show('action') && <SortableTh label="Action" columnKey="action" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('entity') && <SortableTh label="Entity" columnKey="entity" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('entity_id') && <SortableTh label="Entity ID" columnKey="entity_id" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('summary') && <th>Summary</th>}
-                {col.show('user') && <th>User</th>}
-                {col.show('when') && <th className="text-right">When</th>}
-                {col.show('exact_time') && <th className="text-right">Exact Time</th>}
+                {col.show('user') && <SortableTh label="User" columnKey="user" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('when') && <SortableTh label="When" columnKey="timestamp" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('exact_time') && <SortableTh label="Exact Time" columnKey="exact_time" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((e) => (
+              {sorted.map((e) => (
                 <tr key={e.id}>
                   {col.show('action') && (
                     <td>

@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, CalendarRange, CalendarDays, Building2, FileText, Layers, Activity, X, Clock } from 'lucide-react'
+import { Download, TrendingUp, TrendingDown, AlertTriangle, BadgeCheck, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, CalendarRange, CalendarDays, Building2, FileText, Layers, Activity, X, Clock, Banknote } from 'lucide-react'
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   ArcElement,
   Tooltip,
   Legend,
   Filler,
 } from 'chart.js'
-import { Doughnut, Line } from 'react-chartjs-2'
+import { Bar, Doughnut, Line } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
 import { formatMoney } from '../lib/format'
 import { useLiveDomain } from '../lib/store'
@@ -27,8 +28,10 @@ import { useCountUp } from '../lib/useCountUp'
 import PillSelect from '../components/ui/PillSelect'
 import FilterCommandBar, { type FilterSuggestion, type FilterDimMeta } from '../components/ui/FilterCommandBar'
 import Tabs from '../components/ui/Tabs'
+import { invoiceApprovedAmount, poGeneratedAmount, poReleasedAmount } from '../lib/paymentOrder'
+import { isSignedOff } from '../lib/invoice'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, Tooltip, Legend, Filler)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler)
 
 interface Invoice {
   id: string
@@ -37,8 +40,24 @@ interface Invoice {
   contract_id: string | null
   cost_element: string | null
   amount: number
+  approved_amount?: number | null
   status: string
   contracts: { contract_no: string | null; vendors: Array<{ name: string | null }> | null } | null
+}
+interface ReportPo {
+  id: string
+  invoice_id?: string | null
+  status: string | null
+  amount?: number | null
+  released_amount?: number | null
+  invoices?: {
+    id?: string
+    invoice_date?: string | null
+    amount?: number
+    approved_amount?: number | null
+    cost_element?: string | null
+    status?: string | null
+  } | null
 }
 interface Contract {
   id: string
@@ -79,7 +98,7 @@ const DIM_META: Record<string, FilterDimMeta> = {
   status: { label: 'Status', icon: Activity, color: '#f87171' },
 }
 
-const STATUS_OPTIONS = ['Pending', 'Submitted', 'Approved', 'Rejected']
+const STATUS_OPTIONS = ['Pending', 'Approved', 'Paid', 'Rejected']
 
 type Tone = 'primary' | 'ok' | 'warn' | 'err' | 'purple'
 
@@ -100,6 +119,7 @@ export default function ReportsPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const [yearBudgets, setYearBudgets] = useState<YearBudget[]>([])
+  const [paymentOrders, setPaymentOrders] = useState<ReportPo[]>([])
   const [loading, setLoading] = useState(true)
   const [chips, setChips] = useState<FilterChip[]>(() => [{ dim: 'fy', value: currentFiscalYear() }])
   const [view, setView] = useState<ReportView>('overview')
@@ -108,7 +128,7 @@ export default function ReportsPage() {
   const toast = useToast()
   const c = useThemeColors()
 
-  const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'budgets'])
+  const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'budgets', 'paymentOrders'])
   const reload = useCallback(() => {
     setLoading(true)
     Promise.all([
@@ -117,11 +137,13 @@ export default function ReportsPage() {
       ),
       apiGet<{ contracts: Contract[] }>('/api/contracts'),
       apiGet<{ budgets: YearBudget[] }>('/api/budgets'),
+      apiGet<{ paymentOrders: ReportPo[] }>('/api/payment-orders'),
     ])
-      .then(([inv, con, bud]) => {
+      .then(([inv, con, bud, po]) => {
         setInvoices(inv.invoices)
         setContracts(con.contracts)
         setYearBudgets(bud.budgets)
+        setPaymentOrders(po.paymentOrders)
       })
       .catch((e) => toast.error('Failed to load reports', (e as Error).message))
       .finally(() => setLoading(false))
@@ -204,9 +226,19 @@ export default function ReportsPage() {
     [invoices, fy, quarter, vendors, contractIds, costElements, statuses],
   )
 
+  const invoiceById = useMemo(() => new Map(invoices.map((i) => [i.id, i])), [invoices])
+
+  const scopedPos = useMemo(() => {
+    const ids = new Set(scoped.map((i) => i.id))
+    return paymentOrders.filter((p) => {
+      const id = p.invoice_id ?? p.invoices?.id
+      return Boolean(id && ids.has(id))
+    })
+  }, [paymentOrders, scoped])
+
   const metricValue = (inv: Invoice): number => {
     if (metric === 'invoices') return 1
-    if (metric === 'approved') return inv.status === 'Approved' || inv.status === 'Submitted' ? Number(inv.amount ?? 0) : 0
+    if (metric === 'approved') return isSignedOff(inv.status) ? invoiceApprovedAmount(inv) : 0
     return Number(inv.amount ?? 0)
   }
 
@@ -218,25 +250,34 @@ export default function ReportsPage() {
   const kpi = useMemo(() => {
     const total = scoped.reduce((s, i) => s + Number(i.amount ?? 0), 0)
     const approved = scoped
-      .filter((i) => i.status === 'Approved' || i.status === 'Submitted')
-      .reduce((s, i) => s + Number(i.amount ?? 0), 0)
+      .filter((i) => isSignedOff(i.status))
+      .reduce((s, i) => s + invoiceApprovedAmount(i), 0)
     const pending = scoped.filter((i) => i.status === 'Pending').reduce((s, i) => s + Number(i.amount ?? 0), 0)
     const targetFy = fy !== ALL ? fy : currentFiscalYear()
     const yearLines = yearBudgets.filter((b) => b.fy === targetFy)
     const yearTotal = yearLines.reduce((s, b) => s + Number(b.amount ?? 0), 0)
     const contractTotal = contracts.reduce((s, cn) => s + Number(cn.value ?? 0), 0)
     const budget = yearTotal > 0 ? yearTotal : contractTotal
+    const approvedInvoice = scoped
+      .filter((i) => isSignedOff(i.status))
+      .reduce((s, i) => s + invoiceApprovedAmount(i), 0)
+    const poGenerated = scopedPos.reduce((s, p) => s + poGeneratedAmount(p, p.invoices), 0)
+    const released = scopedPos.reduce((s, p) => s + poReleasedAmount(p), 0)
     return {
       total,
       count: scoped.length,
       approved,
       pending,
       avg: scoped.length > 0 ? total / scoped.length : 0,
-      utilization: budget > 0 ? (total / budget) * 100 : 0,
+      utilization: budget > 0 ? (released / budget) * 100 : 0,
       budget,
       budgetLabel: yearTotal > 0 ? `${targetFy} budget` : 'contract value',
+      approvedInvoice,
+      poGenerated,
+      released,
+      remaining: budget - released,
     }
-  }, [scoped, contracts, yearBudgets, fy])
+  }, [scoped, scopedPos, contracts, yearBudgets, fy])
 
   const quarterly = useMemo(() => {
     const map = new Map<FiscalQuarter, { invoices: number; value: number }>()
@@ -269,6 +310,58 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scoped, reportFy, metric])
 
+  const paymentMonthly = useMemo(() => {
+    const approved = new Map<number, number>()
+    const generated = new Map<number, number>()
+    const released = new Map<number, number>()
+    for (const inv of scoped) {
+      const fi = fiscalOf(inv.invoice_date)
+      if (!fi || fi.fy !== reportFy) continue
+      const idx = fyMonthIndex(new Date(inv.invoice_date as string))
+      if (isSignedOff(inv.status)) {
+        approved.set(idx, (approved.get(idx) ?? 0) + invoiceApprovedAmount(inv))
+      }
+    }
+    for (const p of scopedPos) {
+      const inv = invoiceById.get(p.invoice_id ?? p.invoices?.id ?? '') ?? p.invoices
+      const date = inv?.invoice_date
+      const fi = fiscalOf(date)
+      if (!fi || fi.fy !== reportFy) continue
+      const idx = fyMonthIndex(new Date(date as string))
+      generated.set(idx, (generated.get(idx) ?? 0) + poGeneratedAmount(p, inv))
+      const rel = poReleasedAmount(p)
+      if (rel > 0) released.set(idx, (released.get(idx) ?? 0) + rel)
+    }
+    return FY_MONTHS.map((label, idx) => ({
+      label,
+      approved: approved.get(idx) ?? 0,
+      generated: generated.get(idx) ?? 0,
+      released: released.get(idx) ?? 0,
+    }))
+  }, [scoped, scopedPos, invoiceById, reportFy])
+
+  const paymentByVendor = useMemo(() => {
+    const map = new Map<string, { approved: number; generated: number; released: number }>()
+    for (const inv of scoped) {
+      const v = vendorOf(inv)
+      const b = map.get(v) ?? { approved: 0, generated: 0, released: 0 }
+      if (isSignedOff(inv.status)) b.approved += invoiceApprovedAmount(inv)
+      map.set(v, b)
+    }
+    for (const p of scopedPos) {
+      const inv = invoiceById.get(p.invoice_id ?? p.invoices?.id ?? '')
+      const v = inv ? vendorOf(inv) : 'Unknown'
+      const b = map.get(v) ?? { approved: 0, generated: 0, released: 0 }
+      b.generated += poGeneratedAmount(p, inv ?? p.invoices)
+      b.released += poReleasedAmount(p)
+      map.set(v, b)
+    }
+    return [...map.entries()]
+      .map(([vendor, v]) => ({ vendor, ...v }))
+      .sort((a, b) => b.released - a.released || b.generated - a.generated)
+      .slice(0, 6)
+  }, [scoped, scopedPos, invoiceById])
+
   const categoryMix = useMemo(() => {
     const mix = { OPEX: 0, CAPEX: 0, Uncategorized: 0 }
     for (const inv of scoped) mix[costCategory(inv.cost_element)] += Number(inv.amount ?? 0)
@@ -293,16 +386,17 @@ export default function ReportsPage() {
   }, [scoped, metric])
 
   const budgetRows = useMemo(() => {
-    const actualByContract = new Map<string, number>()
-    for (const inv of scoped) {
-      if (!inv.contract_id) continue
-      actualByContract.set(inv.contract_id, (actualByContract.get(inv.contract_id) ?? 0) + Number(inv.amount ?? 0))
+    const releasedByContract = new Map<string, number>()
+    for (const p of scopedPos) {
+      const inv = invoiceById.get(p.invoice_id ?? p.invoices?.id ?? '')
+      if (!inv?.contract_id) continue
+      releasedByContract.set(inv.contract_id, (releasedByContract.get(inv.contract_id) ?? 0) + poReleasedAmount(p))
     }
     return contracts
       .filter((cn) => contractIds.size === 0 || contractIds.has(cn.id))
       .map((cn) => {
         const budget = Number(cn.value ?? 0)
-        const actual = actualByContract.get(cn.id) ?? 0
+        const actual = releasedByContract.get(cn.id) ?? 0
         return {
           id: cn.id,
           contract_no: cn.contract_no,
@@ -314,7 +408,7 @@ export default function ReportsPage() {
         }
       })
       .sort((a, b) => b.utilization - a.utilization)
-  }, [contracts, scoped, contractIds])
+  }, [contracts, scopedPos, invoiceById, contractIds])
 
   const insights = useMemo<Insight[]>(() => {
     const list: Insight[] = []
@@ -370,10 +464,11 @@ export default function ReportsPage() {
     const targetFy = fy !== ALL ? fy : currentFiscalYear()
     const lines = yearBudgets.filter((b) => b.fy === targetFy)
     const actualByCe = new Map<string, number>()
-    for (const inv of scoped) {
-      if (fiscalOf(inv.invoice_date)?.fy !== targetFy) continue
-      const ce = inv.cost_element ?? 'Uncoded'
-      actualByCe.set(ce, (actualByCe.get(ce) ?? 0) + Number(inv.amount ?? 0))
+    for (const p of scopedPos) {
+      const inv = invoiceById.get(p.invoice_id ?? p.invoices?.id ?? '') ?? p.invoices
+      if (fiscalOf(inv?.invoice_date)?.fy !== targetFy) continue
+      const ce = inv?.cost_element ?? 'Uncoded'
+      actualByCe.set(ce, (actualByCe.get(ce) ?? 0) + poReleasedAmount(p))
     }
     const rows = lines.map((l) => {
       const actual = actualByCe.get(l.cost_element) ?? 0
@@ -383,7 +478,7 @@ export default function ReportsPage() {
     const uncoded = actualByCe.get('Uncoded') ?? 0
     if (uncoded > 0) rows.push({ code: 'Uncoded', budget: 0, actual: uncoded, variance: -uncoded, utilization: 0 })
     return rows.sort((a, b) => b.actual - a.actual)
-  }, [scoped, yearBudgets, fy])
+  }, [scopedPos, invoiceById, yearBudgets, fy])
 
   // ---- Vendor performance scorecard ---------------------------------------
   const vendorScore = useMemo(() => {
@@ -393,7 +488,7 @@ export default function ReportsPage() {
       const b = map.get(v) ?? { count: 0, total: 0, approved: 0, pending: 0, rejected: 0 }
       b.count += 1
       b.total += Number(inv.amount ?? 0)
-      if (inv.status === 'Approved' || inv.status === 'Submitted') b.approved += 1
+      if (isSignedOff(inv.status)) b.approved += 1
       else if (inv.status === 'Pending') b.pending += 1
       else if (inv.status === 'Rejected') b.rejected += 1
       map.set(v, b)
@@ -411,7 +506,7 @@ export default function ReportsPage() {
       { key: '61-90', label: '61-90 days', min: 61, max: 90 },
       { key: '90+', label: '90+ days', min: 91, max: 100000 },
     ]
-    const open = scoped.filter((i) => i.status === 'Pending' || i.status === 'Submitted')
+    const open = scoped.filter((i) => i.status === 'Pending')
     const now = Date.now()
     return buckets.map((b) => {
       const rows = open.filter((i) => {
@@ -974,7 +1069,117 @@ export default function ReportsPage() {
             </div>
           </div>
           <div className="mt-3 text-center text-xs text-[var(--text-dim)]">
-            Rs {formatMoney(kpi.total)} drawn of Rs {formatMoney(kpi.budget)} {kpi.budgetLabel}
+            Rs {formatMoney(kpi.released)} released of Rs {formatMoney(kpi.budget)} {kpi.budgetLabel}
+            <div className="mt-1">Rs {formatMoney(kpi.remaining)} remaining</div>
+          </div>
+        </div>
+      </div>
+      )}
+
+      {view === 'overview' && (
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 rise-in" style={{ animationDelay: '280ms' }}>
+        <div className="report-card glass p-5">
+          <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Invoice approved</div>
+          <div className="mt-1 text-2xl font-black text-[var(--accent)]">Rs {formatMoney(kpi.approvedInvoice)}</div>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">Amount signed off on invoices</p>
+        </div>
+        <div className="report-card glass p-5">
+          <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">PO generated</div>
+          <div className="mt-1 text-2xl font-black">Rs {formatMoney(kpi.poGenerated)}</div>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">Pay orders waiting on or cleared by finance</p>
+        </div>
+        <div className="report-card glass p-5">
+          <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Payment released</div>
+          <div className="mt-1 text-2xl font-black text-[var(--accent-3)]">Rs {formatMoney(kpi.released)}</div>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">Paid to surveyor and deducted from budget</p>
+        </div>
+      </div>
+      )}
+
+      {view === 'overview' && (
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="report-card glass p-6 lg:col-span-2 rise-in" style={{ animationDelay: '320ms' }}>
+          <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            <Banknote size={13} className="text-[var(--accent-3)]" /> Monthly cash pipeline · {reportFy}
+          </span>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">Approved invoices vs pay orders generated vs amount released</p>
+          <div className="mt-4 h-56">
+            <Line
+              data={{
+                labels: paymentMonthly.map((m) => m.label),
+                datasets: [
+                  {
+                    label: 'Approved',
+                    data: paymentMonthly.map((m) => m.approved),
+                    borderColor: c.accent,
+                    backgroundColor: c.accent + '18',
+                    fill: false,
+                    tension: 0.35,
+                    pointRadius: 3,
+                  },
+                  {
+                    label: 'PO generated',
+                    data: paymentMonthly.map((m) => m.generated),
+                    borderColor: c.warn,
+                    backgroundColor: c.warn + '18',
+                    fill: false,
+                    tension: 0.35,
+                    pointRadius: 3,
+                  },
+                  {
+                    label: 'Released',
+                    data: paymentMonthly.map((m) => m.released),
+                    borderColor: c.accent3,
+                    backgroundColor: c.accent3 + '22',
+                    fill: true,
+                    tension: 0.35,
+                    pointRadius: 3,
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 900, easing: 'easeOutQuart' },
+                plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 12 } } },
+                scales: {
+                  x: { grid: { display: false }, ticks: { color: c.ticks } },
+                  y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
+                },
+              }}
+            />
+          </div>
+        </div>
+        <div className="report-card glass p-6 rise-in" style={{ animationDelay: '380ms' }}>
+          <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            <Landmark size={13} className="text-[var(--accent)]" /> Released by vendor
+          </span>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">Top vendors: approved / generated / released</p>
+          <div className="mt-4 h-56">
+            {paymentByVendor.length > 0 ? (
+              <Bar
+                data={{
+                  labels: paymentByVendor.map((v) => v.vendor),
+                  datasets: [
+                    { label: 'Approved', data: paymentByVendor.map((v) => v.approved), backgroundColor: c.accent, borderRadius: 4 },
+                    { label: 'Generated', data: paymentByVendor.map((v) => v.generated), backgroundColor: c.warn, borderRadius: 4 },
+                    { label: 'Released', data: paymentByVendor.map((v) => v.released), backgroundColor: c.accent3, borderRadius: 4 },
+                  ],
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  animation: { duration: 900, easing: 'easeOutQuart' },
+                  plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 10 } } },
+                  scales: {
+                    x: { grid: { display: false }, ticks: { color: c.ticks, maxRotation: 40, minRotation: 0 } },
+                    y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
+                  },
+                }}
+              />
+            ) : (
+              <EmptyState title="No payment data" description="Release a pay order to populate this chart." />
+            )}
           </div>
         </div>
       </div>
@@ -1120,7 +1325,7 @@ export default function ReportsPage() {
         <div className="px-5 pt-5">
           <div className="section-title" style={{ marginBottom: 0 }}>{reportFy} quarterly breakdown</div>
         </div>
-        <div className="mt-4 overflow-x-auto">
+        <div className="table-scroll mt-4">
           <table className="data-table">
             <thead>
               <tr>
@@ -1195,7 +1400,7 @@ export default function ReportsPage() {
           </div>
           <GlassCard className="p-5">
             <p className="text-sm text-[var(--text-dim)]">
-              Aging uses invoice date for Pending and Submitted rows in {reportFy}. Approved and rejected invoices are excluded.
+              Aging uses invoice date for Pending rows in {reportFy}. Approved, paid and rejected invoices are excluded.
             </p>
           </GlassCard>
         </div>

@@ -624,7 +624,7 @@ export default function DeltaAnalystPage() {
                     <input type="number" className="input" value={dateTol} onChange={(e) => setDateTol(e.target.value)} />
                   </Field>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="table-scroll">
                   <table className="w-full min-w-[480px] text-left text-sm">
                     <thead>
                       <tr className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">

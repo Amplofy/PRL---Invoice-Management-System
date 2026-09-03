@@ -161,7 +161,8 @@ Base URL: `https://<render-service>.onrender.com/api`
 | `/workflow` | Workflow Board | Pending/Approved/Rejected kanban columns |
 | `/contracts` | Contracts | KPIs + utilization table |
 | `/approvals` | Approvals | pending queue with Review |
-| `/payment-orders` | Payment Orders | PO generation + print |
+| `/payment-orders` | Payment Orders | Finance last-decision queue: Approve & Release or Reject; print |
+| `/po-history` | PO History | Generated / cleared / rejected pay-order trail |
 | `/reports` | Reports | vendor bar chart, service pie, summary + CSV export |
 | `/admin` | System Admin | password gate, master data CRUD, settings |
 | `/users` | User Management | users/roles/permissions/sessions tabs |

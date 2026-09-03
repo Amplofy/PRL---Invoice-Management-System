@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages, Banknote, Clock, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
-import { contractUtilization, validateInvoice, nextSerialNo, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
+import { contractUtilization, isSignedOff, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -20,15 +20,17 @@ import { emitAppEvent } from '../lib/notify'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
-import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
+import SortableTh from '../components/ui/SortableTh'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { currentFiscalYear, isClosedDate, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
 import { useFyLock } from '../lib/FyLockProvider'
 import { invoiceListPath } from '../lib/invoiceWindow'
+import { useLiveDomain } from '../lib/store'
 
 interface VendorRef {
   name: string | null
@@ -67,7 +69,7 @@ interface Contract {
   vendors: VendorRef[] | null
 }
 
-const STATUSES = ['all', 'Pending', 'Approved', 'Rejected', 'Submitted']
+const STATUSES = ['all', 'Pending', 'Approved', 'Paid', 'Rejected']
 
 const INVOICE_COLUMN_DEFS = [
   { key: 'invoice_no', label: 'Invoice No' },
@@ -100,6 +102,7 @@ export default function InvoicesPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [groupKey, setGroupKey] = useState<string | null>(null)
   const [editing, setEditing] = useState<Invoice | null>(null)
   const [creating, setCreating] = useState(false)
@@ -108,6 +111,10 @@ export default function InvoicesPage() {
   const [generatingPo, setGeneratingPo] = useState<Invoice | null>(null)
   const [sortBy, setSortBy] = useState('invoice_date')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
+  const onSort = (key: string, dir: SortDirection) => {
+    setSortBy(key)
+    setSortDir(dir)
+  }
   const [poReady, setPoReady] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [lastClickIdx, setLastClickIdx] = useState<number | null>(null)
@@ -139,6 +146,12 @@ export default function InvoicesPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  const [, liveVersion] = useLiveDomain(['invoices', 'paymentOrders'])
+  useEffect(() => {
+    if (liveVersion === 0) return
+    void load()
+  }, [liveVersion, load])
 
   useEffect(() => {
     const st = location.state as { newInvoice?: boolean } | null
@@ -277,9 +290,9 @@ export default function InvoicesPage() {
             .includes(q),
         )
       : invoices
-    return applyFilters(searched, filters, filterColumns, invoiceFilterValue)
+    return applyFilters(searched, filters, filterColumns, invoiceFilterValue, filterLogic)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, search, filters, filterColumns])
+  }, [invoices, search, filters, filterColumns, filterLogic])
 
   const sorted = useMemo(
     () =>
@@ -290,13 +303,19 @@ export default function InvoicesPage() {
         (row, key) =>
           key === 'invoice_date'
             ? dateSortValue(row.invoice_date)
+            : key === 'processing_date'
+              ? dateSortValue(row.processing_date)
             : key === 'amount'
               ? Number(row.amount ?? 0)
+              : key === 'trips'
+                ? Number(row.trips ?? 0)
               : key === 'status'
                 ? String(row.status ?? '')
                 : key === 'vendor'
                   ? String(vendorOf(row))
-                  : (row as unknown as Record<string, unknown>)[key] as string | null,
+                  : key === 'contract'
+                    ? String(contractNoOf(row))
+                    : (row as unknown as Record<string, unknown>)[key] as string | null,
       ),
     [filtered, sortBy, sortDir],
   )
@@ -425,7 +444,7 @@ export default function InvoicesPage() {
 
   const pendingCount = useMemo(() => filtered.filter((i) => i.status === 'Pending').length, [filtered])
   const approvedCount = useMemo(
-    () => filtered.filter((i) => i.status === 'Approved' || i.status === 'Submitted').length,
+    () => filtered.filter((i) => isSignedOff(i.status)).length,
     [filtered],
   )
   const rejectedCount = useMemo(() => filtered.filter((i) => i.status === 'Rejected').length, [filtered])
@@ -500,9 +519,9 @@ export default function InvoicesPage() {
             tone: 'warn',
           },
           {
-            label: 'Approved / Submitted',
+            label: 'Signed off / Paid',
             value: String(approvedCount),
-            sub: 'cleared for PO',
+            sub: 'signed off or paid',
             icon: <CheckCircle2 size={16} />,
             tone: 'ok',
           },
@@ -519,7 +538,7 @@ export default function InvoicesPage() {
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search invoice or serial no…' }}
         filterBar={
-          <AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} />
+          <AdvancedFilter columns={filterColumns} filters={filters} onChange={setFilters} logic={filterLogic} onLogicChange={setFilterLogic} />
         }
         sort={{
           columns: [
@@ -549,7 +568,7 @@ export default function InvoicesPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
@@ -566,20 +585,20 @@ export default function InvoicesPage() {
                     title="Select all pending invoices"
                   />
                 </th>
-                {col.show('invoice_no') && <th>Invoice No</th>}
-                {col.show('serial') && <th>Serial</th>}
-                {col.show('date') && <th>Date</th>}
-                {col.show('processing_date') && <th>Processing</th>}
-                {col.show('vendor') && <th>Vendor</th>}
-                {col.show('contract') && <th>Contract</th>}
-                {col.show('item') && <th>Item</th>}
+                {col.show('invoice_no') && <SortableTh label="Invoice No" columnKey="invoice_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('serial') && <SortableTh label="Serial" columnKey="serial_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('date') && <SortableTh label="Date" columnKey="invoice_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
+                {col.show('processing_date') && <SortableTh label="Processing" columnKey="processing_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
+                {col.show('vendor') && <SortableTh label="Vendor" columnKey="vendor" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('contract') && <SortableTh label="Contract" columnKey="contract" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('item') && <SortableTh label="Item" columnKey="item_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('service') && <th>Service</th>}
                 {col.show('tanker') && <th>Tanker</th>}
-                {col.show('trips') && <th className="text-right">Trips</th>}
-                {col.show('cost_element') && <th>Cost Element</th>}
+                {col.show('trips') && <SortableTh label="Trips" columnKey="trips" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('cost_element') && <SortableTh label="Cost Element" columnKey="cost_element" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('service_period') && <th>Service Period</th>}
-                {col.show('amount') && <th className="text-right">Amount</th>}
-                {col.show('status') && <th>Status</th>}
+                {col.show('amount') && <SortableTh label="Amount" columnKey="amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('remarks') && <th>Remarks</th>}
                 <th className="text-right">Actions</th>
               </tr>
@@ -653,16 +672,16 @@ export default function InvoicesPage() {
                   )}
                   <td>
                     <div className="flex items-center justify-end gap-1.5">
-                      <button className="btn btn-ghost !px-2.5 !py-1.5" title="Edit" onClick={() => setEditing(inv)}>
+                      <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditing(inv)}>
                         <Pencil size={14} />
                       </button>
                       {inv.status === 'Pending' && (
                         <>
-                          <button className="btn btn-ghost !px-2.5 !py-1.5" title="Approve" onClick={() => approve(inv)}>
+                          <button className="btn btn-ghost btn-sm" title="Approve" onClick={() => approve(inv)}>
                             <CheckCircle2 size={14} className="text-[var(--accent-3)]" />
                           </button>
                           <button
-                            className="btn btn-ghost !px-2.5 !py-1.5"
+                            className="btn btn-ghost btn-sm"
                             title="Reject"
                             onClick={() => {
                               setRejecting(inv)
@@ -673,27 +692,27 @@ export default function InvoicesPage() {
                           </button>
                         </>
                       )}
-                      {inv.status === 'Approved' &&
-                        (poReady[inv.id] ? (
+                      {(inv.status === 'Approved' || inv.status === 'Paid') &&
+                        (poReady[inv.id] || inv.status === 'Paid' ? (
                           <Link
                             to="/payment-orders"
-                            className="btn btn-ghost !px-2.5 !py-1.5"
-                            title="Payment order generated — view"
+                            className="btn btn-ghost btn-sm"
+                            title={inv.status === 'Paid' ? 'Payment released — view PO' : 'Payment order generated — view'}
                           >
                             <FileCheck2 size={14} className="text-[var(--accent-3)]" />
                           </Link>
                         ) : (
                           <button
-                            className="btn btn-ghost !px-2.5 !py-1.5"
+                            className="btn btn-ghost btn-sm"
                             title="Generate PO"
                             onClick={() => setGeneratingPo(inv)}
                           >
                             <FileOutput size={14} className="text-[var(--accent-2)]" />
                           </button>
                         ))}
-                      {admin && (
+                      {admin && inv.status !== 'Paid' && (
                         <button
-                          className="btn btn-ghost !px-2.5 !py-1.5"
+                          className="btn btn-ghost btn-sm"
                           title="Delete"
                           onClick={() => deleteInvoice(inv)}
                         >

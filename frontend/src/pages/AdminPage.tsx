@@ -21,7 +21,7 @@ import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import SummaryCards from '../components/ui/SummaryCards'
 import { useFyLock } from '../lib/FyLockProvider'
-import { invoiceListPath } from '../lib/invoiceWindow'
+import { poReleasedAmount } from '../lib/paymentOrder'
 
 interface Setting { key: string; value: string }
 interface Vendor { id: string; name: string; email: string | null }
@@ -36,7 +36,14 @@ interface ServiceMatrix {
 }
 interface CostElement { code: string; name: string | null }
 interface BudgetLine { id: string; fy: string; cost_element: string; amount: number; notes: string }
-interface InvoiceLite { cost_element: string | null; invoice_date: string | null; amount: number; status: string }
+interface AdminPo {
+  id: string
+  invoice_id?: string | null
+  status: string | null
+  amount?: number | null
+  released_amount?: number | null
+  invoices?: { cost_element?: string | null; invoice_date?: string | null } | null
+}
 
 interface DraftLine {
   id: string
@@ -103,11 +110,11 @@ export default function AdminPage() {
   const [matrix, setMatrix] = useState<ServiceMatrix[]>([])
   const [costs, setCosts] = useState<CostElement[]>([])
   const [budgets, setBudgets] = useState<BudgetLine[]>([])
-  const [invoices, setInvoices] = useState<InvoiceLite[]>([])
+  const [paymentOrders, setPaymentOrders] = useState<AdminPo[]>([])
   const [loading, setLoading] = useState(true)
   const toast = useToast()
 
-  const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'vendors', 'budgets', 'settings'])
+  const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'vendors', 'budgets', 'settings', 'paymentOrders'])
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -115,20 +122,20 @@ export default function AdminPage() {
 
   const load = useCallback(async () => {
     try {
-      const [s, v, m, c, b, inv] = await Promise.all([
+      const [s, v, m, c, b, po] = await Promise.all([
         apiGet<{ settings: Setting[] }>('/api/settings'),
         apiGet<{ vendors: Vendor[] }>('/api/vendors'),
         apiGet<{ serviceMatrix: ServiceMatrix[] }>('/api/service-matrix'),
         apiGet<{ costElements: CostElement[] }>('/api/cost-elements'),
         apiGet<{ budgets: BudgetLine[] }>('/api/budgets'),
-        apiGet<{ invoices: InvoiceLite[] }>(invoiceListPath({ fy: currentFiscalYear() })),
+        apiGet<{ paymentOrders: AdminPo[] }>('/api/payment-orders'),
       ])
       setSettings(mergeSettings(s.settings))
       setVendors(v.vendors)
       setMatrix(m.serviceMatrix)
       setCosts(c.costElements)
       setBudgets(b.budgets)
-      setInvoices(inv.invoices)
+      setPaymentOrders(po.paymentOrders)
     } catch (e) {
       toast.error('Failed to load administration data', (e as Error).message)
     } finally {
@@ -144,9 +151,11 @@ export default function AdminPage() {
   const missingEmails = vendors.filter((v) => !v.email).length
   const fyBudget = budgets.filter((b) => b.fy === fyNow)
   const fyBudgetTotal = fyBudget.reduce((s, b) => s + b.amount, 0)
-  const fyActual = invoices
-    .filter((i) => fiscalOf(i.invoice_date)?.fy === fyNow)
-    .reduce((s, i) => s + Number(i.amount ?? 0), 0)
+  const fyActual = paymentOrders.reduce((s, p) => {
+    const date = p.invoices?.invoice_date
+    if (fiscalOf(date)?.fy !== fyNow) return s
+    return s + poReleasedAmount(p)
+  }, 0)
 
   return (
     <div className="space-y-5">
@@ -190,13 +199,13 @@ export default function AdminPage() {
         />
       )}
       {tab === 'budgets' && (
-        <BudgetPanel costs={costs} invoices={invoices} saved={budgets} onSaved={setBudgets} />
+        <BudgetPanel costs={costs} paymentOrders={paymentOrders} saved={budgets} onSaved={setBudgets} />
       )}
       {tab === 'vendors' && <VendorPanel vendors={vendors} onReload={load} />}
       {tab === 'catalog' && <CatalogPanel matrix={matrix} costs={costs} onReload={load} />}
       {tab === 'costs' && <CostPanel costs={costs} onReload={load} />}
       {tab === 'workflow' && <WorkflowPanel settings={settings} setSettings={setSettings} />}
-      {tab === 'alerts' && <AlertsPanel settings={settings} setSettings={setSettings} invoices={invoices} budgets={budgets} fy={fyNow} />}
+      {tab === 'alerts' && <AlertsPanel settings={settings} setSettings={setSettings} paymentOrders={paymentOrders} budgets={budgets} fy={fyNow} />}
       {tab === 'settings' && (
         <>
           <FyLockCard />
@@ -287,10 +296,10 @@ function OverviewPanel({
 }
 
 function BudgetPanel({
-  costs, invoices, saved, onSaved,
+  costs, paymentOrders, saved, onSaved,
 }: {
   costs: CostElement[]
-  invoices: InvoiceLite[]
+  paymentOrders: AdminPo[]
   saved: BudgetLine[]
   onSaved: (rows: BudgetLine[]) => void
 }) {
@@ -317,14 +326,14 @@ function BudgetPanel({
 
   const actuals = useMemo(() => {
     const map = new Map<string, number>()
-    for (const inv of invoices) {
-      if (fiscalOf(inv.invoice_date)?.fy !== fy) continue
-      const code = inv.cost_element || ''
+    for (const p of paymentOrders) {
+      if (fiscalOf(p.invoices?.invoice_date)?.fy !== fy) continue
+      const code = p.invoices?.cost_element || ''
       if (!code) continue
-      map.set(code, (map.get(code) ?? 0) + Number(inv.amount ?? 0))
+      map.set(code, (map.get(code) ?? 0) + poReleasedAmount(p))
     }
     return map
-  }, [invoices, fy])
+  }, [paymentOrders, fy])
 
   const totalBudget = draft.reduce((s, d) => s + (Number(d.amount) || 0), 0)
   const totalActual = [...actuals.values()].reduce((s, n) => s + n, 0)
@@ -395,19 +404,19 @@ function BudgetPanel({
         </div>
         <div className="text-right text-sm">
           <div className="font-bold tabular-nums">Rs {formatMoney(totalBudget)}</div>
-          <div className="text-xs text-[var(--text-muted)]">Actual Rs {formatMoney(totalActual)}</div>
+          <div className="text-xs text-[var(--text-muted)]">Released Rs {formatMoney(totalActual)}</div>
         </div>
         <Button variant="primary" size="sm" onClick={save} disabled={saving}>
           <Save size={14} /> {saving ? 'Saving…' : `Save ${fy}`}
         </Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
               <th>Cost element</th>
               <th className="text-right">Budget (Rs)</th>
-              <th className="text-right">Actual</th>
+              <th className="text-right">Released</th>
               <th className="text-right">Remaining</th>
               <th>Notes</th>
               <th className="w-12" />
@@ -495,7 +504,7 @@ function VendorPanel({ vendors, onReload }: { vendors: Vendor[]; onReload: () =>
         </div>
         <Button size="sm" onClick={() => setCreating(true)}><Plus size={14} /> Add vendor</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -559,7 +568,7 @@ function CatalogPanel({ matrix, costs, onReload }: { matrix: ServiceMatrix[]; co
         </div>
         <Button size="sm" onClick={() => setCreating(true)}><Plus size={14} /> Add row</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -632,7 +641,7 @@ function CostPanel({ costs, onReload }: { costs: CostElement[]; onReload: () => 
         </div>
         <Button size="sm" onClick={() => setCreating(true)}><Plus size={14} /> Add element</Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -744,11 +753,11 @@ function WorkflowPanel({ settings, setSettings }: { settings: Setting[]; setSett
 }
 
 function AlertsPanel({
-  settings, setSettings, invoices, budgets, fy,
+  settings, setSettings, paymentOrders, budgets, fy,
 }: {
   settings: Setting[]
   setSettings: Dispatch<SetStateAction<Setting[]>>
-  invoices: InvoiceLite[]
+  paymentOrders: AdminPo[]
   budgets: BudgetLine[]
   fy: string
 }) {
@@ -792,9 +801,10 @@ function AlertsPanel({
 
   const fyBudget = budgets.filter((b) => b.fy === fy)
   const totalBudget = fyBudget.reduce((s, b) => s + b.amount, 0)
-  const fyActual = invoices
-    .filter((i) => fiscalOf(i.invoice_date)?.fy === fy)
-    .reduce((s, i) => s + Number(i.amount ?? 0), 0)
+  const fyActual = paymentOrders.reduce((s, p) => {
+    if (fiscalOf(p.invoices?.invoice_date)?.fy !== fy) return s
+    return s + poReleasedAmount(p)
+  }, 0)
   const util = totalBudget > 0 ? (fyActual / totalBudget) * 100 : 0
   const threshold = Number(merged.find((m) => m.key === 'alert_threshold_pct')?.value ?? '90')
   const breach = util >= threshold

@@ -102,3 +102,7 @@ export function useAuth(): AuthContextValue {
 export function isAdmin(role: string | null | undefined): boolean {
   return role === 'admin' || role === 'superadmin'
 }
+
+export function isFinanceOfficial(role: string | null | undefined): boolean {
+  return isAdmin(role) || role === 'finance'
+}

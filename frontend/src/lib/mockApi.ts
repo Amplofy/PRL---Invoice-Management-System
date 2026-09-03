@@ -7,6 +7,7 @@ const R_APPROVER = '00000000-0000-0000-0000-000000000002'
 const R_PROCESSOR = '00000000-0000-0000-0000-000000000003'
 const R_VIEWER = '00000000-0000-0000-0000-000000000004'
 const R_AUDITOR = '00000000-0000-0000-0000-000000000005'
+const R_FINANCE = '00000000-0000-0000-0000-000000000006'
 
 const V_ABDUL = '00000000-0000-0000-0000-000000000101'
 const V_KARACHI = '00000000-0000-0000-0000-000000000102'
@@ -21,6 +22,7 @@ const PERMISSION_IDS = [
   'invoice.reject', 'po.generate', 'contract.view', 'contract.create', 'contract.update',
   'contract.delete', 'vendor.manage', 'import.data', 'delta.data', 'followup.send',
   'reports.view', 'users.manage', 'roles.manage', 'settings.manage',
+  'po.approve',
 ]
 
 interface Permission { id: string; name: string; category: string }
@@ -60,7 +62,31 @@ interface Invoice {
   updated_by: string | null
   contracts: unknown
 }
-interface PoVersion { id: string; invoice_id: string; serial_no: string; generated_at: string; generated_by: string | null }
+interface PoVersion {
+  id: string
+  invoice_id: string
+  serial_no: string
+  generated_at: string
+  generated_by: string | null
+  status: string
+  amount: number
+  finance_approved_by: string | null
+  finance_approved_at: string | null
+  finance_remarks: string | null
+  released_amount: number | null
+  released_by: string | null
+  released_at: string | null
+}
+interface PoHistoryRow {
+  id: string
+  po_id: string
+  invoice_id: string | null
+  action: string
+  actor: string | null
+  amount: number | null
+  remarks: string | null
+  created_at: string
+}
 interface AuditEntry { id: string; timestamp: string; user_email: string | null; action: string; entity_type: string | null; entity_id: string | null; summary: string | null; entity: string | null; description: string | null }
 interface BudgetLine { id: string; fy: string; cost_element: string; amount: number; notes: string }
 
@@ -90,6 +116,7 @@ const permissions: Permission[] = PERMISSION_IDS.map((id) => {
     'invoice.approve': ['Approve Invoices', 'Invoices'],
     'invoice.reject': ['Reject Invoices', 'Invoices'],
     'po.generate': ['Generate Payment Orders', 'Invoices'],
+    'po.approve': ['Approve Payment Orders', 'Finance'],
     'contract.view': ['View Contracts', 'Contracts'],
     'contract.create': ['Create Contracts', 'Contracts'],
     'contract.update': ['Update Contracts', 'Contracts'],
@@ -113,6 +140,7 @@ const rolePerms: Record<string, string[]> = {
   [R_PROCESSOR]: ['invoice.view', 'invoice.create', 'invoice.update', 'contract.view', 'reports.view'],
   [R_VIEWER]: ['invoice.view', 'contract.view'],
   [R_AUDITOR]: ['invoice.view', 'contract.view', 'reports.view'],
+  [R_FINANCE]: ['invoice.view', 'contract.view', 'reports.view', 'po.approve'],
 }
 
 const roles: Role[] = [
@@ -121,6 +149,7 @@ const roles: Role[] = [
   { id: R_PROCESSOR, name: 'processor', description: 'Create and process invoices', color: '#f472b6', role_permissions: rolePerms[R_PROCESSOR].map((permission_id) => ({ permission_id })) },
   { id: R_VIEWER, name: 'viewer', description: 'Read-only access', color: '#94a3b8', role_permissions: rolePerms[R_VIEWER].map((permission_id) => ({ permission_id })) },
   { id: R_AUDITOR, name: 'auditor', description: 'Reports and audit access', color: '#fbbf24', role_permissions: rolePerms[R_AUDITOR].map((permission_id) => ({ permission_id })) },
+  { id: R_FINANCE, name: 'finance', description: 'Final pay-order approval and payment release', color: '#22d3ee', role_permissions: rolePerms[R_FINANCE].map((permission_id) => ({ permission_id })) },
 ]
 
 const roleById = (id: string | null): { name: string; color: string } | null => {
@@ -132,6 +161,7 @@ const users: UserRow[] = [
   { id: '00000000-0000-0000-0000-000000000301', username: 'a.malik', full_name: 'Abdul Moiz', email: 'a.malik@prl.com.pk', role_id: R_ADMIN, status: 'active', roles: roleById(R_ADMIN) },
   { id: '00000000-0000-0000-0000-000000000302', username: 'approver', full_name: 'S. Khan', email: 's.khan@prl.com.pk', role_id: R_APPROVER, status: 'active', roles: roleById(R_APPROVER) },
   { id: '00000000-0000-0000-0000-000000000303', username: 'processor', full_name: 'R. Ahmed', email: 'r.ahmed@prl.com.pk', role_id: R_PROCESSOR, status: 'active', roles: roleById(R_PROCESSOR) },
+  { id: '00000000-0000-0000-0000-000000000304', username: 'finance', full_name: 'F. Hussain', email: 'f.hussain@prl.com.pk', role_id: R_FINANCE, status: 'active', roles: roleById(R_FINANCE) },
 ]
 
 const vendors: Vendor[] = [
@@ -236,7 +266,7 @@ const invoices: Invoice[] = [
   makeInvoice({ serial_no: 'S-1002', processing_date: '2026-06-18', contract_id: C_BH, invoice_no: 'INV-2026-0012', invoice_date: '2026-06-18', t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', item_no: 'IT-2', cost_element: 'SUR', service_from: '2026-06-08', service_to: '2026-06-18', amount: 640000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-2001', processing_date: '2026-07-05', contract_id: C_TH, invoice_no: 'INV-2026-0021', invoice_date: '2026-07-05', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', tanker_name: 'MT Star', trips: 3, item_no: 'IT-3', cost_element: 'THL', service_from: '2026-06-28', service_to: '2026-07-05', amount: 1200000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-2002', processing_date: '2026-07-22', contract_id: C_TH, invoice_no: 'INV-2026-0022', invoice_date: '2026-07-22', t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', tanker_name: 'MT Star', trips: 3, item_no: 'IT-4', cost_element: 'THL', service_from: '2026-07-12', service_to: '2026-07-22', amount: 980000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-07-23'), approved_amount: 980000 }),
-  makeInvoice({ serial_no: 'S-3001', processing_date: '2026-05-12', contract_id: C_SM, invoice_no: 'INV-2026-0031', invoice_date: '2026-05-12', t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', item_no: 'IT-5', cost_element: 'SM', service_from: '2026-05-01', service_to: '2026-05-12', amount: 410000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-05-14'), approved_amount: 410000 }),
+  makeInvoice({ serial_no: 'S-3001', processing_date: '2026-05-12', contract_id: C_SM, invoice_no: 'INV-2026-0031', invoice_date: '2026-05-12', t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', item_no: 'IT-5', cost_element: 'SM', service_from: '2026-05-01', service_to: '2026-05-12', amount: 410000, status: 'Paid', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-05-14'), approved_amount: 410000 }),
   makeInvoice({ serial_no: 'S-1003', processing_date: '2026-04-20', contract_id: C_BH, invoice_no: 'INV-2026-0013', invoice_date: '2026-04-20', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-6', cost_element: 'SUR', service_from: '2026-04-10', service_to: '2026-04-20', amount: 520000, status: 'Rejected', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-04-22'), remarks: 'Duplicate entry — same survey as INV-2026-0011' }),
   makeInvoice({ serial_no: 'S-2003', processing_date: '2026-08-02', contract_id: C_TH, invoice_no: 'INV-2026-0023', invoice_date: '2026-08-02', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', tanker_name: 'MT Moon', trips: 2, item_no: 'IT-7', cost_element: 'THL', service_from: '2026-07-25', service_to: '2026-08-02', amount: 1130000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-3002', processing_date: '2026-08-15', contract_id: C_SM, invoice_no: 'INV-2026-0032', invoice_date: '2026-08-15', t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', item_no: 'IT-8', cost_element: 'SM', service_from: '2026-08-05', service_to: '2026-08-15', amount: 275000, status: 'Pending' }),
@@ -248,8 +278,43 @@ for (const inv of invoices) {
 }
 
 const pos: PoVersion[] = [
-  { id: uid(), invoice_id: invoices[3].id, serial_no: 'PO-20260723001', generated_at: iso('2026-07-23'), generated_by: 'admin@prl.com.pk' },
-  { id: uid(), invoice_id: invoices[4].id, serial_no: 'PO-20260514001', generated_at: iso('2026-05-14'), generated_by: 'admin@prl.com.pk' },
+  {
+    id: uid(),
+    invoice_id: invoices[3].id,
+    serial_no: 'PO-20260723001',
+    generated_at: iso('2026-07-23'),
+    generated_by: 'admin@prl.com.pk',
+    status: 'Generated',
+    amount: 980000,
+    finance_approved_by: null,
+    finance_approved_at: null,
+    finance_remarks: null,
+    released_amount: null,
+    released_by: null,
+    released_at: null,
+  },
+  {
+    id: uid(),
+    invoice_id: invoices[4].id,
+    serial_no: 'PO-20260514001',
+    generated_at: iso('2026-05-14'),
+    generated_by: 'admin@prl.com.pk',
+    status: 'Cleared',
+    amount: 410000,
+    finance_approved_by: 'f.hussain@prl.com.pk',
+    finance_approved_at: iso('2026-05-16'),
+    finance_remarks: 'Cleared against FY25 SM budget',
+    released_amount: 410000,
+    released_by: 'f.hussain@prl.com.pk',
+    released_at: iso('2026-05-16'),
+  },
+]
+
+const poHistory: PoHistoryRow[] = [
+  { id: uid(), po_id: pos[0].id, invoice_id: invoices[3].id, action: 'Generated', actor: 'admin@prl.com.pk', amount: 980000, remarks: 'Payment order generated; awaiting finance approval', created_at: iso('2026-07-23') },
+  { id: uid(), po_id: pos[1].id, invoice_id: invoices[4].id, action: 'Generated', actor: 'admin@prl.com.pk', amount: 410000, remarks: 'Payment order generated; awaiting finance approval', created_at: iso('2026-05-14') },
+  { id: uid(), po_id: pos[1].id, invoice_id: invoices[4].id, action: 'FinanceApproved', actor: 'f.hussain@prl.com.pk', amount: 410000, remarks: 'Cleared against FY25 SM budget', created_at: iso('2026-05-16') },
+  { id: uid(), po_id: pos[1].id, invoice_id: invoices[4].id, action: 'PaymentReleased', actor: 'f.hussain@prl.com.pk', amount: 410000, remarks: 'Payment released to surveyor; amount deducted from budget', created_at: iso('2026-05-16') },
 ]
 
 const auditLog: AuditEntry[] = [
@@ -307,10 +372,58 @@ function listInvoice(partial: Invoice): Invoice {
 function makePoForInvoice(inv: Invoice): PoVersion {
   const existing = pos.find((p) => p.invoice_id === inv.id)
   if (existing) return existing
-  const po: PoVersion = { id: uid(), invoice_id: inv.id, serial_no: `PO-${Date.now()}`, generated_at: nowIso(), generated_by: 'admin@prl.com.pk' }
+  const amount = Number(inv.approved_amount ?? inv.amount ?? 0)
+  const po: PoVersion = {
+    id: uid(),
+    invoice_id: inv.id,
+    serial_no: `PO-${Date.now()}`,
+    generated_at: nowIso(),
+    generated_by: 'admin@prl.com.pk',
+    status: 'Generated',
+    amount,
+    finance_approved_by: null,
+    finance_approved_at: null,
+    finance_remarks: null,
+    released_amount: null,
+    released_by: null,
+    released_at: null,
+  }
   pos.unshift(po)
+  poHistory.push({
+    id: uid(),
+    po_id: po.id,
+    invoice_id: inv.id,
+    action: 'Generated',
+    actor: 'admin@prl.com.pk',
+    amount,
+    remarks: 'Payment order generated; awaiting finance approval',
+    created_at: po.generated_at,
+  })
   audit('GeneratePO', 'PaymentOrder', po.id, `PO ${po.serial_no} generated for invoice ${inv.invoice_no}`)
   return po
+}
+
+function shapePaymentOrder(p: PoVersion) {
+  const inv = invoices.find((i) => i.id === p.invoice_id)
+  const rel = embedContract(contractById(inv?.contract_id ?? null))
+  return {
+    ...p,
+    invoice_id: p.invoice_id,
+    approved_amount: Number(inv?.approved_amount ?? inv?.amount ?? 0),
+    invoices: inv
+      ? {
+          id: inv.id,
+          invoice_no: inv.invoice_no,
+          invoice_date: inv.invoice_date,
+          amount: inv.amount,
+          approved_amount: inv.approved_amount,
+          status: inv.status,
+          cost_element: inv.cost_element,
+          contracts: { contract_no: rel?.contract_no ?? null, vendors: rel?.vendors ?? null },
+        }
+      : null,
+    history: poHistory.filter((h) => h.po_id === p.id).sort((a, b) => a.created_at.localeCompare(b.created_at)),
+  }
 }
 
 function dashboardPayload(): unknown {
@@ -323,6 +436,13 @@ function dashboardPayload(): unknown {
   const approvedVal = approved.reduce((s, i) => s + i.amount, 0)
   const pendingVal = pending.reduce((s, i) => s + i.amount, 0)
   const rejectedVal = rejected.reduce((s, i) => s + i.amount, 0)
+  const paid = inv.filter((i) => i.status === 'Paid')
+  const signedOff = inv.filter((i) => ['Approved', 'Paid', 'Accepted'].includes(i.status))
+  const approvedInvoiceVal = signedOff.reduce((s, i) => s + Number(i.approved_amount ?? i.amount ?? 0), 0)
+  const poGeneratedVal = pos.reduce((s, p) => s + Number(p.amount ?? 0), 0)
+  const cleared = pos.filter((p) => p.status === 'Cleared')
+  const paymentReleasedVal = cleared.reduce((s, p) => s + Number(p.released_amount ?? p.amount ?? 0), 0)
+  const financePending = pos.filter((p) => (p.status ?? 'Generated') === 'Generated')
 
   const today = new Date()
   const openContracts = contracts.filter((c) => !c.end_date || new Date(c.end_date) >= today).length
@@ -344,7 +464,7 @@ function dashboardPayload(): unknown {
 
   const utilization = contracts.map((c) => {
     const used = inv
-      .filter((i) => i.contract_id === c.id && ['Approved', 'Accepted'].includes(i.status))
+      .filter((i) => i.contract_id === c.id && ['Approved', 'Accepted', 'Paid'].includes(i.status))
       .reduce((s, i) => s + i.amount, 0)
     const value = toMoney(c.value)
     return {
@@ -371,9 +491,16 @@ function dashboardPayload(): unknown {
       activeUsers: users.filter((u) => u.status === 'active').length,
       expiringContracts: expiring,
       avgInvoice: totalInv ? totalVal / totalInv : 0,
+      approvedInvoiceValue: approvedInvoiceVal,
+      poGeneratedValue: poGeneratedVal,
+      poGeneratedCount: pos.length,
+      paymentReleasedValue: paymentReleasedVal,
+      paymentReleasedCount: cleared.length,
+      financePendingValue: financePending.reduce((s, p) => s + Number(p.amount ?? 0), 0),
+      financePendingCount: financePending.length,
     },
     trend,
-    statusBreakdown: { approved: approved.length, pending: pending.length, rejected: rejected.length },
+    statusBreakdown: { approved: approved.length, paid: paid.length, pending: pending.length, rejected: rejected.length },
     utilization,
   }
 }
@@ -403,6 +530,13 @@ function summaryPayload(): unknown {
       approvedValue: inv.filter((i) => i.status === 'Approved').reduce((s, i) => s + i.amount, 0),
       pendingValue: inv.filter((i) => i.status === 'Pending').reduce((s, i) => s + i.amount, 0),
       rejectedValue: inv.filter((i) => i.status === 'Rejected').reduce((s, i) => s + i.amount, 0),
+    },
+    financeSummary: {
+      approvedInvoiceValue: inv.filter((i) => ['Approved', 'Paid', 'Accepted'].includes(i.status)).reduce((s, i) => s + Number(i.approved_amount ?? i.amount ?? 0), 0),
+      poGeneratedValue: pos.reduce((s, p) => s + Number(p.amount ?? 0), 0),
+      paymentReleasedValue: pos.filter((p) => p.status === 'Cleared').reduce((s, p) => s + Number(p.released_amount ?? p.amount ?? 0), 0),
+      poCount: pos.length,
+      clearedCount: pos.filter((p) => p.status === 'Cleared').length,
     },
   }
 }
@@ -560,7 +694,7 @@ function applyImportRowsDemo(
       if (r.processing_date) inv.processing_date = String(r.processing_date)
       if (r.tanker_name) inv.tanker_name = String(r.tanker_name)
       const st = String(r.status ?? 'Pending').toLowerCase()
-      inv.status = ['pending', 'approved', 'rejected', 'draft', 'void'].includes(st)
+      inv.status = ['pending', 'approved', 'rejected', 'draft', 'void', 'paid'].includes(st)
         ? st.charAt(0).toUpperCase() + st.slice(1)
         : 'Pending'
       const trips = Number(r.trips)
@@ -968,27 +1102,62 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   }
 
   if (m === 'GET' && path === '/api/payment-orders') {
-    const paymentOrders = pos.map((p) => {
-      const inv = invoices.find((i) => i.id === p.invoice_id)
-      const rel = embedContract(contractById(inv?.contract_id ?? null))
-      return {
-        id: p.id,
-        serial_no: p.serial_no,
-        generated_by: p.generated_by,
-        generated_at: p.generated_at,
-        status: 'Generated',
-        invoices: inv
-          ? {
-              invoice_no: inv.invoice_no,
-              invoice_date: inv.invoice_date,
-              amount: inv.amount,
-              status: inv.status,
-              contracts: { contract_no: rel?.contract_no ?? null, vendors: rel?.vendors ?? null },
-            }
-          : null,
-      }
-    })
-    return { paymentOrders } as T
+    return { paymentOrders: pos.map(shapePaymentOrder) } as T
+  }
+
+  if (m === 'GET' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'payment-orders' && parts[3] === 'history') {
+    return { history: poHistory.filter((h) => h.po_id === parts[2]).sort((a, b) => a.created_at.localeCompare(b.created_at)) } as T
+  }
+
+  if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'payment-orders' && parts[3] === 'approve') {
+    const po = pos.find((p) => p.id === parts[2])
+    if (!po) fail('Payment order not found')
+    const inv = invoices.find((i) => i.id === po.invoice_id)
+    assertOpenDate(inv?.invoice_date)
+    if (po.status === 'Cleared') fail('Payment order already cleared and payment released')
+    if (po.status === 'Rejected') fail('Rejected payment orders cannot be approved')
+    const requested = (body as { releasedAmount?: number; remarks?: string } | null)?.releasedAmount
+    const releasedAmount = requested == null ? po.amount : Number(requested)
+    if (releasedAmount < 0) fail('Released amount cannot be negative')
+    const remarks = String((body as { remarks?: string } | null)?.remarks ?? '').trim() || null
+    const now = nowIso()
+    po.status = 'Cleared'
+    po.finance_approved_by = 'admin@prl.com.pk'
+    po.finance_approved_at = now
+    po.finance_remarks = remarks
+    po.released_amount = releasedAmount
+    po.released_by = 'admin@prl.com.pk'
+    po.released_at = now
+    poHistory.push({ id: uid(), po_id: po.id, invoice_id: po.invoice_id, action: 'FinanceApproved', actor: 'admin@prl.com.pk', amount: releasedAmount, remarks, created_at: now })
+    poHistory.push({ id: uid(), po_id: po.id, invoice_id: po.invoice_id, action: 'PaymentReleased', actor: 'admin@prl.com.pk', amount: releasedAmount, remarks: remarks ?? 'Payment released to surveyor; amount deducted from budget', created_at: now })
+    audit('FinanceClearPO', 'PaymentOrder', po.id, `PO ${po.serial_no} cleared by finance; Rs ${releasedAmount} released to surveyor`)
+    if (inv) {
+      inv.status = 'Paid'
+      audit('MarkPaid', 'Invoice', inv.id, `Invoice ${inv.invoice_no} marked Paid after PO ${po.serial_no} released`)
+    }
+    return { po: shapePaymentOrder(po) } as T
+  }
+
+  if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'payment-orders' && parts[3] === 'reject') {
+    const po = pos.find((p) => p.id === parts[2])
+    if (!po) fail('Payment order not found')
+    const inv = invoices.find((i) => i.id === po.invoice_id)
+    assertOpenDate(inv?.invoice_date)
+    const reason = String((body as { reason?: string } | null)?.reason ?? '').trim()
+    if (!reason) fail('Rejection reason is required')
+    if (po.status === 'Cleared') fail('Cleared payment orders cannot be rejected')
+    if (po.status === 'Rejected') fail('Payment order already rejected')
+    const now = nowIso()
+    po.status = 'Rejected'
+    po.finance_approved_by = 'admin@prl.com.pk'
+    po.finance_approved_at = now
+    po.finance_remarks = reason
+    po.released_amount = null
+    po.released_by = null
+    po.released_at = null
+    poHistory.push({ id: uid(), po_id: po.id, invoice_id: po.invoice_id, action: 'FinanceRejected', actor: 'admin@prl.com.pk', amount: po.amount, remarks: reason, created_at: now })
+    audit('FinanceRejectPO', 'PaymentOrder', po.id, `PO ${po.serial_no} rejected by finance: ${reason}`)
+    return { po: shapePaymentOrder(po) } as T
   }
 
   if (m === 'POST' && path === '/api/uploads') {

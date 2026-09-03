@@ -14,6 +14,7 @@ alter table public.service_matrix enable row level security;
 alter table public.cost_elements enable row level security;
 alter table public.invoices enable row level security;
 alter table public.po_versions enable row level security;
+alter table public.po_history enable row level security;
 alter table public.audit_log enable row level security;
 alter table public.notifications enable row level security;
 alter table public.app_settings enable row level security;

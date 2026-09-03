@@ -4,6 +4,7 @@ import { authRequired } from '../middleware/auth.js'
 import { audit } from '../services/auditService.js'
 import { LOCKED_FY_MESSAGE, fiscalBoundsIso, writeBlocked } from '../services/fyLock.js'
 import type { AuthUser } from '../types/index.js'
+import { invoiceApprovedAmount, PO_STATUS } from '../services/poFinance.js'
 
 export const invoicesRouter = Router()
 
@@ -199,12 +200,33 @@ async function createPo(
     .limit(1)
   if ((existing ?? []).length) return { po: existing![0], created: false }
   const serial = `PO-${Date.now()}`
+  const { data: invoice } = await supabase
+    .from('invoices')
+    .select('id, invoice_no, amount, approved_amount')
+    .eq('id', invoiceId)
+    .maybeSingle()
+  const amount = invoiceApprovedAmount(invoice)
   const { data: po, error } = await supabase
     .from('po_versions')
-    .insert({ invoice_id: invoiceId, serial_no: serial, generated_by: email })
+    .insert({
+      invoice_id: invoiceId,
+      serial_no: serial,
+      generated_by: email,
+      status: PO_STATUS.Generated,
+      amount,
+    })
     .select()
     .single()
   if (error) return { po: null, created: false, error: error.message }
+  const { error: histError } = await supabase.from('po_history').insert({
+    po_id: po.id,
+    invoice_id: invoiceId,
+    action: 'Generated',
+    actor: email ?? null,
+    amount,
+    remarks: 'Payment order generated; awaiting finance approval',
+  })
+  if (histError) console.error('[po_history]', histError.message)
   await audit('GeneratePO', 'PaymentOrder', po.id, `PO ${serial} generated for invoice ${invoiceId}`)
   return { po, created: true }
 }

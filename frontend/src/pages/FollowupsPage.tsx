@@ -15,10 +15,11 @@ import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useColumnVisibility } from '../lib/columns'
-import { applyFilters, type FilterColumnDef, type FilterState } from '../lib/filters'
+import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
 import { emitCrossModule } from '../lib/store'
 import { useFyLock } from '../lib/FyLockProvider'
+import SortableTh from '../components/ui/SortableTh'
 
 interface PendingFollowup {
   invoiceId: string
@@ -69,7 +70,12 @@ export default function FollowupsPage() {
   const [result, setResult] = useState<{ sent: string[]; failed: Array<{ invoiceId: string; reason: string }> } | null>(null)
   const [sortBy, setSortBy] = useState('invoiceDate')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
+  const onSort = (key: string, dir: SortDirection) => {
+    setSortBy(key)
+    setSortDir(dir)
+  }
   const [filters, setFilters] = useState<FilterState[]>([])
+  const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [groupKey, setGroupKey] = useState<string | null>(null)
   const col = useColumnVisibility(
     'prl-eoms-cols-followups',
@@ -104,8 +110,8 @@ export default function FollowupsPage() {
       : pending
     return applyFilters(searched, filters, FOLLOWUP_FILTER_COLUMNS, (p, key) =>
       (p as unknown as Record<string, string | number | null>)[key] ?? null,
-    )
-  }, [pending, search, filters])
+    filterLogic)
+  }, [pending, search, filters, filterLogic])
 
   const sorted = useMemo(
     () =>
@@ -120,9 +126,13 @@ export default function FollowupsPage() {
               ? Number(row.amount ?? 0)
               : key === 'vendorName'
                 ? String(row.vendorName ?? '')
-                : key === 'contractNo'
-                  ? String(row.contractNo ?? '')
-                  : String(row.invoiceNo ?? ''),
+              : key === 'contractNo'
+                ? String(row.contractNo ?? '')
+                  : key === 'days_pending'
+                    ? Number(daysPending(row.invoiceDate) ?? 0)
+                    : key === 'email'
+                      ? String(row.email ?? '')
+                      : String(row.invoiceNo ?? ''),
       ),
     [filtered, sortBy, sortDir],
   )
@@ -267,7 +277,7 @@ export default function FollowupsPage() {
 
       <DataToolbar
         search={{ value: search, onChange: setSearch, placeholder: 'Search vendor, invoice, email…' }}
-        filterBar={<AdvancedFilter columns={FOLLOWUP_FILTER_COLUMNS} filters={filters} onChange={setFilters} />}
+        filterBar={<AdvancedFilter columns={FOLLOWUP_FILTER_COLUMNS} filters={filters} onChange={setFilters} logic={filterLogic} onLogicChange={setFilterLogic} />}
         sort={{
           columns: [
             { key: 'invoiceDate', label: 'Date' },
@@ -299,7 +309,7 @@ export default function FollowupsPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
@@ -312,13 +322,13 @@ export default function FollowupsPage() {
                     style={{ accentColor: 'var(--accent)' }}
                   />
                 </th>
-                {col.show('invoice') && <th>Invoice</th>}
-                {col.show('date') && <th>Date</th>}
-                {col.show('days_pending') && <th className="text-right">Days Pending</th>}
-                {col.show('vendor') && <th>Vendor</th>}
-                {col.show('contract') && <th>Contract</th>}
-                {col.show('email') && <th>Email</th>}
-                {col.show('amount') && <th className="text-right">Amount</th>}
+                {col.show('invoice') && <SortableTh label="Invoice" columnKey="invoiceNo" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('date') && <SortableTh label="Date" columnKey="invoiceDate" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
+                {col.show('days_pending') && <SortableTh label="Days Pending" columnKey="days_pending" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('vendor') && <SortableTh label="Vendor" columnKey="vendorName" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('contract') && <SortableTh label="Contract" columnKey="contractNo" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('email') && <SortableTh label="Email" columnKey="email" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('amount') && <SortableTh label="Amount" columnKey="amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
               </tr>
             </thead>
             <tbody>

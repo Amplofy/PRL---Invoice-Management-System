@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Receipt,
@@ -31,6 +31,8 @@ import { formatMoney, formatDate, timeAgo } from '../lib/format'
 import { useThemeColors } from '../lib/themeColors'
 import { currentFiscalYear, elapsedFyMonths, fiscalBounds, fiscalOf, fiscalShortRange, FY_MONTHS } from '../lib/fiscal'
 import { invoiceListPath } from '../lib/invoiceWindow'
+import { countsTowardUtilization } from '../lib/invoice'
+import { useLiveDomain } from '../lib/store'
 import KpiCard from '../components/ui/KpiCard'
 import GlassCard from '../components/ui/GlassCard'
 import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
@@ -63,9 +65,16 @@ interface DashboardData {
     activeUsers: number
     expiringContracts: number
     avgInvoice: number
+    approvedInvoiceValue?: number
+    poGeneratedValue?: number
+    poGeneratedCount?: number
+    paymentReleasedValue?: number
+    paymentReleasedCount?: number
+    financePendingValue?: number
+    financePendingCount?: number
   }
   trend: Array<{ month: string; total: number; count: number }>
-  statusBreakdown: { approved: number; pending: number; rejected: number }
+  statusBreakdown: { approved: number; paid?: number; pending: number; rejected: number }
   utilization: Array<{ contractNo: string; value: number; used: number; remaining: number; pct: number }>
 }
 
@@ -147,7 +156,7 @@ export default function DashboardPage() {
   const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[] } | null>(null)
   const c = useThemeColors()
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -160,19 +169,17 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    let alive = true
-    const run = async () => {
-      await load()
-      if (!alive) return
-    }
-    run()
-    return () => {
-      alive = false
-    }
-  }, [])
+    void load()
+  }, [load])
+
+  const [, liveVersion] = useLiveDomain(['invoices', 'paymentOrders'])
+  useEffect(() => {
+    if (liveVersion === 0) return
+    void load()
+  }, [liveVersion, load])
 
   const recent = useMemo(() => allInvoices.slice(0, 6), [allInvoices])
 
@@ -218,8 +225,7 @@ export default function DashboardPage() {
       if (!no) continue
       usedByNo[no] ??= { used: 0, count: 0 }
       usedByNo[no].count += 1
-      const st = String(inv.status ?? '')
-      if (st === 'Approved' || st === 'Accepted') {
+      if (countsTowardUtilization(String(inv.status ?? ''))) {
         usedByNo[no].used += Number(inv.amount ?? 0)
       }
     }
@@ -264,7 +270,7 @@ export default function DashboardPage() {
 
   const onStatusClick = (_e: unknown, els: Array<{ index?: number }>) => {
     if (!els.length) return
-    const statuses = ['Approved', 'Pending', 'Rejected']
+    const statuses = ['Approved', 'Paid', 'Pending', 'Rejected']
     const st = statuses[els[0].index ?? 0]
     const rows = allInvoices.filter((i) => i.status === st).map(toDrillRow)
     setDrill({
@@ -281,7 +287,8 @@ export default function DashboardPage() {
   if (!k) return <DashboardSkeleton />
 
   const hasTrendData = trendData.totals.length > 0 && trendData.totals.some((v) => v > 0)
-  const statusTotal = data.statusBreakdown.approved + data.statusBreakdown.pending + data.statusBreakdown.rejected
+  const paidCount = data.statusBreakdown.paid ?? 0
+  const statusTotal = data.statusBreakdown.approved + paidCount + data.statusBreakdown.pending + data.statusBreakdown.rejected
   const hasFyUtil = fyUtil.length > 0
   const hasFyVol = fyVolume.some((m) => m.count > 0)
   const volMax = Math.max(0, ...fyVolume.map((m) => m.count))
@@ -315,6 +322,9 @@ export default function DashboardPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="chip !cursor-default">
                 <BadgeCheck size={13} className="text-[var(--accent-3)]" /> {k.approvedCount} approved
+              </span>
+              <span className="chip !cursor-default">
+                <Banknote size={13} className="text-[var(--accent-2)]" /> {paidCount} paid
               </span>
               <span className="chip !cursor-default">
                 <Clock size={13} className="text-[var(--warn)]" /> {k.pendingCount} pending
@@ -366,6 +376,33 @@ export default function DashboardPage() {
           tone="purple"
           sub={`${k.approvedCount} invoices approved`}
           delay={180}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+        <KpiCard
+          label="Invoice Approved"
+          value={`Rs ${formatMoney(k.approvedInvoiceValue ?? k.approvedValue)}`}
+          icon={<BadgeCheck size={18} className="text-white" />}
+          tone="info"
+          sub="signed off before pay order"
+          delay={200}
+        />
+        <KpiCard
+          label="PO Generated"
+          value={`Rs ${formatMoney(k.poGeneratedValue ?? 0)}`}
+          icon={<Banknote size={18} className="text-white" />}
+          tone="warn"
+          sub={`${k.financePendingCount ?? 0} awaiting finance`}
+          delay={240}
+        />
+        <KpiCard
+          label="Payment Released"
+          value={`Rs ${formatMoney(k.paymentReleasedValue ?? 0)}`}
+          icon={<BadgeCheck size={18} className="text-white" />}
+          tone="ok"
+          sub={`${k.paymentReleasedCount ?? 0} cleared · deducted from budget`}
+          delay={280}
         />
       </div>
 
@@ -425,22 +462,22 @@ export default function DashboardPage() {
         </Reveal>
 
         <Reveal delay={140}>
-          <GlassCard className="h-full p-5 md:p-6" hoverable>
+          <GlassCard className="h-full overflow-hidden p-5 md:p-6" hoverable>
             <div className="mb-1 flex items-center justify-between">
               <div className="section-title !mb-0">Status Breakdown</div>
               <span className="badge badge-neutral">click a slice</span>
             </div>
-            <div className="h-[300px]">
+            <div className="h-[280px] overflow-hidden px-1">
               {statusTotal > 0 ? (
                 <Doughnut
                   data={{
-                    labels: ['Approved', 'Pending', 'Rejected'],
+                    labels: ['Approved', 'Paid', 'Pending', 'Rejected'],
                     datasets: [
                       {
-                        data: [data.statusBreakdown.approved, data.statusBreakdown.pending, data.statusBreakdown.rejected],
-                        backgroundColor: [c.accent3, c.warn, c.err],
+                        data: [data.statusBreakdown.approved, paidCount, data.statusBreakdown.pending, data.statusBreakdown.rejected],
+                        backgroundColor: [c.accent3, c.accent2, c.warn, c.err],
                         borderWidth: 0,
-                        hoverOffset: 10,
+                        hoverOffset: 4,
                         borderRadius: 4,
                       },
                     ],
@@ -450,7 +487,8 @@ export default function DashboardPage() {
                     maintainAspectRatio: false,
                     cutout: '72%',
                     onClick: onStatusClick,
-                    plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 14 } } },
+                    layout: { padding: { top: 10, right: 16, bottom: 8, left: 16 } },
+                    plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 10 } } },
                   }}
                 />
               ) : (
@@ -581,7 +619,7 @@ export default function DashboardPage() {
               View all <ArrowUpRight size={14} />
             </Link>
           </div>
-          <div className="mt-4 overflow-x-auto">
+          <div className="table-scroll mt-4">
             <table className="data-table">
               <thead>
                 <tr>
