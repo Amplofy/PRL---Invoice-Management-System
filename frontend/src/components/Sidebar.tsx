@@ -102,7 +102,7 @@ export function SidebarNav() {
 
 export default function Sidebar() {
   return (
-    <aside className="glass-strong fixed inset-y-0 left-0 z-40 hidden w-64 flex-col !rounded-none lg:flex">
+    <aside className="glass-strong fixed inset-y-0 left-0 z-40 hidden w-64 flex-col rounded-none! lg:flex">
       <div className="flex items-center gap-3 px-5 pb-5 pt-6">
         <BrandLogo />
         <div>

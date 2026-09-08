@@ -31,12 +31,14 @@ interface DataToolbarProps {
   resultsCount?: number
   filterBar?: ReactNode
   children?: ReactNode
+  leading?: ReactNode
 }
 
-export default function DataToolbar({ search, filters, sort, onExport, exportLabel, resultsCount, filterBar, children }: DataToolbarProps) {
+export default function DataToolbar({ leading, search, filters, sort, onExport, exportLabel, resultsCount, filterBar, children }: DataToolbarProps) {
   return (
     <div className="glass p-3.5">
       <div className="flex flex-wrap items-center gap-2.5">
+        {leading}
         {search && (
           <SearchField value={search.value} onChange={search.onChange} placeholder={search.placeholder} />
         )}
@@ -49,7 +51,7 @@ export default function DataToolbar({ search, filters, sort, onExport, exportLab
                 value={f.value}
                 onChange={(e) => f.onChange(e.target.value)}
                 aria-label={f.label}
-                className="input w-[10.5rem] shrink-0"
+                className="input input-fit"
               >
                 {f.options.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -68,7 +70,7 @@ export default function DataToolbar({ search, filters, sort, onExport, exportLab
                 value={sort.value}
                 onChange={(e) => sort.onValueChange(e.target.value)}
                 aria-label="Sort by"
-                className="input w-[9.5rem] shrink-0"
+                className="input input-fit"
               >
                 <option value="">No sort</option>
                 {sort.columns.map((c) => (

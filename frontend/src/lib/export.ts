@@ -1,3 +1,5 @@
+import * as XLSX from 'xlsx'
+
 export function toCSV(rows: Array<Record<string, unknown>>): string {
   const header = Object.keys(rows[0] ?? {})
   const esc = (v: unknown) => {
@@ -15,6 +17,26 @@ export function downloadCSV(filename: string, rows: Array<Record<string, unknown
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+export function downloadXlsx(
+  filename: string,
+  sheets: Array<{ name: string; rows: Array<Record<string, unknown>> }>,
+) {
+  const wb = XLSX.utils.book_new()
+  for (const sheet of sheets) {
+    const name = sheet.name.replace(/[\\/?*[\]]/g, ' ').slice(0, 31) || 'Sheet'
+    const rows = sheet.rows.length > 0 ? sheet.rows : [{ Note: 'No rows for this sheet' }]
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const keys = Object.keys(rows[0] ?? {})
+    ws['!cols'] = keys.map((key) => {
+      const cells = rows.slice(0, 80).map((row) => String(row[key] ?? ''))
+      const width = Math.max(key.length, ...cells.map((c) => c.length))
+      return { wch: Math.min(42, Math.max(12, width + 1)) }
+    })
+    XLSX.utils.book_append_sheet(wb, ws, name)
+  }
+  XLSX.writeFile(wb, filename)
 }
 
 export type SortDirection = 'asc' | 'desc'

@@ -5,7 +5,7 @@ Repo is already on GitHub, so both hosting platforms connect to it directly.
 
 ## 0. Prerequisites
 
-- GitHub repo: `abdulmoizliaquatali-create/Invoice-Management-System` (pushed)
+- GitHub repo: `Amplofy/PRL---Invoice-Management-System` (pushed)
 - Accounts: dash.cloudflare.com, render.com, supabase.com (free tiers work)
 
 ## 0.5 Resetting an existing Supabase project
@@ -31,6 +31,16 @@ If the database already has old/partial tables, clean it first:
    - Settings → API → `anon` key → `SUPABASE_ANON_KEY` (frontend + backend)
    - Settings → API → `service_role` key → `SUPABASE_SERVICE_ROLE_KEY` (backend ONLY)
    - Settings → API → JWT Secret → `SUPABASE_JWT_SECRET` (backend)
+
+### Existing database (do not re-run schema.sql)
+
+If the project already has tables from an earlier release, skip `schema.sql` / `seed.sql` / `reset.sql`. In SQL Editor, run these additive scripts in order and skip any already applied:
+
+1. `supabase/finance_po.sql` — Paid status + finance PO columns
+2. `supabase/contract_services.sql` — vendor emails + contract catalog services
+3. `supabase/sundry_accruals.sql` — `released_via` / `release_reference` + `fy_accrual_overrides`
+
+Then redeploy backend and frontend from branch `260903-feat-finance-po-paid`.
 
 ## 2. Render (backend API)
 
@@ -75,7 +85,8 @@ build-minute cap, so prefer it when the Netlify quota is exhausted.
 1. Set `CORS_ORIGIN` on Render to the final frontend URL (Cloudflare Pages or Netlify) → save → redeploy.
 2. Optional custom domains on both platforms (HTTPS is automatic).
 3. Log in with a Supabase auth user (not demo mode) and smoke-test:
-   invoices list → create → reports → import wizard.
+   invoices list → create → Payment Orders approve/release → Admin yearly budgets / sundry accrual → Reports Gen Report → import wizard.
+   Hard-refresh the browser after deploy. Closed-FY invoice field edits stay locked; unpaid prior-year POs remain approvable until Paid.
 
 ## Environment variable summary
 
@@ -98,3 +109,4 @@ build-minute cap, so prefer it when the Netlify quota is exhausted.
 - Email (Resend) is optional; the app runs without it.
 - Demo mode (sessionStorage flag) still works on production builds — it is a
   client-side escape hatch and touches no real data.
+- GitHub repo: `Amplofy/PRL---Invoice-Management-System` (pushed)

@@ -27,7 +27,7 @@ export default function ThemePanel({ onClose }: { onClose?: () => void }) {
             <MonitorCog size={11} /> Live
           </span>
           {onClose && (
-            <button className="btn btn-ghost !px-2 !py-1.5" onClick={onClose} aria-label="Close appearance panel">
+            <button className="btn btn-ghost px-2! py-1.5!" onClick={onClose} aria-label="Close appearance panel">
               <X size={15} />
             </button>
           )}

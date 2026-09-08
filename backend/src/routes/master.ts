@@ -1,13 +1,123 @@
 import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired, requireRole } from '../middleware/auth.js'
-import { LOCKED_FY_MESSAGE, writeBlocked, writeBlockedFy } from '../services/fyLock.js'
+import { invoiceBudgetFy, LOCKED_FY_MESSAGE, writeBlocked, writeBlockedFy } from '../services/fyLock.js'
+import { accrualForFy, invoiceAccrualAmount, isBudgetIncrease } from '../services/accrual.js'
 import type { AuthUser } from '../types/index.js'
 
 export const masterRouter = Router()
 
 function actorKey(req: { user?: AuthUser }): string {
   return req.user?.id || req.user?.email || 'anon'
+}
+
+type EmailInput = string | { email?: unknown; label?: unknown; is_primary?: unknown }
+type ServiceInput = { t1?: unknown; t2?: unknown; t3?: unknown; service_matrix_id?: unknown }
+
+function normalizeVendorEmails(body: { email?: unknown; emails?: unknown }): Array<{ email: string; label: string; is_primary: boolean }> {
+  const raw: EmailInput[] = Array.isArray(body.emails)
+    ? (body.emails as EmailInput[])
+    : body.email
+      ? [String(body.email)]
+      : []
+  const out: Array<{ email: string; label: string; is_primary: boolean }> = []
+  raw.forEach((item, idx) => {
+    const email = (typeof item === 'string' ? item : String(item?.email ?? '')).trim()
+    if (!email) return
+    out.push({
+      email,
+      label: typeof item === 'string' ? (idx === 0 ? 'surveyor' : 'other') : String(item?.label || 'surveyor'),
+      is_primary: typeof item === 'string' ? idx === 0 : Boolean(item?.is_primary),
+    })
+  })
+  if (out.length && !out.some((e) => e.is_primary)) out[0].is_primary = true
+  let seen = false
+  for (const e of out) {
+    if (e.is_primary && seen) e.is_primary = false
+    else if (e.is_primary) seen = true
+  }
+  return out
+}
+
+async function replaceVendorEmails(
+  vendorId: string,
+  emails: Array<{ email: string; label: string; is_primary: boolean }>,
+) {
+  const supabase = getSupabase()
+  await supabase.from('vendor_emails').delete().eq('vendor_id', vendorId)
+  if (emails.length) {
+    const { error } = await supabase.from('vendor_emails').insert(emails.map((e) => ({ vendor_id: vendorId, ...e })))
+    if (error) throw error
+  }
+  const primary = emails.find((e) => e.is_primary)?.email ?? emails[0]?.email ?? null
+  await supabase.from('vendors').update({ email: primary, updated_at: new Date().toISOString() }).eq('id', vendorId)
+}
+
+async function attachVendorEmails<T extends { id: string }>(vendors: T[]) {
+  if (!vendors.length) return vendors.map((v) => ({ ...v, emails: [] as unknown[] }))
+  const supabase = getSupabase()
+  const { data } = await supabase.from('vendor_emails').select('*').in('vendor_id', vendors.map((v) => v.id))
+  const byVendor = new Map<string, unknown[]>()
+  for (const row of data ?? []) {
+    const list = byVendor.get(row.vendor_id as string) ?? []
+    list.push(row)
+    byVendor.set(row.vendor_id as string, list)
+  }
+  return vendors.map((v) => ({ ...v, emails: byVendor.get(v.id) ?? [] }))
+}
+
+async function replaceContractServices(contractId: string, services: ServiceInput[]) {
+  const supabase = getSupabase()
+  const { data: matrix, error: matrixError } = await supabase.from('service_matrix').select('id, t1, t2, t3')
+  if (matrixError) throw matrixError
+  const rows: Array<{ contract_id: string; service_matrix_id: string; t1: string; t2: string | null; t3: string | null }> = []
+  for (const s of services) {
+    const list = matrix ?? []
+    const match = s.service_matrix_id
+      ? list.find((m) => m.id === s.service_matrix_id)
+      : list.find((m) => m.t1 === s.t1 && (m.t2 ?? '') === (s.t2 ?? '') && (m.t3 ?? '') === (s.t3 ?? ''))
+    if (!match) continue
+    if (rows.some((r) => r.service_matrix_id === match.id)) continue
+    rows.push({
+      contract_id: contractId,
+      service_matrix_id: match.id as string,
+      t1: String(match.t1),
+      t2: (match.t2 as string | null) ?? null,
+      t3: (match.t3 as string | null) ?? null,
+    })
+  }
+  await supabase.from('contract_services').delete().eq('contract_id', contractId)
+  if (rows.length) {
+    const { error } = await supabase.from('contract_services').insert(rows)
+    if (error) throw error
+  }
+  const summary = Array.from(new Set(rows.map((r) => r.t2 || r.t1).filter(Boolean))).join(', ')
+  if (summary) {
+    await supabase.from('contracts').update({ service: summary, updated_at: new Date().toISOString() }).eq('id', contractId)
+  }
+}
+
+async function attachContractServices<T extends { id: string }>(contracts: T[]) {
+  if (!contracts.length) {
+    return contracts.map((c) => ({ ...c, services: [] as Array<{ id: string; t1: string; t2: string | null; t3: string | null }> }))
+  }
+  const supabase = getSupabase()
+  const { data } = await supabase
+    .from('contract_services')
+    .select('id, contract_id, t1, t2, t3')
+    .in('contract_id', contracts.map((c) => c.id))
+  const byContract = new Map<string, Array<{ id: string; t1: string; t2: string | null; t3: string | null }>>()
+  for (const row of data ?? []) {
+    const list = byContract.get(row.contract_id as string) ?? []
+    list.push({
+      id: row.id as string,
+      t1: String(row.t1),
+      t2: (row.t2 as string | null) ?? null,
+      t3: (row.t3 as string | null) ?? null,
+    })
+    byContract.set(row.contract_id as string, list)
+  }
+  return contracts.map((c) => ({ ...c, services: byContract.get(c.id) ?? [] }))
 }
 
 // -------------------------------------------------------------
@@ -21,7 +131,7 @@ masterRouter.get('/vendors', authRequired, async (_req, res, next) => {
       res.status(500).json({ error: `Failed to load vendors: ${error?.message}` })
       return
     }
-    res.json({ vendors: data ?? [] })
+    res.json({ vendors: await attachVendorEmails((data ?? []) as Array<{ id: string }>) })
   } catch (err) {
     next(err)
   }
@@ -39,7 +149,10 @@ masterRouter.post('/vendors', authRequired, requireRole('admin'), async (req, re
       res.status(400).json({ error: error.message })
       return
     }
-    res.status(201).json({ vendor: data })
+    const emails = normalizeVendorEmails(req.body ?? {})
+    await replaceVendorEmails(data.id, emails)
+    const [vendor] = await attachVendorEmails([{ ...data, id: data.id }])
+    res.status(201).json({ vendor })
   } catch (err) {
     next(err)
   }
@@ -58,7 +171,11 @@ masterRouter.put('/vendors/:id', authRequired, requireRole('admin'), async (req,
       res.status(400).json({ error: error?.message || 'Vendor not found' })
       return
     }
-    res.json({ vendor: data })
+    if (Array.isArray(req.body?.emails) || req.body?.email !== undefined) {
+      await replaceVendorEmails(data.id, normalizeVendorEmails(req.body ?? {}))
+    }
+    const [vendor] = await attachVendorEmails([data as { id: string }])
+    res.json({ vendor })
   } catch (err) {
     next(err)
   }
@@ -77,7 +194,9 @@ masterRouter.put('/vendors/:id/email', authRequired, requireRole('admin'), async
       res.status(400).json({ error: error?.message || 'Vendor not found' })
       return
     }
-    res.json({ vendor: data })
+    await replaceVendorEmails(data.id, normalizeVendorEmails(req.body ?? {}))
+    const [vendor] = await attachVendorEmails([data as { id: string }])
+    res.json({ vendor })
   } catch (err) {
     next(err)
   }
@@ -119,7 +238,7 @@ masterRouter.get('/contracts', authRequired, async (_req, res, next) => {
       res.status(500).json({ error: `Failed to load contracts: ${error?.message}` })
       return
     }
-    res.json({ contracts: data ?? [] })
+    res.json({ contracts: await attachContractServices((data ?? []) as Array<{ id: string }>) })
   } catch (err) {
     next(err)
   }
@@ -151,7 +270,11 @@ masterRouter.post('/contracts', authRequired, requireRole('admin'), async (req, 
       res.status(400).json({ error: error.message })
       return
     }
-    res.status(201).json({ contract: data })
+    if (Array.isArray(body.services)) {
+      await replaceContractServices(data.id, body.services as ServiceInput[])
+    }
+    const [contract] = await attachContractServices([data as { id: string }])
+    res.status(201).json({ contract })
   } catch (err) {
     next(err)
   }
@@ -172,9 +295,10 @@ masterRouter.put('/contracts/:id', authRequired, requireRole('admin'), async (re
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return
     }
+    const { services, ...fields } = body as { services?: ServiceInput[] } & Record<string, unknown>
     const { data, error } = await supabase
       .from('contracts')
-      .update({ ...body, updated_at: new Date().toISOString() })
+      .update({ ...fields, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select()
       .single()
@@ -182,7 +306,11 @@ masterRouter.put('/contracts/:id', authRequired, requireRole('admin'), async (re
       res.status(400).json({ error: error?.message || 'Contract not found' })
       return
     }
-    res.json({ contract: data })
+    if (Array.isArray(services)) {
+      await replaceContractServices(data.id, services)
+    }
+    const [contract] = await attachContractServices([data as { id: string }])
+    res.json({ contract })
   } catch (err) {
     next(err)
   }
@@ -564,10 +692,6 @@ masterRouter.put('/budgets', authRequired, requireRole('admin'), async (req, res
       res.status(400).json({ error: 'lines array is required' })
       return
     }
-    if (writeBlockedFy(actorKey(req as { user?: AuthUser }), fy)) {
-      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy, code: 'FY_LOCKED' })
-      return
-    }
     const supabase = getSupabase()
     const { data: existing, error: loadError } = await supabase
       .from('app_settings')
@@ -578,7 +702,9 @@ masterRouter.put('/budgets', authRequired, requireRole('admin'), async (req, res
       res.status(500).json({ error: `Failed to load budgets: ${loadError.message}` })
       return
     }
-    const kept = parseBudgetLines(existing?.value).filter((row) => row.fy !== fy)
+    const stored = parseBudgetLines(existing?.value)
+    const previous = stored.filter((row) => row.fy === fy)
+    const kept = stored.filter((row) => row.fy !== fy)
     const nextLines: BudgetLine[] = incoming
       .filter((row: { cost_element?: string }) => String(row?.cost_element ?? '').trim())
       .map((row: { id?: string; cost_element?: string; amount?: number; notes?: string }) => ({
@@ -596,6 +722,22 @@ masterRouter.put('/budgets', authRequired, requireRole('admin'), async (req, res
       seen.add(key)
       unique.push(row)
     }
+    const increasing = unique.some((row) => {
+      const old = previous.find((x) => x.cost_element.toUpperCase() === row.cost_element.toUpperCase())
+      return isBudgetIncrease(old?.amount, row.amount)
+    })
+    const master = Boolean(req.body?.masterAccess)
+    if (increasing && !master) {
+      res.status(403).json({
+        error: 'Budget increase requires Master Access',
+        code: 'BUDGET_INCREASE_REQUIRES_MASTER',
+      })
+      return
+    }
+    if (writeBlockedFy(actorKey(req as { user?: AuthUser }), fy) && !(increasing && master)) {
+      res.status(403).json({ error: LOCKED_FY_MESSAGE, fy, code: 'FY_LOCKED' })
+      return
+    }
     const all = [...kept, ...unique]
     const { error: saveError } = await supabase
       .from('app_settings')
@@ -605,6 +747,129 @@ masterRouter.put('/budgets', authRequired, requireRole('admin'), async (req, res
       return
     }
     res.json({ budgets: unique, fy })
+  } catch (err) {
+    next(err)
+  }
+})
+
+const ACCRUAL_SETTING_KEY = 'fy_accrual_overrides'
+
+interface AccrualOverride {
+  fy: string
+  amount: number
+}
+
+function parseAccrualOverrides(raw: string | null | undefined): AccrualOverride[] {
+  try {
+    const parsed = JSON.parse(raw || '[]') as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((row): row is Record<string, unknown> => !!row && typeof row === 'object')
+      .map((row) => ({ fy: String(row.fy ?? ''), amount: Number(row.amount) }))
+      .filter((row) => row.fy && Number.isFinite(row.amount))
+  } catch {
+    return []
+  }
+}
+
+async function loadAccrualSnapshot(fy: string) {
+  const supabase = getSupabase()
+  const [{ data: setting }, { data: invoiceRows }, { data: poRows }] = await Promise.all([
+    supabase.from('app_settings').select('value').eq('key', ACCRUAL_SETTING_KEY).maybeSingle(),
+    supabase.from('invoices').select('id, invoice_no, invoice_date, service_to, amount, approved_amount, status'),
+    supabase.from('po_versions').select('status, released_amount, amount, invoices(invoice_date, service_to)'),
+  ])
+  const override = parseAccrualOverrides(setting?.value).find((row) => row.fy === fy)?.amount ?? null
+  const invoices = (invoiceRows ?? []) as Array<{
+    id: string
+    invoice_no: string | null
+    invoice_date: string | null
+    service_to?: string | null
+    amount: unknown
+    approved_amount: unknown
+    status: string | null
+  }>
+  const pos = (poRows ?? []) as Array<{
+    status?: unknown
+    released_amount?: unknown
+    amount?: unknown
+    invoices?: { invoice_date?: string | null; service_to?: string | null } | { invoice_date?: string | null; service_to?: string | null }[] | null
+  }>
+  const shapedPos = pos.map((p) => ({
+    ...p,
+    invoices: Array.isArray(p.invoices) ? (p.invoices[0] ?? null) : (p.invoices ?? null),
+  }))
+  const snap = accrualForFy(fy, invoices, shapedPos, override)
+  const unpaidInvoices = invoices
+    .filter((i) => invoiceBudgetFy(i) === fy && String(i.status ?? '') !== 'Paid')
+    .map((i) => ({
+      id: i.id,
+      invoice_no: i.invoice_no,
+      invoice_date: i.invoice_date,
+      service_to: i.service_to ?? null,
+      status: i.status,
+      amount: invoiceAccrualAmount(i),
+    }))
+  return { ...snap, invoices: unpaidInvoices }
+}
+
+masterRouter.get('/accruals', authRequired, async (req, res, next) => {
+  try {
+    const fy = String(req.query?.fy ?? '').trim()
+    if (!fy) {
+      const now = new Date()
+      const start = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1
+      const labels: string[] = []
+      for (let y = start - 3; y <= start; y++) labels.push(`FY${String(y).slice(2)}`)
+      res.json({ years: await Promise.all(labels.map((year) => loadAccrualSnapshot(year))) })
+      return
+    }
+    res.json(await loadAccrualSnapshot(fy))
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.put('/accruals', authRequired, requireRole('admin'), async (req, res, next) => {
+  try {
+    const fy = String(req.body?.fy ?? '').trim()
+    if (!fy) {
+      res.status(400).json({ error: 'fy is required' })
+      return
+    }
+    if (!req.body?.masterAccess) {
+      res.status(403).json({ error: 'Accrual override requires Master Access', code: 'MASTER_ACCESS_REQUIRED' })
+      return
+    }
+    const raw = req.body?.override
+    let override: number | null = null
+    if (raw !== null && raw !== undefined && raw !== '') {
+      override = Number(raw)
+      if (!Number.isFinite(override) || override < 0) {
+        res.status(400).json({ error: 'override must be a non-negative number or null' })
+        return
+      }
+    }
+    const supabase = getSupabase()
+    const { data: existing, error: loadError } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', ACCRUAL_SETTING_KEY)
+      .maybeSingle()
+    if (loadError) {
+      res.status(500).json({ error: `Failed to load accruals: ${loadError.message}` })
+      return
+    }
+    const next = parseAccrualOverrides(existing?.value).filter((row) => row.fy !== fy)
+    if (override != null) next.push({ fy, amount: override })
+    const { error: saveError } = await supabase
+      .from('app_settings')
+      .upsert({ key: ACCRUAL_SETTING_KEY, value: JSON.stringify(next) }, { onConflict: 'key' })
+    if (saveError) {
+      res.status(400).json({ error: saveError.message })
+      return
+    }
+    res.json(await loadAccrualSnapshot(fy))
   } catch (err) {
     next(err)
   }

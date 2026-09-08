@@ -37,18 +37,18 @@ Built by **Abdul Moiz**.
 
 | Module | Description |
 | --- | --- |
-| **Control Tower** | KPI dashboard, invoice value trend, status breakdown, contract utilization |
+| **Control Tower** | KPI dashboard, FY spotlight, invoice value trend, status breakdown, contract utilization |
 | **Invoices** | Full CRUD, status filters, search, approve/reject with mandatory reason |
 | **Workflow** | T1 → T2 → T3 cascading drill-down over the service matrix |
 | **Approvals** | Queue of pending invoices with one-click approve/reject |
 | **Payment Orders** | Finance last-decision queue: approve & release payment (clears budget remaining) or reject. Print PO documents. |
 | **PO History** | Immutable record of generated, cleared, and rejected pay orders, including released amounts |
 | **Contracts** | Vendor service contracts with expiry badges and utilization |
-| **Reports** | Spend by vendor/service, cash pipeline (invoice approved / PO generated / payment released), CSV export |
+| **Reports** | FY-scoped spend, budget vs actual, sundry accrual ledger, cash pipeline, Excel workbook export |
 | **Data Import** | Upload CSV/XLSX/XLS/PDF → validate → admin-confirm → commit |
 | **Follow-ups** | One-click pending-invoice reminders to surveyor emails |
 | **Compare** | Two-file diff with join key + column mapping + tolerance + discrepancy email |
-| **Admin** | Email templates, vendor emails, service matrix, cost elements, audit log |
+| **Admin** | Yearly budgets, sundry accruals, vendor emails, service matrix, cost elements, Master Access, audit log |
 | **Users & Roles** | Users, roles and permission coverage |
 
 ---
@@ -74,9 +74,12 @@ Built by **Abdul Moiz**.
 │   ├── test/            # 20 unit tests (node:test)
 │   └── .env.example
 └── supabase/
-    ├── schema.sql       # tables + RLS (fresh installs)
-    ├── seed.sql         # roles, permissions, settings, sample data
-    └── finance_po.sql   # additive migration for existing databases (PO finance + Paid)
+    ├── schema.sql             # tables + RLS (fresh installs)
+    ├── seed.sql               # roles, permissions, settings, sample data
+    ├── rls-hardening.sql      # lock anon access; API is the only data path
+    ├── finance_po.sql         # additive: Paid status + finance PO columns
+    ├── contract_services.sql  # additive: vendor_emails + contract_services
+    └── sundry_accruals.sql    # additive: released_via/reference + fy_accrual_overrides
 ```
 
 ---
@@ -84,7 +87,7 @@ Built by **Abdul Moiz**.
 ## 1. Supabase setup
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Open **SQL Editor** and run `supabase/schema.sql`, then `supabase/seed.sql`.
+2. Open **SQL Editor** and run `supabase/schema.sql`, then `supabase/seed.sql`, then `supabase/rls-hardening.sql`.
 3. Enable **Email** provider under **Authentication → Providers** (sign-ups), or create users from the dashboard.
 4. Copy credentials from **Project Settings → API**:
    - `Project URL` → `SUPABASE_URL`
@@ -199,7 +202,7 @@ Stored in `app_settings` and editable from **Admin → Email Templates**:
 
 ## Data model (summary)
 
-`profiles` · `roles` · `permissions` · `role_permissions` · `users` · `vendors` · `contracts` · `service_matrix` · `cost_elements` · `invoices` · `po_versions` · `audit_log` · `notifications` · `app_settings` · `import_logs` · `comparisons` · `comparison_results` · `discrepancy_emails` · `followup_emails`
+`profiles` · `roles` · `permissions` · `role_permissions` · `users` · `vendors` · `vendor_emails` · `contracts` · `contract_services` · `service_matrix` · `cost_elements` · `invoices` · `po_versions` · `audit_log` · `notifications` · `app_settings` · `import_logs` · `comparisons` · `comparison_results` · `discrepancy_emails` · `followup_emails`
 
 See `supabase/schema.sql` for the canonical DDL.
 
@@ -209,8 +212,20 @@ Invoice statuses (DB check constraint): `Pending` | `Approved` | `Rejected` | `D
 
 1. Operations approve an invoice (`Approved`).
 2. A pay order is generated (`po_versions.status = Generated`) and sits in Payment Orders awaiting finance.
-3. A finance official (`admin` / `superadmin` / `finance`) **Approve & Release**. The PO becomes `Cleared`, `released_amount` is stored, the invoice becomes `Paid`, and remaining budget is reduced by the released amount. Original yearly budget lines are not mutated.
+3. A finance official (`admin` / `superadmin` / `finance`) **Approve & Release**. The PO becomes `Cleared`, `released_amount` is stored (optional Released Via / Reference), the invoice becomes `Paid`. Running-FY remaining budget falls only when the invoice belongs to the running FY. Closed-FY unpaid invoices deduct **Sundry Accrual Balance** instead.
 4. Finance may instead **Reject** the PO (`Rejected`). The invoice stays `Approved`.
 5. PO History records generate / clear / reject events. Reports show invoice approved, PO generated, and payment released side by side.
 
-Existing databases: run `supabase/finance_po.sql` after the original schema. Fresh installs use the updated `schema.sql` + `seed.sql`.
+Budget / accrual FY is the year in which **service ends** (`service_to`, else `invoice_date`).
+
+Master Access (Admin) is required to increase a yearly budget line (including a closed FY) or to override Sundry Accrual. First budget entry from 0 is not an increase.
+
+### Existing databases
+
+Run in the SQL Editor, in order, skipping scripts already applied:
+
+1. `supabase/finance_po.sql` — Paid status + finance PO columns
+2. `supabase/contract_services.sql` — vendor emails + contract catalog services
+3. `supabase/sundry_accruals.sql` — `released_via` / `release_reference` + `fy_accrual_overrides`
+
+Fresh installs use `schema.sql` + `seed.sql` + `rls-hardening.sql` only.

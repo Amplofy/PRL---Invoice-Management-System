@@ -206,7 +206,7 @@ export default function WorkflowPage() {
                       {i.contracts?.vendors?.[0]?.name ?? '—'}
                     </div>
                     <div className="mt-1.5 flex items-center justify-between">
-                      <span className="badge badge-info !text-[0.6rem]">{i.contracts?.contract_no ?? '—'}</span>
+                      <span className="badge badge-info text-[0.6rem]!">{i.contracts?.contract_no ?? '—'}</span>
                       <span className="text-sm font-extrabold">Rs {formatMoney(i.amount)}</span>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-[0.65rem] text-[var(--text-muted)]">

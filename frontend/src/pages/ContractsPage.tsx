@@ -24,6 +24,7 @@ import { groupRows } from '../lib/grouping'
 import { useFyLock } from '../lib/FyLockProvider'
 import { isClosedDate } from '../lib/fiscal'
 import SortableTh from '../components/ui/SortableTh'
+import { t1Options, t2Options, t3Options, type ServiceMatrixRow } from '../lib/invoice'
 
 interface Vendor {
   id: string
@@ -40,6 +41,7 @@ interface Contract {
   value: number | null
   status: string | null
   vendors: Vendor[] | null
+  services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }>
 }
 
 const CONTRACT_COLUMN_DEFS = [
@@ -60,6 +62,23 @@ function contractPeriodDays(c: Contract): number | null {
   const ms = new Date(c.end_date).getTime() - new Date(c.start_date).getTime()
   if (Number.isNaN(ms) || ms < 0) return null
   return Math.round(ms / 86400000)
+}
+
+function serviceTriple(s: { t1: string; t2?: string | null; t3?: string | null }): string {
+  return [s.t1, s.t2, s.t3].filter(Boolean).join(' / ')
+}
+
+function serviceKey(s: { t1: string; t2?: string | null; t3?: string | null }): string {
+  return `${s.t1}|${s.t2 ?? ''}|${s.t3 ?? ''}`
+}
+
+function emptyServiceRow(): { t1: string; t2: string; t3: string } {
+  return { t1: '', t2: '', t3: '' }
+}
+
+function contractServicesLabel(c: Contract): string {
+  if (c.services?.length) return c.services.map(serviceTriple).join('; ')
+  return c.service ?? ''
 }
 
 const CONTRACT_FILTER_COLUMNS: FilterColumnDef[] = [
@@ -179,11 +198,12 @@ export default function ContractsPage() {
     const q = search.toLowerCase()
     const searched = q
       ? contracts.filter((c) =>
-          `${c.contract_no} ${vendorName(c)} ${c.service ?? ''} ${c.status ?? ''}`.toLowerCase().includes(q),
+          `${c.contract_no} ${vendorName(c)} ${contractServicesLabel(c)} ${c.status ?? ''}`.toLowerCase().includes(q),
         )
       : contracts
     return applyFilters(searched, filters, filterColumns, (c, key) => {
       if (key === 'vendor') return vendorName(c)
+      if (key === 'service') return contractServicesLabel(c)
       return (c as unknown as Record<string, string | number | null>)[key] ?? null
     }, filterLogic)
   }, [contracts, search, filters, filterColumns, filterLogic])
@@ -199,6 +219,7 @@ export default function ContractsPage() {
 
   const contractGroupValue = (c: Contract, key: string): string | number | null => {
     if (key === 'vendor') return vendorName(c)
+    if (key === 'service') return contractServicesLabel(c)
     return (c as unknown as Record<string, string | number | null>)[key] ?? null
   }
 
@@ -238,7 +259,7 @@ export default function ContractsPage() {
       sorted.map((c) => ({
         ...(col.show('contract_no') ? { contract_no: c.contract_no } : {}),
         ...(col.show('vendor') ? { vendor: vendorName(c) } : {}),
-        ...(col.show('service') ? { service: c.service ?? '' } : {}),
+                ...(col.show('service') ? { service: contractServicesLabel(c) } : {}),
         ...(col.show('start_date') ? { start_date: c.start_date ?? '' } : {}),
         ...(col.show('end_date') ? { end_date: c.end_date ?? '' } : {}),
         ...(col.show('period_days') ? { period_days: contractPeriodDays(c) ?? '' } : {}),
@@ -355,7 +376,7 @@ export default function ContractsPage() {
                       </td>
                     )}
                     {col.show('vendor') && <td>{vendorName(c)}</td>}
-                    {col.show('service') && <td className="text-xs">{c.service ?? '—'}</td>}
+                    {col.show('service') && <td className="text-xs">{contractServicesLabel(c) || '—'}</td>}
                     {col.show('start_date') && <td>{formatDate(c.start_date)}</td>}
                     {col.show('end_date') && <td>{formatDate(c.end_date)}</td>}
                     {col.show('period_days') && (
@@ -467,6 +488,8 @@ interface ContractFormModalProps {
 
 function ContractFormModal({ open, contract, vendors, onClose, onSaved }: ContractFormModalProps) {
   const [form, setForm] = useState<Record<string, string>>({})
+  const [matrix, setMatrix] = useState<ServiceMatrixRow[]>([])
+  const [selected, setSelected] = useState<Array<{ t1: string; t2: string; t3: string }>>([emptyServiceRow()])
   const [saving, setSaving] = useState(false)
   const toast = useToast()
   const { guardWrite } = useFyLock()
@@ -476,33 +499,72 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
     setForm({
       contract_no: contract?.contract_no ?? '',
       vendor_id: contract?.vendor_id ?? '',
-      service: contract?.service ?? '',
       start_date: (contract?.start_date ?? '').slice(0, 10),
       end_date: (contract?.end_date ?? '').slice(0, 10),
       value: contract?.value?.toString() ?? '',
       status: contract?.status ?? 'Open',
     })
-  }, [open, contract])
+    const existing = (contract?.services ?? []).map((s) => ({
+      t1: s.t1,
+      t2: s.t2 ?? '',
+      t3: s.t3 ?? '',
+    }))
+    setSelected(existing.length ? existing : [emptyServiceRow()])
+    void apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix')
+      .then((r) => setMatrix(r.serviceMatrix ?? []))
+      .catch((e) => toast.error('Failed to load service catalog', (e as Error).message))
+  }, [open, contract, toast])
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
+
+  const setService = (idx: number, patch: Partial<{ t1: string; t2: string; t3: string }>) => {
+    setSelected((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)))
+  }
 
   const submit = async () => {
     if (!form.contract_no.trim() || !form.vendor_id) {
       toast.error('Contract number and vendor are required')
       return
     }
+    const cleaned = selected
+      .map((s) => ({ t1: s.t1.trim(), t2: s.t2.trim() || null, t3: s.t3.trim() || null }))
+      .filter((s) => s.t1)
+    if (!cleaned.length) {
+      toast.error('Add at least one service')
+      return
+    }
+    for (const row of cleaned) {
+      if (!row.t2) {
+        toast.error('Each service needs Type 2')
+        return
+      }
+      const t3s = t3Options(matrix, row.t1, row.t2)
+      if (t3s.length && !row.t3) {
+        toast.error('Each service needs Type 3')
+        return
+      }
+    }
+    const seen = new Set<string>()
+    const unique = cleaned.filter((s) => {
+      const key = serviceKey(s)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
     if (!(await guardWrite(contract?.start_date, form.start_date))) return
     setSaving(true)
     try {
+      const service = Array.from(new Set(unique.map((s) => s.t2 || s.t1).filter(Boolean))).join(', ')
       const body = {
         contract_no: form.contract_no.trim(),
         vendor_id: form.vendor_id,
-        service: form.service || null,
+        service: service || null,
         start_date: form.start_date || null,
         end_date: form.end_date || null,
         value: form.value ? Number(form.value) : null,
         status: form.status || 'Open',
+        services: unique,
       }
       if (contract) {
         await apiPut(`/api/contracts/${contract.id}`, body)
@@ -545,11 +607,6 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
             ))}
           </select>
         </Field>
-        <div className="sm:col-span-2">
-          <Field label="Service Description">
-            <input className="input" value={form.service} onChange={set('service')} />
-          </Field>
-        </div>
         <Field label="Start Date">
           <input type="date" className="input" value={form.start_date} onChange={set('start_date')} />
         </Field>
@@ -566,6 +623,73 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
             ))}
           </select>
         </Field>
+        <div className="sm:col-span-2">
+          <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
+            Services<span className="ml-0.5 text-[var(--danger)]">*</span>
+          </span>
+          <div className="space-y-2">
+            {selected.map((row, idx) => {
+              const t2s = t2Options(matrix, row.t1)
+              const t3s = t3Options(matrix, row.t1, row.t2)
+              return (
+                <div key={`svc-${idx}`} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                  <select
+                    className="input"
+                    value={row.t1}
+                    onChange={(e) => setService(idx, { t1: e.target.value, t2: '', t3: '' })}
+                  >
+                    <option value="">Type 1…</option>
+                    {t1Options(matrix).map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={row.t2}
+                    disabled={!row.t1}
+                    onChange={(e) => setService(idx, { t2: e.target.value, t3: '' })}
+                  >
+                    <option value="">{row.t1 ? 'Type 2…' : 'Select type 1 first'}</option>
+                    {t2s.map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={row.t3}
+                    disabled={!row.t2}
+                    onChange={(e) => setService(idx, { t3: e.target.value })}
+                  >
+                    <option value="">{row.t2 ? (t3s.length ? 'Type 3…' : '—') : 'Select type 2 first'}</option>
+                    {t3s.map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    aria-label="Remove service"
+                    disabled={selected.length === 1}
+                    onClick={() => setSelected((prev) => prev.filter((_, i) => i !== idx))}
+                  >
+                    <Trash2 size={14} className="text-[var(--danger)]" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2"
+            onClick={() => setSelected((prev) => [...prev, emptyServiceRow()])}
+          >
+            <Plus size={14} /> Add service
+          </Button>
+          {matrix.length === 0 && (
+            <p className="mt-1 text-xs text-[var(--text-muted)]">No catalog rows yet. Add them under Administration → Service catalog.</p>
+          )}
+        </div>
       </div>
     </Modal>
   )

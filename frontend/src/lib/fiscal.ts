@@ -50,6 +50,32 @@ export function fiscalOf(dateStr: string | null | undefined): FiscalInfo | null 
   return { fy: fiscalYearLabel(d), quarter: quarterOfDate(d) }
 }
 
+/** Date that owns budget and accrual: service end, else invoice date. */
+export function invoiceBudgetDate(inv: {
+  service_to?: string | null
+  invoice_date?: string | null
+}): string | null {
+  const end = String(inv.service_to ?? '').trim()
+  if (end) return end
+  const billed = String(inv.invoice_date ?? '').trim()
+  return billed || null
+}
+
+/** FY + quarter for the year whose budget this invoice consumes. */
+export function invoiceBudgetInfo(inv: {
+  service_to?: string | null
+  invoice_date?: string | null
+}): FiscalInfo | null {
+  return fiscalOf(invoiceBudgetDate(inv))
+}
+
+export function invoiceBudgetFy(inv: {
+  service_to?: string | null
+  invoice_date?: string | null
+}): string | null {
+  return invoiceBudgetInfo(inv)?.fy ?? null
+}
+
 /** Current Pakistan fiscal-year label (e.g. FY26 on 31 Aug 2026). */
 export function currentFiscalYear(d = new Date()): string {
   return fiscalYearLabel(d)
@@ -131,7 +157,27 @@ const COST_ELEMENT_CATEGORY: Record<string, 'OPEX' | 'CAPEX'> = {
   SM: 'OPEX',
 }
 
+export const MISC_COST_ELEMENT = 'MISC'
+
+export function isMiscCostElement(code: string | null | undefined): boolean {
+  const n = String(code ?? '').trim().toUpperCase().replace(/\.+$/, '')
+  return n === 'MISC' || n === 'MISCELLANEOUS'
+}
+
+/** Unpaid invoices of a closed FY sit on the accrual ledger, not year spend. */
+export function isAccrualOpenInvoice(inv: {
+  service_to?: string | null
+  invoice_date?: string | null
+  status?: string | null
+}): boolean {
+  const fy = invoiceBudgetFy(inv)
+  if (!fy || !isClosedFiscalYear(fy)) return false
+  const st = String(inv.status ?? '')
+  return st === 'Pending' || st === 'Approved' || st === 'Draft'
+}
+
 export function costCategory(code: string | null | undefined): 'OPEX' | 'CAPEX' | 'Uncategorized' {
   if (!code) return 'Uncategorized'
+  if (isMiscCostElement(code)) return 'Uncategorized'
   return COST_ELEMENT_CATEGORY[code.toUpperCase()] ?? 'Uncategorized'
 }

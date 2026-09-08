@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { invoiceApprovedAmount, PO_STATUS, poGeneratedAmount, poReleasedAmount } from '../services/poFinance.js'
+import { invoiceBudgetDate, invoiceBudgetFy } from '../services/fyLock.js'
 
 export const reportsRouter = Router()
 
@@ -9,11 +10,16 @@ function toMoney(v: unknown): number {
   return Number(v ?? 0) || 0
 }
 
-reportsRouter.get('/reports/dashboard', authRequired, async (_req, res, next) => {
+function currentFiscalYear(d = new Date()): string {
+  const y = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1
+  return `FY${String(y).slice(2)}`
+}
+
+reportsRouter.get('/reports/dashboard', authRequired, async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const { data: invoices } = await supabase.from('invoices').select(
-      'id, amount, approved_amount, status, invoice_date, contract_id'
+      'id, amount, approved_amount, status, invoice_date, service_to, contract_id'
     )
     const { data: contracts } = await supabase
       .from('contracts')
@@ -23,7 +29,10 @@ reportsRouter.get('/reports/dashboard', authRequired, async (_req, res, next) =>
       .from('po_versions')
       .select('id, invoice_id, status, amount, released_amount')
 
-    const inv = invoices ?? []
+    const fyRaw = String(req.query.fy ?? '').trim()
+    const targetFy = !fyRaw || fyRaw === 'all' ? currentFiscalYear() : fyRaw
+    const allInv = invoices ?? []
+    const inv = allInv.filter((i) => invoiceBudgetFy(i) === targetFy)
     const totalInv = inv.length
     const totalVal = inv.reduce((s, i) => s + toMoney(i.amount), 0)
     const approved = inv.filter((i) => i.status === 'Approved')
@@ -35,9 +44,13 @@ reportsRouter.get('/reports/dashboard', authRequired, async (_req, res, next) =>
     const paid = inv.filter((i) => i.status === 'Paid')
     const signedOff = inv.filter((i) => ['Approved', 'Paid', 'Accepted'].includes(String(i.status ?? '')))
     const approvedInvoiceVal = signedOff.reduce((s, i) => s + invoiceApprovedAmount(i), 0)
-    const pos = paymentOrders ?? []
+    const allPos = paymentOrders ?? []
+    const pos = allPos.filter((p) => {
+      const linked = allInv.find((i) => i.id === p.invoice_id)
+      return invoiceBudgetFy(linked ?? {}) === targetFy
+    })
     const poGeneratedVal = pos.reduce((s, p) => {
-      const linked = inv.find((i) => i.id === p.invoice_id)
+      const linked = allInv.find((i) => i.id === p.invoice_id)
       return s + poGeneratedAmount(p, linked)
     }, 0)
     const cleared = pos.filter((p) => String(p.status ?? '') === PO_STATUS.Cleared)
@@ -57,8 +70,9 @@ reportsRouter.get('/reports/dashboard', authRequired, async (_req, res, next) =>
 
     const monthly: Record<string, { month: string; total: number; count: number }> = {}
     for (const i of inv) {
-      if (!i.invoice_date) continue
-      const key = String(i.invoice_date).slice(0, 7)
+      const billed = invoiceBudgetDate(i)
+      if (!billed) continue
+      const key = String(billed).slice(0, 7)
       monthly[key] ??= { month: key, total: 0, count: 0 }
       monthly[key].total += toMoney(i.amount)
       monthly[key].count += 1

@@ -19,6 +19,8 @@ export interface ContractLite {
   end_date: string | null
   vendor: string | null
   service: string | null
+  status?: string | null
+  services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }>
 }
 
 export interface Utilization {
@@ -62,6 +64,7 @@ export interface ValidateInvoiceOptions {
   duplicateCheck?: boolean
   maxInvoiceAmount?: number
   futureDateAllowed?: boolean
+  relaxContractWindow?: boolean
 }
 
 /** Contract usage: operationally approved or already paid. */
@@ -120,6 +123,50 @@ export function resolveCostElement(
   return matrixRowFor(matrix, t1, t2, t3)?.cost_element ?? null
 }
 
+/** Open and not past end_date. Closed / Expired / lapsed contracts are excluded. */
+export function isSelectableContract(
+  c: { status?: string | null; end_date?: string | null },
+  asOf = new Date(),
+): boolean {
+  const status = String(c.status ?? 'Open')
+  if (status === 'Closed' || status === 'Expired') return false
+  if (c.end_date) {
+    const end = new Date(`${c.end_date}T23:59:59`)
+    if (!Number.isNaN(end.getTime()) && end < asOf) return false
+  }
+  return true
+}
+
+export function contractStatusLabel(c: { status?: string | null; end_date?: string | null }): string | null {
+  if (String(c.status ?? '') === 'Closed') return 'Closed'
+  if (String(c.status ?? '') === 'Expired') return 'Expired'
+  if (c.end_date) {
+    const end = new Date(`${c.end_date}T23:59:59`)
+    if (!Number.isNaN(end.getTime()) && end < new Date()) return 'Expired'
+  }
+  return null
+}
+
+/** Catalog rows allowed on a contract. Empty until a contract is chosen. */
+export function matrixForContract(
+  matrix: ServiceMatrixRow[],
+  contract: { service?: string | null; services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }> } | null,
+): ServiceMatrixRow[] {
+  if (!contract) return []
+  const linked = contract.services ?? []
+  if (linked.length > 0) {
+    const byTriple = matrix.filter((m) =>
+      linked.some((s) => s.t1 === m.t1 && (s.t2 ?? '') === (m.t2 ?? '') && (s.t3 ?? '') === (m.t3 ?? '')),
+    )
+    if (byTriple.length) return byTriple
+  }
+  if (contract.service) {
+    const rows = matrix.filter((m) => (m.t2 ?? '') === contract.service)
+    if (rows.length) return rows
+  }
+  return []
+}
+
 export function contractUtilization(
   invoices: UtilizationInvoice[],
   contract: Pick<ContractLite, 'value'> | null | undefined,
@@ -168,7 +215,7 @@ export function validateInvoice(
   if (form.service_from && form.service_to && form.service_to < form.service_from)
     issues.push({ field: 'service_to', message: 'Service To must be on or after Service From' })
 
-  if (contract) {
+  if (contract && !opts.relaxContractWindow) {
     if (contract.start_date && form.service_from && form.service_from < contract.start_date)
       issues.push({
         field: 'service_from',
@@ -214,7 +261,7 @@ export function validateInvoice(
       field: 'amount',
       message: `Amount exceeds maximum ${formatMoney(opts.maxInvoiceAmount)}`,
     })
-  } else if (contract) {
+  } else if (contract && !opts.relaxContractWindow) {
     const util = contractUtilization(opts.allInvoices ?? [], contract, contract.id, opts.excludeInvoiceId)
     if (amount > util.remaining) {
       issues.push({

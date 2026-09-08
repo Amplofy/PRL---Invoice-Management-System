@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
-import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Wand2, Languages, Banknote, Clock, Layers } from 'lucide-react'
+import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Languages, Banknote, Clock, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
-import { contractUtilization, isSignedOff, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
+import { contractUtilization, contractStatusLabel, isSelectableContract, isSignedOff, matrixForContract, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -14,6 +14,7 @@ import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
 import ServiceSelects from '../components/ui/ServiceSelects'
+import LockedAutoField from '../components/ui/LockedAutoField'
 import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
 import ValidationSummary from '../components/ui/ValidationSummary'
 import { emitAppEvent } from '../lib/notify'
@@ -27,10 +28,12 @@ import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import SortableTh from '../components/ui/SortableTh'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { currentFiscalYear, isClosedDate, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
+import { currentFiscalYear, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
 import { useFyLock } from '../lib/FyLockProvider'
+import { useMasterAccess } from '../lib/masterAccess'
 import { invoiceListPath } from '../lib/invoiceWindow'
-import { useLiveDomain } from '../lib/store'
+import { emitCrossModule, useLiveDomain } from '../lib/store'
+import { isUnpaidPriorYearInvoice } from '../lib/accrual'
 
 interface VendorRef {
   name: string | null
@@ -83,13 +86,14 @@ const INVOICE_COLUMN_DEFS = [
   { key: 'tanker', label: 'Tanker' },
   { key: 'trips', label: 'Trips' },
   { key: 'cost_element', label: 'Cost Element' },
+  { key: 'budget_fy', label: 'Budget FY' },
   { key: 'service_period', label: 'Service Period' },
   { key: 'amount', label: 'Amount' },
   { key: 'status', label: 'Status' },
   { key: 'remarks', label: 'Remarks' },
 ]
 
-const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 'item', 'amount', 'status']
+const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 'item', 'budget_fy', 'amount', 'status']
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -224,7 +228,7 @@ export default function InvoicesPage() {
 
   const generatePo = async () => {
     if (!generatingPo) return
-    if (!(await guardWrite(generatingPo.invoice_date))) return
+    if (!isUnpaidPriorYearInvoice(generatingPo) && !(await guardWrite(generatingPo.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${generatingPo.id}/po`, {})
       setPoReady((m) => ({ ...m, [generatingPo.id]: true }))
@@ -264,10 +268,11 @@ export default function InvoicesPage() {
       { key: 'item_no', label: 'Item', type: 'text' },
       { key: 'tanker_name', label: 'Tanker', type: 'text' },
       { key: 'cost_element', label: 'Cost Element', type: 'text' },
+      { key: 'budget_fy', label: 'Budget FY', type: 'select', options: fyChoices.map((y) => ({ value: y, label: y })) },
       { key: 'amount', label: 'Amount', type: 'number' },
       { key: 'remarks', label: 'Remarks', type: 'text' },
     ],
-    [contracts],
+    [contracts, fyChoices],
   )
 
   const invoiceFilterValue = (inv: Invoice, key: string): string | number | null => {
@@ -276,6 +281,8 @@ export default function InvoicesPage() {
         return vendorOf(inv)
       case 'contract_id':
         return inv.contract_id
+      case 'budget_fy':
+        return invoiceBudgetFy(inv)
       default:
         return (inv as unknown as Record<string, string | number | null>)[key] ?? null
     }
@@ -315,6 +322,8 @@ export default function InvoicesPage() {
                   ? String(vendorOf(row))
                   : key === 'contract'
                     ? String(contractNoOf(row))
+                    : key === 'budget_fy'
+                      ? String(invoiceBudgetFy(row) ?? '')
                     : (row as unknown as Record<string, unknown>)[key] as string | null,
       ),
     [filtered, sortBy, sortDir],
@@ -424,6 +433,7 @@ export default function InvoicesPage() {
     { key: 'status', label: 'Status' },
     { key: 'item_no', label: 'Item' },
     { key: 'cost_element', label: 'Cost Element' },
+    { key: 'budget_fy', label: 'Budget FY' },
     { key: 'month', label: 'Month' },
   ]
 
@@ -431,6 +441,7 @@ export default function InvoicesPage() {
     if (key === 'vendor') return vendorOf(inv)
     if (key === 'contract') return contractNoOf(inv)
     if (key === 'month') return inv.invoice_date ? inv.invoice_date.slice(0, 7) : null
+    if (key === 'budget_fy') return invoiceBudgetFy(inv)
     return (inv as unknown as Record<string, string | number | null>)[key] ?? null
   }
 
@@ -547,6 +558,7 @@ export default function InvoicesPage() {
             { key: 'vendor', label: 'Vendor' },
             { key: 'amount', label: 'Amount' },
             { key: 'status', label: 'Status' },
+            { key: 'budget_fy', label: 'Budget FY' },
           ],
           value: sortBy,
           direction: sortDir,
@@ -596,6 +608,7 @@ export default function InvoicesPage() {
                 {col.show('tanker') && <th>Tanker</th>}
                 {col.show('trips') && <SortableTh label="Trips" columnKey="trips" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('cost_element') && <SortableTh label="Cost Element" columnKey="cost_element" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('budget_fy') && <SortableTh label="Budget FY" columnKey="budget_fy" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('service_period') && <th>Service Period</th>}
                 {col.show('amount') && <SortableTh label="Amount" columnKey="amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
@@ -631,7 +644,7 @@ export default function InvoicesPage() {
                       >
                         {inv.invoice_no ?? '—'}
                       </Link>
-                      {isClosedDate(inv.invoice_date) && (
+                      {isClosedFiscalYear(invoiceBudgetFy(inv) ?? '') && (
                         <Lock size={12} className="ml-1.5 inline text-[var(--text-muted)]" aria-label="Closed fiscal year" />
                       )}
                     </td>
@@ -652,6 +665,7 @@ export default function InvoicesPage() {
                   {col.show('tanker') && <td className="text-xs">{inv.tanker_name ?? '—'}</td>}
                   {col.show('trips') && <td className="text-right text-xs">{inv.trips ?? '—'}</td>}
                   {col.show('cost_element') && <td className="text-xs">{inv.cost_element ?? '—'}</td>}
+                  {col.show('budget_fy') && <td className="text-xs">{invoiceBudgetFy(inv) ?? '—'}</td>}
                   {col.show('service_period') && (
                     <td className="text-xs">
                       {inv.service_from || inv.service_to
@@ -662,7 +676,10 @@ export default function InvoicesPage() {
                   {col.show('amount') && <td className="text-right font-semibold">{formatMoney(inv.amount)}</td>}
                   {col.show('status') && (
                     <td>
-                      <StatusBadge tone={statusTone(inv.status)}>{inv.status}</StatusBadge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <StatusBadge tone={statusTone(inv.status)}>{inv.status}</StatusBadge>
+                        {isUnpaidPriorYearInvoice(inv) && <span className="badge badge-warn">Closed FY</span>}
+                      </div>
                     </td>
                   )}
                   {col.show('remarks') && (
@@ -908,6 +925,8 @@ interface ContractFull {
   value: number
   start_date: string | null
   end_date: string | null
+  status?: string | null
+  services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }>
   vendors: VendorRef[] | null
 }
 
@@ -920,6 +939,8 @@ function toContractLite(c: ContractFull): ContractLite {
     end_date: c.end_date,
     vendor: c.vendors?.[0]?.name ?? null,
     service: c.service ?? null,
+    status: c.status ?? null,
+    services: c.services,
   }
 }
 
@@ -927,6 +948,8 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const { guardWrite } = useFyLock()
+  const { unlocked: masterOn } = useMasterAccess()
+  const [serialOverride, setSerialOverride] = useState<string | null>(null)
   /** Errors stay hidden until the user attempts to save; they then clear per-field as fixed. */
   const [showErrors, setShowErrors] = useState(false)
   /** Processing date is stamped at entry time and never edited by hand. */
@@ -943,6 +966,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     if (!open) return
     setShowErrors(false)
     setEntryDate(new Date().toISOString().slice(0, 10))
+    setSerialOverride(invoice?.serial_no ?? null)
     setForm({
       serial_no: invoice?.serial_no ?? '',
       invoice_no: invoice?.invoice_no ?? '',
@@ -1010,8 +1034,9 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
         duplicateCheck,
         maxInvoiceAmount,
         futureDateAllowed,
+        relaxContractWindow: masterOn,
       }),
-    [form, matrix, fullContracts, allInvoices, invoice?.id, duplicateCheck, maxInvoiceAmount, futureDateAllowed],
+    [form, matrix, fullContracts, allInvoices, invoice?.id, duplicateCheck, maxInvoiceAmount, futureDateAllowed, masterOn],
   )
   const issueMap = useMemo(() => {
     const map: Record<string, string> = {}
@@ -1023,9 +1048,9 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
   // year of the invoice date + fiscal-year tag. Edit mode keeps the stored serial.
   const generatedSerial = useMemo(
     () =>
-      invoice?.serial_no ||
+      serialOverride ||
       nextSerialNo(form.invoice_date || undefined, allInvoices as SerialInvoiceLike[], invoice?.id),
-    [invoice?.serial_no, form.invoice_date, allInvoices, invoice?.id],
+    [serialOverride, form.invoice_date, allInvoices, invoice?.id],
   )
   const processingDate = invoice?.processing_date?.slice(0, 10) || entryDate
 
@@ -1049,7 +1074,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       focusFirstIssue()
       return
     }
-    if (!(await guardWrite(invoice?.invoice_date, form.invoice_date))) return
+    if (!masterOn && !(await guardWrite(invoice?.invoice_date, form.invoice_date, form.service_to))) return
     setSaving(true)
     try {
       const body = {
@@ -1069,15 +1094,18 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
         service_to: form.service_to || null,
         amount: Number(form.amount) || 0,
         remarks: form.remarks || null,
+        ...(masterOn ? { masterAccess: true } : {}),
       }
       if (invoice) {
         await apiPut(`/api/invoices/${invoice.id}`, body)
         toast.success('Invoice updated')
         emitAppEvent('info', 'Invoice updated', `${form.invoice_no} was saved`)
+        emitCrossModule('invoice', 'update', invoice.id)
       } else {
         await apiPost('/api/invoices', body)
         toast.success('Invoice created')
         emitAppEvent('ok', 'Invoice created', `${form.invoice_no} entered for processing`, '/invoices')
+        emitCrossModule('invoice', 'create')
       }
       onSaved()
     } catch (e) {
@@ -1152,55 +1180,47 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
             <div className="section-title">Invoice Details</div>
             <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
               {/* 1 — system-generated identifiers */}
-              <div>
-                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-dim)]">
-                  Serial No
-                  <span
-                    className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[0.55rem] font-bold uppercase tracking-wide text-[var(--accent)]"
-                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
-                  >
-                    <Wand2 size={8} /> auto
-                  </span>
-                </span>
-                <div
-                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] font-mono text-sm font-bold tracking-wide"
-                  title="Auto-generated: running count for the Gregorian year + fiscal-year tag (Jul–Jun)"
-                >
-                  {generatedSerial || '···· - ··'}
-                  <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
-                </div>
-              </div>
-              <div>
-                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-[var(--text-dim)]">
-                  Processing Date
-                  <span
-                    className="flex items-center gap-0.5 rounded-full px-1.5 py-px text-[0.55rem] font-bold uppercase tracking-wide text-[var(--accent)]"
-                    style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}
-                  >
-                    <Wand2 size={8} /> auto
-                  </span>
-                </span>
-                <div
-                  className="input flex cursor-default items-center justify-between !bg-[var(--surface)] text-sm font-semibold"
-                  title="Stamped with the date of entry"
-                >
-                  {processingDate || '—'}
-                  <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
-                </div>
-              </div>
+              <LockedAutoField
+                label="Serial No"
+                value={generatedSerial}
+                placeholder="···· - ··"
+                hint="Auto-generated: running count for the Gregorian year + fiscal-year tag (Jul–Jun)"
+                onCommit={setSerialOverride}
+              />
+              <LockedAutoField
+                label="Processing Date"
+                value={processingDate}
+                type="date"
+                hint="Stamped with the date of entry"
+                onCommit={setEntryDate}
+              />
 
               {/* 2 — contract sets the context for everything below */}
               <div className="sm:col-span-2">
-                <Field label="Contract" required hint="Live utilization preview on the right">
-                  <select className="input" value={form.contract_id} onChange={set('contract_id')}>
+                <Field
+                  label="Contract"
+                  required
+                  hint={masterOn ? 'Master Access: closed and invalid contracts allowed' : 'Live utilization preview on the right'}
+                >
+                  <select
+                    className="input"
+                    value={form.contract_id}
+                    onChange={(e) => {
+                      const contract_id = e.target.value
+                      setForm((f) => ({ ...f, contract_id, t1: '', t2: '', t3: '', tanker_name: '', trips: '', cost_element: '' }))
+                    }}
+                  >
                     <option value="">Select contract…</option>
                     {(fullContracts.length > 0
                       ? fullContracts
                       : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))
-                    ).map((c) => (
+                    )
+                      .filter((c) => masterOn || isSelectableContract(c))
+                      .map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.contract_no}
                         {c.vendors?.[0]?.name ? ` — ${c.vendors[0].name}` : ''}
+                        {contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}
                       </option>
                     ))}
                   </select>
@@ -1236,7 +1256,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
               </Field>
               <div>
                 <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Status on Save</span>
-                <div className="input flex cursor-default items-center gap-2 !bg-[var(--surface)] text-sm">
+                <div className="input flex cursor-default items-center gap-2 bg-[var(--surface)]! text-sm">
                   <StatusBadge tone="warn">Pending</StatusBadge>
                   <span className="text-[0.65rem] text-[var(--text-muted)]">routes to approvals</span>
                 </div>
@@ -1247,7 +1267,8 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           <div className="glass p-5">
             <div className="section-title">Service Details</div>
             <ServiceSelects
-              matrix={matrix}
+              matrix={matrixForContract(matrix, selectedContract)}
+              contractId={form.contract_id}
               value={serviceValue}
               onChange={patchService}
               issues={showErrors ? issueMap : {}}

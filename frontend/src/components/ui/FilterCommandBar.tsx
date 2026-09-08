@@ -20,11 +20,12 @@ interface Props {
   activeKeys: Set<string>
   onToggle: (s: FilterSuggestion) => void
   activeCount: number
+  compact?: boolean
 }
 
 const PREVIEW_PER_DIM = 3
 
-export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onToggle, activeCount }: Props) {
+export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onToggle, activeCount, compact }: Props) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
@@ -101,11 +102,11 @@ export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onT
   return (
     <div ref={anchorRef} className="relative">
       <div
-        className="flex items-center gap-2.5 rounded-xl border bg-[var(--bg)] px-3.5 py-2.5 transition-all focus-within:border-[var(--accent)] focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--accent)_18%,transparent)]"
+        className={`flex items-center gap-2 rounded-[6px] border bg-[var(--bg)] ${compact ? 'px-2.5 py-1.5' : 'px-3.5 py-2.5'}`}
         style={{ borderColor: open ? 'var(--accent)' : 'var(--border)' }}
       >
         <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
-        {activeCount > 0 && (
+        {!compact && activeCount > 0 && (
           <span className="flex shrink-0 items-center gap-1 rounded-full bg-[var(--accent)] px-2 py-0.5 text-[0.65rem] font-bold text-white">
             {activeCount} active
           </span>
@@ -119,7 +120,7 @@ export default function FilterCommandBar({ suggestions, dimMeta, activeKeys, onT
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder={activeCount > 0 ? 'Add another filter…' : 'Add a filter — try a vendor, quarter, cost element or status…'}
+          placeholder={compact ? 'Filter…' : activeCount > 0 ? 'Add another filter…' : 'Add a filter — try a vendor, quarter, cost element or status…'}
           className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
         />
         {query && (

@@ -298,14 +298,14 @@ export default function Notifications() {
             <div className="flex items-center gap-1">
               {unread > 0 && (
                 <button
-                  className="btn btn-ghost !px-2 !py-1 text-[0.7rem]"
+                  className="btn btn-ghost px-2! py-1! text-[0.7rem]"
                   onClick={markAllRead}
                   title="Mark all as read"
                 >
                   <CheckCheck size={13} /> Mark all read
                 </button>
               )}
-              <button className="btn btn-ghost !px-2 !py-1.5" onClick={() => setOpen(false)} aria-label="Close">
+              <button className="btn btn-ghost px-2! py-1.5!" onClick={() => setOpen(false)} aria-label="Close">
                 <X size={16} />
               </button>
             </div>

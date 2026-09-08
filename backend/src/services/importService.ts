@@ -2,7 +2,7 @@ import { getSupabase } from '../config/supabase.js'
 import type { ImportBatch, ImportPreviewRow, ImportType } from '../types/index.js'
 
 const INVOICE_STATUSES = ['Pending', 'Approved', 'Rejected', 'Draft', 'Void', 'Paid']
-const CONTRACT_STATUSES = ['Open', 'Closed', 'Expiring']
+const CONTRACT_STATUSES = ['Open', 'Closed', 'Expiring', 'Expired']
 
 const MAX_AMOUNT_DEFAULT = 2500000
 

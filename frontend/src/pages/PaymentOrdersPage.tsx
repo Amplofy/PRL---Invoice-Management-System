@@ -32,6 +32,7 @@ import {
   poStatusLabel,
   poStatusTone,
 } from '../lib/paymentOrder'
+import { isUnpaidPriorYearInvoice, RELEASED_VIA, releasedViaLabel } from '../lib/accrual'
 
 interface PaymentOrder {
   id: string
@@ -47,10 +48,13 @@ interface PaymentOrder {
   finance_approved_by?: string | null
   finance_approved_at?: string | null
   finance_remarks?: string | null
+  released_via?: string | null
+  release_reference?: string | null
   invoices: {
     id?: string
     invoice_no: string | null
     invoice_date: string | null
+    service_to?: string | null
     amount: number
     approved_amount?: number | null
     status: string | null
@@ -70,10 +74,12 @@ const PO_COLUMN_KEYS = [
   'amount',
   'approved_amount',
   'released_amount',
+  'released_via',
+  'release_reference',
   'status',
 ]
 
-const PO_DEFAULT_COLUMNS = ['po_serial', 'invoice_no', 'vendor', 'amount', 'released_amount', 'status']
+const PO_DEFAULT_COLUMNS = ['po_serial', 'invoice_no', 'vendor', 'amount', 'released_amount', 'released_via', 'status']
 
 const PO_COLUMN_LABELS: Record<string, string> = {
   po_serial: 'PO Serial',
@@ -86,6 +92,8 @@ const PO_COLUMN_LABELS: Record<string, string> = {
   amount: 'PO Amount',
   approved_amount: 'Invoice Approved',
   released_amount: 'Payment Released',
+  released_via: 'Released Via',
+  release_reference: 'Release Reference',
   status: 'Status',
 }
 
@@ -115,7 +123,7 @@ export default function PaymentOrdersPage() {
   const [filters, setFilters] = useState<FilterState[]>([])
   const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [groupKey, setGroupKey] = useState<string | null>(null)
-  const col = useColumnVisibility('prl-eoms-cols-payment-orders-v2', PO_COLUMN_KEYS, PO_DEFAULT_COLUMNS)
+  const col = useColumnVisibility('prl-eoms-cols-payment-orders-v3', PO_COLUMN_KEYS, PO_DEFAULT_COLUMNS)
   const toast = useToast()
   const { user } = useAuth()
   const finance = isFinanceOfficial(user?.role)
@@ -124,6 +132,8 @@ export default function PaymentOrdersPage() {
   const [rejecting, setRejecting] = useState<PaymentOrder | null>(null)
   const [releasedAmount, setReleasedAmount] = useState('')
   const [remarks, setRemarks] = useState('')
+  const [releasedVia, setReleasedVia] = useState('')
+  const [releaseReference, setReleaseReference] = useState('')
   const [rejectReason, setRejectReason] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -256,6 +266,8 @@ export default function PaymentOrdersPage() {
         ...(col.show('approved_amount') ? { invoice_approved: approvedOf(o) } : {}),
         ...(col.show('amount') ? { po_amount: generatedOf(o) } : {}),
         ...(col.show('released_amount') ? { payment_released: releasedOf(o) } : {}),
+        ...(col.show('released_via') ? { released_via: releasedViaLabel(o.released_via) } : {}),
+        ...(col.show('release_reference') ? { release_reference: o.release_reference ?? '' } : {}),
         ...(col.show('status') ? { status: poStatusLabel(o.status) } : {}),
       })),
     )
@@ -299,6 +311,7 @@ export default function PaymentOrdersPage() {
         <div><strong>Contract:</strong> ${contractNo}</div>
         <div><strong>Invoice:</strong> ${inv?.invoice_no ?? ''} (${formatDate(inv?.invoice_date)})</div>
       </div>
+      ${order.released_via || order.release_reference ? `<div class="meta"><div><strong>Released via:</strong> ${releasedViaLabel(order.released_via) || '—'}</div><div><strong>Reference:</strong> ${order.release_reference || '—'}</div></div>` : ''}
       <table>
         <tr><th>Description</th><th class="amount">Amount (PKR)</th></tr>
         <tr><td>Payment against invoice ${inv?.invoice_no ?? ''} — ${contractNo}</td><td class="amount"><strong>${formatMoney(printAmt, 2)}</strong></td></tr>
@@ -318,18 +331,30 @@ export default function PaymentOrdersPage() {
     setClearing(o)
     setReleasedAmount(String(generatedOf(o)))
     setRemarks(o.finance_remarks ?? '')
+    setReleasedVia(o.released_via ?? '')
+    setReleaseReference(o.release_reference ?? '')
   }
 
   const submitClear = async () => {
     if (!clearing) return
-    if (!(await guardWrite(clearing.invoices?.invoice_date))) return
+    if (!isUnpaidPriorYearInvoice(clearing.invoices ?? {})) {
+      if (!(await guardWrite(clearing.invoices?.service_to, clearing.invoices?.invoice_date))) return
+    }
     setBusy(true)
     try {
       await apiPost(`/api/payment-orders/${clearing.id}/approve`, {
         releasedAmount: Number(releasedAmount || generatedOf(clearing)),
         remarks: remarks.trim() || undefined,
+        releasedVia: releasedVia || undefined,
+        releaseReference: releaseReference.trim() || undefined,
       })
-      toast.success('Payment released', `${clearing.serial_no} cleared; surveyor payment deducted from budget`)
+      const prior = isUnpaidPriorYearInvoice(clearing.invoices ?? {})
+      toast.success(
+        'Payment released',
+        prior
+          ? `${clearing.serial_no} deducted from Accrual Balance; running-year remaining unchanged`
+          : `${clearing.serial_no} cleared; surveyor payment deducted from budget`,
+      )
       emitAppEvent('ok', 'Payment released', `PO ${clearing.serial_no} cleared by finance`, '/payment-orders')
       emitCrossModule('paymentOrder', 'update', clearing.id)
       setClearing(null)
@@ -347,7 +372,9 @@ export default function PaymentOrdersPage() {
       toast.error('A rejection reason is required')
       return
     }
-    if (!(await guardWrite(rejecting.invoices?.invoice_date))) return
+    if (!isUnpaidPriorYearInvoice(rejecting.invoices ?? {})) {
+      if (!(await guardWrite(rejecting.invoices?.service_to, rejecting.invoices?.invoice_date))) return
+    }
     setBusy(true)
     try {
       await apiPost(`/api/payment-orders/${rejecting.id}/reject`, { reason: rejectReason.trim() })
@@ -368,7 +395,7 @@ export default function PaymentOrdersPage() {
     <div className="space-y-5">
       <PageHeader
         title="Payment Orders"
-        description="Finance takes the last decision: approve a pay order to release payment to the surveyor and deduct it from budget."
+        description="Finance takes the last decision: approve a pay order to release payment. Closed-FY unpaid invoices deduct Accrual Balance; running-year remaining is unchanged."
         actions={
           <>
             <Button variant="ghost" onClick={refresh} disabled={refreshing}>
@@ -452,6 +479,8 @@ export default function PaymentOrdersPage() {
                 {col.show('approved_amount') && <SortableTh label="Invoice Approved" columnKey="approved_amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('amount') && <SortableTh label="PO Amount" columnKey="amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('released_amount') && <SortableTh label="Released" columnKey="released_amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
+                {col.show('released_via') && <SortableTh label="Released Via" columnKey="released_via" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('release_reference') && <th>Reference</th>}
                 {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 <th className="col-actions">Actions</th>
               </tr>
@@ -474,9 +503,16 @@ export default function PaymentOrdersPage() {
                         {releasedOf(o) > 0 ? formatMoney(releasedOf(o)) : '—'}
                       </td>
                     )}
+                    {col.show('released_via') && <td className="text-xs">{releasedViaLabel(o.released_via) || '—'}</td>}
+                    {col.show('release_reference') && <td className="text-xs">{o.release_reference || '—'}</td>}
                     {col.show('status') && (
                       <td>
-                        <StatusBadge tone={poStatusTone(o.status)}>{poStatusLabel(o.status)}</StatusBadge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <StatusBadge tone={poStatusTone(o.status)}>{poStatusLabel(o.status)}</StatusBadge>
+                          {isUnpaidPriorYearInvoice({ invoice_date: o.invoices?.invoice_date, status: o.invoices?.status }) && (
+                            <span className="badge badge-warn">Closed FY</span>
+                          )}
+                        </div>
                       </td>
                     )}
                     <td className="col-actions">
@@ -570,12 +606,25 @@ export default function PaymentOrdersPage() {
         {clearing && (
           <div className="space-y-3 text-sm">
             <p className="text-[var(--text-dim)]">
-              This is the last finance decision. Payment is released to the surveyor and the amount is deducted from remaining budget.
+              {isUnpaidPriorYearInvoice({ invoice_date: clearing.invoices?.invoice_date, status: clearing.invoices?.status })
+                ? 'Closed-year invoice. Payment deducts Accrual Balance; running-year remaining budget is unchanged.'
+                : 'This is the last finance decision. Payment is released to the surveyor and the amount is deducted from remaining budget.'}
             </p>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">Invoice approved</span><b>Rs {formatMoney(approvedOf(clearing))}</b></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">PO generated</span><b>Rs {formatMoney(generatedOf(clearing))}</b></div>
             <Field label="Released amount (Rs)">
               <input className="input" inputMode="decimal" value={releasedAmount} onChange={(e) => setReleasedAmount(e.target.value)} />
+            </Field>
+            <Field label="Released via (optional)">
+              <select className="input" value={releasedVia} onChange={(e) => setReleasedVia(e.target.value)}>
+                <option value="">Select…</option>
+                {RELEASED_VIA.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Release reference (optional)">
+              <input className="input" value={releaseReference} onChange={(e) => setReleaseReference(e.target.value)} placeholder="Cheque / transfer number" />
             </Field>
             <Field label="Remarks (optional)">
               <textarea className="input" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} />

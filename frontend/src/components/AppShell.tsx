@@ -14,7 +14,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <Header />
         <main
           key={pathname}
-          className="page-enter mx-auto w-full max-w-[1560px] flex-1 px-4 py-6 pb-24 md:px-7 lg:px-9 lg:py-8 lg:pb-24"
+          className="page-enter mx-auto w-full max-w-[1560px] flex-1 px-3 py-4 pb-20 md:px-5 lg:px-7 lg:py-5 lg:pb-20"
         >
           {children}
         </main>

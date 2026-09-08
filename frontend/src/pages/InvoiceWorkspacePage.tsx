@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDateTime, formatAmountWords, timeAgo } from '../lib/format'
-import { contractUtilization, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice } from '../lib/invoice'
+import { contractUtilization, contractStatusLabel, isSelectableContract, matrixForContract, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice } from '../lib/invoice'
 import { emitAppEvent } from '../lib/notify'
 import { useToast } from '../components/ui/Toast'
 import GlassCard from '../components/ui/GlassCard'
@@ -26,16 +26,19 @@ import Button from '../components/ui/Button'
 import Tabs from '../components/ui/Tabs'
 import EmptyState from '../components/ui/EmptyState'
 import ServiceSelects from '../components/ui/ServiceSelects'
+import LockedAutoField from '../components/ui/LockedAutoField'
 import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
 import ValidationSummary from '../components/ui/ValidationSummary'
 import AmountWords from '../components/ui/AmountWords'
 import { Field } from '../components/ui/Field'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useFyLock } from '../lib/FyLockProvider'
-import { currentFiscalYear, isClosedDate } from '../lib/fiscal'
+import { useMasterAccess } from '../lib/masterAccess'
+import { currentFiscalYear, invoiceBudgetFy, isClosedFiscalYear } from '../lib/fiscal'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { invoiceApprovedAmount, poGeneratedAmount, poReleasedAmount, poStatusLabel, poStatusTone } from '../lib/paymentOrder'
-import { useLiveDomain } from '../lib/store'
+import { emitCrossModule, useLiveDomain } from '../lib/store'
+import { isUnpaidPriorYearInvoice } from '../lib/accrual'
 
 interface ContractFull {
   id: string
@@ -44,6 +47,8 @@ interface ContractFull {
   value: number
   start_date: string | null
   end_date: string | null
+  status?: string | null
+  services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }>
   vendors: Array<{ name: string | null; email?: string | null }> | null
 }
 
@@ -107,6 +112,8 @@ function toContractLite(c: ContractFull): ContractLite {
     end_date: c.end_date,
     vendor: c.vendors?.[0]?.name ?? null,
     service: c.service ?? null,
+    status: c.status ?? null,
+    services: c.services,
   }
 }
 
@@ -125,6 +132,7 @@ export default function InvoiceWorkspacePage() {
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
   const { guardWrite } = useFyLock()
+  const { unlocked: masterOn } = useMasterAccess()
 
   const [invoice, setInvoice] = useState<WorkspaceInvoice | null>(null)
   const [form, setForm] = useState<Record<string, string>>({})
@@ -154,6 +162,7 @@ export default function InvoiceWorkspacePage() {
       setInvoice(inv)
       setForm({
         serial_no: inv.serial_no ?? '',
+        processing_date: (inv.processing_date ?? '').slice(0, 10),
         invoice_no: inv.invoice_no ?? '',
         invoice_date: (inv.invoice_date ?? '').slice(0, 10),
         contract_id: inv.contract_id ?? '',
@@ -233,8 +242,9 @@ export default function InvoiceWorkspacePage() {
         duplicateCheck,
         maxInvoiceAmount,
         futureDateAllowed,
+        relaxContractWindow: masterOn,
       }),
-    [form, matrix, contracts, allInvoices, invoice?.id, duplicateCheck, maxInvoiceAmount, futureDateAllowed],
+    [form, matrix, contracts, allInvoices, invoice?.id, duplicateCheck, maxInvoiceAmount, futureDateAllowed, masterOn],
   )
   const issueMap = useMemo(() => {
     const map: Record<string, string> = {}
@@ -251,6 +261,7 @@ export default function InvoiceWorkspacePage() {
     if (!invoice) return
     setForm({
       serial_no: invoice.serial_no ?? '',
+      processing_date: (invoice.processing_date ?? '').slice(0, 10),
       invoice_no: invoice.invoice_no ?? '',
       invoice_date: (invoice.invoice_date ?? '').slice(0, 10),
       contract_id: invoice.contract_id ?? '',
@@ -275,11 +286,12 @@ export default function InvoiceWorkspacePage() {
       toast.error(`Resolve ${issues.length} validation issue${issues.length > 1 ? 's' : ''} first`)
       return
     }
-    if (!(await guardWrite(invoice.invoice_date, form.invoice_date))) return
+    if (!masterOn && !(await guardWrite(invoice.invoice_date, form.invoice_date, form.service_to))) return
     setSaving(true)
     try {
       await apiPut(`/api/invoices/${invoice.id}`, {
         serial_no: form.serial_no || null,
+        processing_date: form.processing_date || null,
         invoice_no: form.invoice_no.trim(),
         invoice_date: form.invoice_date || null,
         contract_id: form.contract_id || null,
@@ -294,9 +306,11 @@ export default function InvoiceWorkspacePage() {
         service_to: form.service_to || null,
         amount: Number(form.amount) || 0,
         remarks: form.remarks || null,
+        ...(masterOn ? { masterAccess: true } : {}),
       })
       toast.success('Invoice saved')
       emitAppEvent('info', 'Invoice updated', `${form.invoice_no} was saved`, `/invoices/${invoice.id}`)
+      emitCrossModule('invoice', 'update', invoice.id)
       loadAll()
     } catch (e) {
       toast.error('Save failed', (e as Error).message)
@@ -317,6 +331,7 @@ export default function InvoiceWorkspacePage() {
         `${invoice.invoice_no ?? 'Invoice'} approved${res.po ? ' — PO generated' : ''}`,
         res.po ? '/payment-orders' : `/invoices/${invoice.id}`,
       )
+      emitCrossModule('invoice', 'update', invoice.id)
       loadAll()
     } catch (e) {
       toast.error('Approval failed', (e as Error).message)
@@ -334,6 +349,7 @@ export default function InvoiceWorkspacePage() {
       await apiPost(`/api/invoices/${invoice.id}/reject`, { reason: rejectReason.trim() })
       toast.success('Invoice rejected')
       emitAppEvent('err', 'Invoice rejected', `${invoice.invoice_no ?? 'Invoice'} — ${rejectReason.trim()}`, `/invoices/${invoice.id}`)
+      emitCrossModule('invoice', 'update', invoice.id)
       setRejecting(false)
       setRejectReason('')
       loadAll()
@@ -344,11 +360,12 @@ export default function InvoiceWorkspacePage() {
 
   const generatePo = async () => {
     if (!invoice) return
-    if (!(await guardWrite(invoice.invoice_date))) return
+    if (!isUnpaidPriorYearInvoice(invoice) && !(await guardWrite(invoice.invoice_date))) return
     try {
       await apiPost(`/api/invoices/${invoice.id}/po`, {})
       toast.success('Payment order generated')
       emitAppEvent('ok', 'Payment order generated', `PO created for ${invoice.invoice_no ?? 'invoice'}`, '/payment-orders')
+      emitCrossModule('invoice', 'update', invoice.id)
       loadAll()
     } catch (e) {
       toast.error('PO generation failed', (e as Error).message)
@@ -362,6 +379,7 @@ export default function InvoiceWorkspacePage() {
       await apiDelete(`/api/invoices/${invoice.id}`)
       toast.success('Invoice deleted')
       emitAppEvent('warn', 'Invoice deleted', `${invoice.invoice_no ?? 'Invoice'} was removed`)
+      emitCrossModule('invoice', 'delete', invoice.id)
       navigate('/invoices')
     } catch (e) {
       toast.error('Delete failed', (e as Error).message)
@@ -433,7 +451,7 @@ export default function InvoiceWorkspacePage() {
                 {invoice.invoice_no ?? '—'}
               </h1>
               <StatusBadge tone={statusTone(status)}>{status}</StatusBadge>
-              {isClosedDate(invoice.invoice_date) && (
+              {isClosedFiscalYear(invoiceBudgetFy(invoice) ?? '') && (
                 <span className="badge badge-warn">
                   <Lock size={12} /> Closed FY
                 </span>
@@ -509,18 +527,35 @@ export default function InvoiceWorkspacePage() {
                 <Field label="Invoice No" required error={issueMap.invoice_no}>
                   <input className={`input ${issueMap.invoice_no ? 'invalid' : ''}`} value={form.invoice_no} onChange={set('invoice_no')} />
                 </Field>
-                <Field label="Serial No">
-                  <input className="input" value={form.serial_no} onChange={set('serial_no')} />
-                </Field>
+                <LockedAutoField
+                  label="Serial No"
+                  value={form.serial_no}
+                  hint="Auto-generated serial"
+                  onCommit={(next) => setForm((f) => ({ ...f, serial_no: next }))}
+                />
                 <Field label="Invoice Date" error={issueMap.invoice_date}>
                   <input type="date" className={`input ${issueMap.invoice_date ? 'invalid' : ''}`} value={form.invoice_date} onChange={set('invoice_date')} />
                 </Field>
+                <LockedAutoField
+                  label="Processing Date"
+                  value={form.processing_date ?? ''}
+                  type="date"
+                  hint="Stamped with the date of entry"
+                  onCommit={(next) => setForm((f) => ({ ...f, processing_date: next }))}
+                />
                 <Field label="Contract">
-                  <select className="input" value={form.contract_id} onChange={set('contract_id')}>
+                  <select
+                    className="input"
+                    value={form.contract_id}
+                    onChange={(e) => {
+                      const contract_id = e.target.value
+                      setForm((f) => ({ ...f, contract_id, t1: '', t2: '', t3: '', tanker_name: '', trips: '', cost_element: '' }))
+                    }}
+                  >
                     <option value="">Select contract…</option>
-                    {contracts.map((c) => (
+                    {contracts.filter((c) => masterOn || isSelectableContract(c)).map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.contract_no}
+                        {c.contract_no}{contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}
                       </option>
                     ))}
                   </select>
@@ -536,7 +571,13 @@ export default function InvoiceWorkspacePage() {
 
             <GlassCard className="p-5">
               <div className="section-title">Service Details</div>
-              <ServiceSelects matrix={matrix} value={serviceValue} onChange={patchService} issues={issueMap} />
+              <ServiceSelects
+                matrix={matrixForContract(matrix, selectedContract)}
+                contractId={form.contract_id}
+                value={serviceValue}
+                onChange={patchService}
+                issues={issueMap}
+              />
             </GlassCard>
 
             <GlassCard className="p-5">

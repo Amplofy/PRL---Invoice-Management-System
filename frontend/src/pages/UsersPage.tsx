@@ -324,7 +324,7 @@ export default function UsersPage() {
                   const rp = (r as unknown as { role_permissions?: Array<{ permission_id: string }> }).role_permissions
                   return rp?.some((x) => x.permission_id === p.id)
                 })).slice(0, 8).map((p) => (
-                  <span key={p.id} className="chip !cursor-default !text-[0.65rem] max-w-[11rem] truncate">{p.code}</span>
+                  <span key={p.id} className="chip cursor-default! text-[0.65rem]! max-w-[11rem] truncate">{p.code}</span>
                 ))}
               </div>
             </GlassCard>

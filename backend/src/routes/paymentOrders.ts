@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { audit } from '../services/auditService.js'
-import { LOCKED_FY_MESSAGE, writeBlocked } from '../services/fyLock.js'
+import { LOCKED_FY_MESSAGE, writeBlockedForPayment } from '../services/fyLock.js'
+import { parseReleasedVia } from '../services/accrual.js'
 import {
   invoiceApprovedAmount,
   isFinanceRole,
@@ -19,7 +20,7 @@ import type { AuthUser } from '../types/index.js'
 export const paymentOrdersRouter = Router()
 
 const PO_SELECT =
-  '*, invoices(id, invoice_no, invoice_date, amount, approved_amount, status, cost_element, contracts(contract_no, vendors(name)))'
+  '*, invoices(id, invoice_no, invoice_date, service_to, amount, approved_amount, status, cost_element, contracts(contract_no, vendors(name)))'
 
 function actorKey(req: { user?: AuthUser }): string {
   return req.user?.id || req.user?.email || 'anon'
@@ -142,7 +143,7 @@ paymentOrdersRouter.post('/payment-orders/:id/approve', authRequired, async (req
       return
     }
     const invoice = firstRel(existing.invoices as NestedInvoice | NestedInvoice[] | null)
-    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), invoice?.invoice_date)
+    const locked = writeBlockedForPayment(actorKey(req as { user?: AuthUser }), invoice?.invoice_date, invoice?.status, invoice?.service_to)
     if (locked) {
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return
@@ -164,6 +165,13 @@ paymentOrdersRouter.post('/payment-orders/:id/approve', authRequired, async (req
       return
     }
     const remarks = String(req.body?.remarks ?? '').trim() || null
+    const viaRaw = req.body?.releasedVia
+    const releasedVia = viaRaw == null || viaRaw === '' ? null : parseReleasedVia(viaRaw)
+    if (viaRaw != null && String(viaRaw).trim() !== '' && !releasedVia) {
+      res.status(400).json({ error: 'Invalid releasedVia' })
+      return
+    }
+    const releaseReference = String(req.body?.releaseReference ?? '').trim() || null
     const now = new Date().toISOString()
     const email = actorEmail(req as { user?: AuthUser })
     const { data: updated, error: updateError } = await supabase
@@ -176,6 +184,8 @@ paymentOrdersRouter.post('/payment-orders/:id/approve', authRequired, async (req
         released_amount: releasedAmount,
         released_by: email,
         released_at: now,
+        released_via: releasedVia,
+        release_reference: releaseReference,
       })
       .eq('id', req.params.id)
       .select(PO_SELECT)
@@ -252,7 +262,7 @@ paymentOrdersRouter.post('/payment-orders/:id/reject', authRequired, async (req,
       return
     }
     const invoice = firstRel(existing.invoices as NestedInvoice | NestedInvoice[] | null)
-    const locked = writeBlocked(actorKey(req as { user?: AuthUser }), invoice?.invoice_date)
+    const locked = writeBlockedForPayment(actorKey(req as { user?: AuthUser }), invoice?.invoice_date, invoice?.status, invoice?.service_to)
     if (locked) {
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return
@@ -279,6 +289,8 @@ paymentOrdersRouter.post('/payment-orders/:id/reject', authRequired, async (req,
         released_amount: null,
         released_by: null,
         released_at: null,
+        released_via: null,
+        release_reference: null,
       })
       .eq('id', req.params.id)
       .select(PO_SELECT)

@@ -56,7 +56,7 @@ export default function ChartDrillDown({ open, title, subtitle, rows, onClose }:
               <p className="mt-0.5 text-xs text-[var(--text-dim)]">{subtitle}</p>
             </div>
           </div>
-          <button className="btn btn-ghost !px-2 !py-1.5" onClick={onClose} aria-label="Close">
+          <button className="btn btn-ghost px-2! py-1.5!" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -101,7 +101,7 @@ export default function ChartDrillDown({ open, title, subtitle, rows, onClose }:
           <Link
             to="/invoices"
             onClick={onClose}
-            className="btn btn-primary w-full justify-center !py-2.5"
+            className="btn btn-primary w-full justify-center py-2.5!"
           >
             View all in Invoices <ArrowUpRight size={15} />
           </Link>

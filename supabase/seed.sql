@@ -101,7 +101,8 @@ insert into public.app_settings (key, value) values
   ('cost_center', '11369'),
   ('duplicate_check', 'true'),
   ('future_date_allowed', 'false'),
-  ('enable_audit', 'true')
+  ('enable_audit', 'true'),
+  ('fy_accrual_overrides', '[]')
 on conflict (key) do nothing;
 
 -- -------------------------------------------------------------
@@ -113,14 +114,49 @@ insert into public.vendors (id, name, email) values
   ('00000000-0000-0000-0000-000000000103', 'M/s Delta Marine Services',   'surveyor3@example.com')
 on conflict (id) do nothing;
 
+insert into public.vendor_emails (vendor_id, email, label, is_primary) values
+  ('00000000-0000-0000-0000-000000000101', 'surveyor1@example.com', 'surveyor', true),
+  ('00000000-0000-0000-0000-000000000101', 'billing@abdulmoiz.example', 'billing', false),
+  ('00000000-0000-0000-0000-000000000102', 'surveyor2@example.com', 'surveyor', true),
+  ('00000000-0000-0000-0000-000000000102', 'ops@karachisurveyors.example', 'ops', false),
+  ('00000000-0000-0000-0000-000000000103', 'surveyor3@example.com', 'surveyor', true)
+on conflict (vendor_id, email) do nothing;
+
+insert into public.cost_elements (code, name) values
+  ('SUR', 'Surveying'),
+  ('THL', 'Tanker Handling'),
+  ('SM', 'Stock Measurement'),
+  ('MISC', 'Miscellaneous')
+on conflict (code) do nothing;
+
+insert into public.service_matrix (id, t1, t2, t3, cost_element, tanker_required, trips) values
+  ('00000000-0000-0000-0000-000000000401', 'Inward', 'Surveying', 'Draft Survey', 'SUR', true, false),
+  ('00000000-0000-0000-0000-000000000402', 'Inward', 'Surveying', 'Quantity Survey', 'SUR', false, false),
+  ('00000000-0000-0000-0000-000000000403', 'Outward', 'Tanker Handling', 'Loading', 'THL', true, true),
+  ('00000000-0000-0000-0000-000000000404', 'Outward', 'Tanker Handling', 'Unloading', 'THL', true, true),
+  ('00000000-0000-0000-0000-000000000405', 'Storage', 'Stock Measurement', 'Tank Dipping', 'SM', false, false),
+  ('00000000-0000-0000-0000-000000000406', 'Storage', 'Stock Measurement', 'Line Survey', 'SM', false, false)
+on conflict (id) do nothing;
+
 -- -------------------------------------------------------------
 -- Sample contracts
 -- -------------------------------------------------------------
-insert into public.contracts (id, contract_no, vendor_id, service, start_date, end_date, value) values
-  ('00000000-0000-0000-0000-000000000201', 'BH-LD-26', '00000000-0000-0000-0000-000000000101', 'Surveying',          '2026-01-01', '2026-12-31', 5000000),
-  ('00000000-0000-0000-0000-000000000202', 'TH-14-26', '00000000-0000-0000-0000-000000000102', 'Tanker Handling',    '2026-01-01', '2026-12-31', 8000000),
-  ('00000000-0000-0000-0000-000000000203', 'SM-09-26', '00000000-0000-0000-0000-000000000103', 'Stock Measurement',  '2026-01-01', '2026-12-31', 3500000)
+insert into public.contracts (id, contract_no, vendor_id, service, start_date, end_date, value, status) values
+  ('00000000-0000-0000-0000-000000000201', 'BH-LD-26', '00000000-0000-0000-0000-000000000101', 'Surveying',          '2026-01-01', '2026-12-31', 5000000, 'Open'),
+  ('00000000-0000-0000-0000-000000000202', 'TH-14-26', '00000000-0000-0000-0000-000000000102', 'Tanker Handling',    '2026-01-01', '2026-12-31', 8000000, 'Open'),
+  ('00000000-0000-0000-0000-000000000203', 'SM-09-26', '00000000-0000-0000-0000-000000000103', 'Stock Measurement',  '2026-01-01', '2026-12-31', 3500000, 'Open'),
+  ('00000000-0000-0000-0000-000000000204', 'OLD-21-22', '00000000-0000-0000-0000-000000000101', 'Surveying',         '2021-07-01', '2022-06-30', 1200000, 'Closed')
 on conflict (id) do nothing;
+
+insert into public.contract_services (contract_id, service_matrix_id, t1, t2, t3) values
+  ('00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000401', 'Inward', 'Surveying', 'Draft Survey'),
+  ('00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000402', 'Inward', 'Surveying', 'Quantity Survey'),
+  ('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-000000000403', 'Outward', 'Tanker Handling', 'Loading'),
+  ('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-000000000404', 'Outward', 'Tanker Handling', 'Unloading'),
+  ('00000000-0000-0000-0000-000000000203', '00000000-0000-0000-0000-000000000405', 'Storage', 'Stock Measurement', 'Tank Dipping'),
+  ('00000000-0000-0000-0000-000000000203', '00000000-0000-0000-0000-000000000406', 'Storage', 'Stock Measurement', 'Line Survey'),
+  ('00000000-0000-0000-0000-000000000204', '00000000-0000-0000-0000-000000000401', 'Inward', 'Surveying', 'Draft Survey')
+on conflict (contract_id, service_matrix_id) do nothing;
 
 -- -------------------------------------------------------------
 -- Default application users (create Supabase auth users with same email)

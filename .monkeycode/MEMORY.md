@@ -56,3 +56,18 @@ Entries discovered by the Agent during task execution should follow this format:
 - Instructions:
   - Pakistan FY Jul-Jun is labelled by the starting year: 2026-27 displays as FY26.
   - The running fiscal year is date-driven. Do not offer a manual FY switch in Admin company rules.
+
+[User Instruction Summary]
+- Date: 2026-09-04
+- Context: Finance pay-order workflow, then master-access / contracts / vendor-email work
+- Instructions:
+  - Do not push any code until the user explicitly says so.
+
+[Project Knowledge Summary]
+- Date: 2026-09-03
+- Context: Discovered by Agent while starting a local preview
+- Category: Environment Configuration
+- Instructions:
+  - This image has no system Node. Use `/root/.local/node/bin` (`export PATH="/root/.local/node/bin:$PATH"`). Node 22.16.0 was installed there as a tarball.
+  - Preview: `cd /workspace/frontend && npm run dev -- --host 0.0.0.0 --port 5173`. Demo is the Login page demo button (`enterDemo()` writes sessionStorage `prl-eoms-demo=1`). Regular email login needs Supabase. Backend is not required for demo.
+  - Vite already allows `.monkeycode-ai.online` and `.monkeycode-ai.live`.

@@ -1,6 +1,7 @@
 import { parseLocalGroups } from './importParser'
-import { currentFiscalYear, fiscalOf, isClosedFiscalYear } from './fiscal'
+import { currentFiscalYear, fiscalOf, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from './fiscal'
 import { hashFyPassword, LOCKED_FY_MESSAGE, normalizeUnlockPassword, verifyFyPassword } from './fyCrypto'
+import { accrualForFy, invoiceAccrualAmount, isBudgetIncrease, isUnpaidPriorYearInvoice, parseReleasedVia } from './accrual'
 
 const R_ADMIN = '00000000-0000-0000-0000-000000000001'
 const R_APPROVER = '00000000-0000-0000-0000-000000000002'
@@ -16,6 +17,14 @@ const V_DELTA = '00000000-0000-0000-0000-000000000103'
 const C_BH = '00000000-0000-0000-0000-000000000201'
 const C_TH = '00000000-0000-0000-0000-000000000202'
 const C_SM = '00000000-0000-0000-0000-000000000203'
+const C_OLD = '00000000-0000-0000-0000-000000000204'
+
+const SM_IN_DRAFT = '00000000-0000-0000-0000-000000000401'
+const SM_IN_QTY = '00000000-0000-0000-0000-000000000402'
+const SM_OUT_LOAD = '00000000-0000-0000-0000-000000000403'
+const SM_OUT_UNLOAD = '00000000-0000-0000-0000-000000000404'
+const SM_ST_DIP = '00000000-0000-0000-0000-000000000405'
+const SM_ST_LINE = '00000000-0000-0000-0000-000000000406'
 
 const PERMISSION_IDS = [
   'invoice.view', 'invoice.create', 'invoice.update', 'invoice.delete', 'invoice.approve',
@@ -29,7 +38,20 @@ interface Permission { id: string; name: string; category: string }
 interface Role { id: string; name: string; description: string; color: string; role_permissions: { permission_id: string }[] }
 interface UserRow { id: string; username: string; full_name: string; email: string; role_id: string | null; status: string; roles: { name: string; color: string } | null }
 interface Vendor { id: string; name: string; email: string | null; created_at: string; updated_at: string }
-interface Contract { id: string; contract_no: string; vendor_id: string | null; service: string | null; start_date: string | null; end_date: string | null; value: number; status: string; vendors: { name: string; email: string | null }[] | null }
+interface VendorEmail { id: string; vendor_id: string; email: string; label: string; is_primary: boolean }
+interface ContractService { id: string; contract_id: string; service_matrix_id: string; t1: string; t2: string | null; t3: string | null }
+interface Contract {
+  id: string
+  contract_no: string
+  vendor_id: string | null
+  service: string | null
+  start_date: string | null
+  end_date: string | null
+  value: number
+  status: string
+  vendors: { name: string; email: string | null }[] | null
+  services?: Array<{ id: string; t1: string; t2: string | null; t3: string | null }>
+}
 interface ServiceRow { id: string; t1: string; t2: string | null; t3: string | null; cost_element: string | null; tanker_required: boolean; trips: boolean }
 interface CostRow { code: string; name: string | null }
 interface Setting { key: string; value: string }
@@ -76,6 +98,8 @@ interface PoVersion {
   released_amount: number | null
   released_by: string | null
   released_at: string | null
+  released_via: string | null
+  release_reference: string | null
 }
 interface PoHistoryRow {
   id: string
@@ -170,10 +194,19 @@ const vendors: Vendor[] = [
   { id: V_DELTA, name: 'M/s Delta Marine Services', email: 'surveyor3@example.com', created_at: iso('2026-01-05'), updated_at: iso('2026-01-05') },
 ]
 
+const vendorEmails: VendorEmail[] = [
+  { id: uid(), vendor_id: V_ABDUL, email: 'surveyor1@example.com', label: 'surveyor', is_primary: true },
+  { id: uid(), vendor_id: V_ABDUL, email: 'billing@abdulmoiz.example', label: 'billing', is_primary: false },
+  { id: uid(), vendor_id: V_KARACHI, email: 'surveyor2@example.com', label: 'surveyor', is_primary: true },
+  { id: uid(), vendor_id: V_KARACHI, email: 'ops@karachisurveyors.example', label: 'ops', is_primary: false },
+  { id: uid(), vendor_id: V_DELTA, email: 'surveyor3@example.com', label: 'surveyor', is_primary: true },
+]
+
 const contracts: Contract[] = [
   { id: C_BH, contract_no: 'BH-LD-26', vendor_id: V_ABDUL, service: 'Surveying', start_date: '2026-01-01', end_date: '2026-12-31', value: 5000000, status: 'Open', vendors: [{ name: 'M/s Abdul Moiz Enterprises', email: 'surveyor1@example.com' }] },
   { id: C_TH, contract_no: 'TH-14-26', vendor_id: V_KARACHI, service: 'Tanker Handling', start_date: '2026-01-01', end_date: '2026-12-31', value: 8000000, status: 'Open', vendors: [{ name: 'M/s Karachi Surveyors', email: 'surveyor2@example.com' }] },
   { id: C_SM, contract_no: 'SM-09-26', vendor_id: V_DELTA, service: 'Stock Measurement', start_date: '2026-01-01', end_date: '2026-12-31', value: 3500000, status: 'Open', vendors: [{ name: 'M/s Delta Marine Services', email: 'surveyor3@example.com' }] },
+  { id: C_OLD, contract_no: 'OLD-21-22', vendor_id: V_ABDUL, service: 'Surveying', start_date: '2021-07-01', end_date: '2022-06-30', value: 1200000, status: 'Closed', vendors: [{ name: 'M/s Abdul Moiz Enterprises', email: 'surveyor1@example.com' }] },
 ]
 
 const contractById = (id: string | null): Contract | null => contracts.find((c) => c.id === id) ?? null
@@ -185,18 +218,87 @@ function embedContract(c: Contract | null): { contract_no: string; service: stri
 }
 
 const serviceMatrix: ServiceRow[] = [
-  { id: uid(), t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', cost_element: 'SUR', tanker_required: true, trips: false },
-  { id: uid(), t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', cost_element: 'SUR', tanker_required: false, trips: false },
-  { id: uid(), t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', cost_element: 'THL', tanker_required: true, trips: true },
-  { id: uid(), t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', cost_element: 'THL', tanker_required: true, trips: true },
-  { id: uid(), t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', cost_element: 'SM', tanker_required: false, trips: false },
-  { id: uid(), t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', cost_element: 'SM', tanker_required: false, trips: false },
+  { id: SM_IN_DRAFT, t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', cost_element: 'SUR', tanker_required: true, trips: false },
+  { id: SM_IN_QTY, t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', cost_element: 'SUR', tanker_required: false, trips: false },
+  { id: SM_OUT_LOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', cost_element: 'THL', tanker_required: true, trips: true },
+  { id: SM_OUT_UNLOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', cost_element: 'THL', tanker_required: true, trips: true },
+  { id: SM_ST_DIP, t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', cost_element: 'SM', tanker_required: false, trips: false },
+  { id: SM_ST_LINE, t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', cost_element: 'SM', tanker_required: false, trips: false },
 ]
+
+const contractServices: ContractService[] = [
+  { id: uid(), contract_id: C_BH, service_matrix_id: SM_IN_DRAFT, t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey' },
+  { id: uid(), contract_id: C_BH, service_matrix_id: SM_IN_QTY, t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey' },
+  { id: uid(), contract_id: C_TH, service_matrix_id: SM_OUT_LOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading' },
+  { id: uid(), contract_id: C_TH, service_matrix_id: SM_OUT_UNLOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading' },
+  { id: uid(), contract_id: C_SM, service_matrix_id: SM_ST_DIP, t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping' },
+  { id: uid(), contract_id: C_SM, service_matrix_id: SM_ST_LINE, t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey' },
+  { id: uid(), contract_id: C_OLD, service_matrix_id: SM_IN_DRAFT, t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey' },
+]
+
+function servicesOf(contractId: string) {
+  return contractServices
+    .filter((s) => s.contract_id === contractId)
+    .map((s) => ({ id: s.id, t1: s.t1, t2: s.t2, t3: s.t3 }))
+}
+
+function replaceContractServices(contractId: string, rows: Array<{ t1: string; t2?: string | null; t3?: string | null; service_matrix_id?: string }>) {
+  for (let i = contractServices.length - 1; i >= 0; i--) {
+    if (contractServices[i].contract_id === contractId) contractServices.splice(i, 1)
+  }
+  for (const row of rows) {
+    const matrixRow = row.service_matrix_id
+      ? serviceMatrix.find((m) => m.id === row.service_matrix_id)
+      : serviceMatrix.find((m) => m.t1 === row.t1 && (m.t2 ?? '') === (row.t2 ?? '') && (m.t3 ?? '') === (row.t3 ?? ''))
+    if (!matrixRow) continue
+    contractServices.push({
+      id: uid(),
+      contract_id: contractId,
+      service_matrix_id: matrixRow.id,
+      t1: matrixRow.t1,
+      t2: matrixRow.t2,
+      t3: matrixRow.t3,
+    })
+  }
+}
+
+function emailsOf(vendorId: string) {
+  return vendorEmails.filter((e) => e.vendor_id === vendorId)
+}
+
+function replaceVendorEmails(vendorId: string, list: Array<string | { email: string; label?: string; is_primary?: boolean }>) {
+  for (let i = vendorEmails.length - 1; i >= 0; i--) {
+    if (vendorEmails[i].vendor_id === vendorId) vendorEmails.splice(i, 1)
+  }
+  list.forEach((item, idx) => {
+    const email = typeof item === 'string' ? item : item.email
+    if (!email?.trim()) return
+    vendorEmails.push({
+      id: uid(),
+      vendor_id: vendorId,
+      email: email.trim(),
+      label: typeof item === 'string' ? (idx === 0 ? 'surveyor' : 'other') : (item.label || 'surveyor'),
+      is_primary: typeof item === 'string' ? idx === 0 : Boolean(item.is_primary) || idx === 0,
+    })
+  })
+  const primary = vendorEmails.find((e) => e.vendor_id === vendorId && e.is_primary)
+  const v = vendors.find((x) => x.id === vendorId)
+  if (v) v.email = primary?.email ?? vendorEmails.find((e) => e.vendor_id === vendorId)?.email ?? null
+}
+
+function decorateVendor(v: Vendor) {
+  return { ...v, emails: emailsOf(v.id) }
+}
+
+function decorateContract(c: Contract): Contract {
+  return { ...c, services: servicesOf(c.id) }
+}
 
 const costElements: CostRow[] = [
   { code: 'SUR', name: 'Surveying' },
   { code: 'THL', name: 'Tanker Handling' },
   { code: 'SM', name: 'Stock Measurement' },
+  { code: 'MISC', name: 'Miscellaneous' },
 ]
 
 const settings: Setting[] = [
@@ -226,7 +328,12 @@ const yearlyBudgets: BudgetLine[] = [
   { id: 'b-sur-27', fy: 'FY27', cost_element: 'SUR', amount: 5200000, notes: '' },
   { id: 'b-thl-27', fy: 'FY27', cost_element: 'THL', amount: 8600000, notes: '' },
   { id: 'b-sm-27', fy: 'FY27', cost_element: 'SM', amount: 3100000, notes: '' },
+  { id: 'b-misc-25', fy: 'FY25', cost_element: 'MISC', amount: 450000, notes: 'Admin miscellaneous' },
+  { id: 'b-misc-26', fy: 'FY26', cost_element: 'MISC', amount: 520000, notes: 'Admin miscellaneous' },
+  { id: 'b-misc-27', fy: 'FY27', cost_element: 'MISC', amount: 580000, notes: '' },
 ]
+
+let accrualOverrides: Array<{ fy: string; amount: number }> = []
 
 function makeInvoice(partial: Partial<Invoice>): Invoice {
   const base: Invoice = {
@@ -263,13 +370,14 @@ function makeInvoice(partial: Partial<Invoice>): Invoice {
 
 const invoices: Invoice[] = [
   makeInvoice({ serial_no: 'S-1001', processing_date: '2026-06-10', contract_id: C_BH, invoice_no: 'INV-2026-0011', invoice_date: '2026-06-10', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-1', cost_element: 'SUR', service_from: '2026-06-01', service_to: '2026-06-10', amount: 850000, status: 'Pending' }),
-  makeInvoice({ serial_no: 'S-1002', processing_date: '2026-06-18', contract_id: C_BH, invoice_no: 'INV-2026-0012', invoice_date: '2026-06-18', t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', item_no: 'IT-2', cost_element: 'SUR', service_from: '2026-06-08', service_to: '2026-06-18', amount: 640000, status: 'Pending' }),
+  makeInvoice({ serial_no: 'S-1002', processing_date: '2026-06-18', contract_id: C_BH, invoice_no: 'INV-2026-0012', invoice_date: '2026-06-18', t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', item_no: 'IT-2', cost_element: 'SUR', service_from: '2026-06-08', service_to: '2026-06-18', amount: 640000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-06-19'), approved_amount: 640000 }),
   makeInvoice({ serial_no: 'S-2001', processing_date: '2026-07-05', contract_id: C_TH, invoice_no: 'INV-2026-0021', invoice_date: '2026-07-05', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', tanker_name: 'MT Star', trips: 3, item_no: 'IT-3', cost_element: 'THL', service_from: '2026-06-28', service_to: '2026-07-05', amount: 1200000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-2002', processing_date: '2026-07-22', contract_id: C_TH, invoice_no: 'INV-2026-0022', invoice_date: '2026-07-22', t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', tanker_name: 'MT Star', trips: 3, item_no: 'IT-4', cost_element: 'THL', service_from: '2026-07-12', service_to: '2026-07-22', amount: 980000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-07-23'), approved_amount: 980000 }),
   makeInvoice({ serial_no: 'S-3001', processing_date: '2026-05-12', contract_id: C_SM, invoice_no: 'INV-2026-0031', invoice_date: '2026-05-12', t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', item_no: 'IT-5', cost_element: 'SM', service_from: '2026-05-01', service_to: '2026-05-12', amount: 410000, status: 'Paid', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-05-14'), approved_amount: 410000 }),
   makeInvoice({ serial_no: 'S-1003', processing_date: '2026-04-20', contract_id: C_BH, invoice_no: 'INV-2026-0013', invoice_date: '2026-04-20', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-6', cost_element: 'SUR', service_from: '2026-04-10', service_to: '2026-04-20', amount: 520000, status: 'Rejected', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-04-22'), remarks: 'Duplicate entry — same survey as INV-2026-0011' }),
   makeInvoice({ serial_no: 'S-2003', processing_date: '2026-08-02', contract_id: C_TH, invoice_no: 'INV-2026-0023', invoice_date: '2026-08-02', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', tanker_name: 'MT Moon', trips: 2, item_no: 'IT-7', cost_element: 'THL', service_from: '2026-07-25', service_to: '2026-08-02', amount: 1130000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-3002', processing_date: '2026-08-15', contract_id: C_SM, invoice_no: 'INV-2026-0032', invoice_date: '2026-08-15', t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', item_no: 'IT-8', cost_element: 'SM', service_from: '2026-08-05', service_to: '2026-08-15', amount: 275000, status: 'Pending' }),
+  makeInvoice({ serial_no: 'S-1004', processing_date: '2026-06-25', contract_id: C_BH, invoice_no: 'INV-2026-0014', invoice_date: '2026-06-25', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-9', cost_element: 'SUR', service_from: '2026-06-15', service_to: '2026-06-25', amount: 300000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-06-26'), approved_amount: 300000 }),
 ]
 
 for (const inv of invoices) {
@@ -292,6 +400,8 @@ const pos: PoVersion[] = [
     released_amount: null,
     released_by: null,
     released_at: null,
+    released_via: null,
+    release_reference: null,
   },
   {
     id: uid(),
@@ -307,6 +417,25 @@ const pos: PoVersion[] = [
     released_amount: 410000,
     released_by: 'f.hussain@prl.com.pk',
     released_at: iso('2026-05-16'),
+    released_via: 'cheque',
+    release_reference: 'CHQ-2516',
+  },
+  {
+    id: uid(),
+    invoice_id: invoices[8].id,
+    serial_no: 'PO-20260626001',
+    generated_at: iso('2026-06-26'),
+    generated_by: 'admin@prl.com.pk',
+    status: 'Generated',
+    amount: 300000,
+    finance_approved_by: null,
+    finance_approved_at: null,
+    finance_remarks: null,
+    released_amount: null,
+    released_by: null,
+    released_at: null,
+    released_via: null,
+    release_reference: null,
   },
 ]
 
@@ -315,6 +444,7 @@ const poHistory: PoHistoryRow[] = [
   { id: uid(), po_id: pos[1].id, invoice_id: invoices[4].id, action: 'Generated', actor: 'admin@prl.com.pk', amount: 410000, remarks: 'Payment order generated; awaiting finance approval', created_at: iso('2026-05-14') },
   { id: uid(), po_id: pos[1].id, invoice_id: invoices[4].id, action: 'FinanceApproved', actor: 'f.hussain@prl.com.pk', amount: 410000, remarks: 'Cleared against FY25 SM budget', created_at: iso('2026-05-16') },
   { id: uid(), po_id: pos[1].id, invoice_id: invoices[4].id, action: 'PaymentReleased', actor: 'f.hussain@prl.com.pk', amount: 410000, remarks: 'Payment released to surveyor; amount deducted from budget', created_at: iso('2026-05-16') },
+  { id: uid(), po_id: pos[2].id, invoice_id: invoices[8].id, action: 'Generated', actor: 'admin@prl.com.pk', amount: 300000, remarks: 'Payment order generated; awaiting finance approval', created_at: iso('2026-06-26') },
 ]
 
 const auditLog: AuditEntry[] = [
@@ -361,6 +491,13 @@ function assertOpenFy(fy: string): void {
   fail(LOCKED_FY_MESSAGE)
 }
 
+function assertOpenPayment(
+  inv: { invoice_date?: string | null; service_to?: string | null; status?: string | null },
+): void {
+  if (isUnpaidPriorYearInvoice(inv)) return
+  assertOpenDate(inv.service_to || inv.invoice_date)
+}
+
 function toMoney(v: unknown): number {
   return Number(v ?? 0) || 0
 }
@@ -387,6 +524,8 @@ function makePoForInvoice(inv: Invoice): PoVersion {
     released_amount: null,
     released_by: null,
     released_at: null,
+    released_via: null,
+    release_reference: null,
   }
   pos.unshift(po)
   poHistory.push({
@@ -415,6 +554,7 @@ function shapePaymentOrder(p: PoVersion) {
           id: inv.id,
           invoice_no: inv.invoice_no,
           invoice_date: inv.invoice_date,
+          service_to: inv.service_to,
           amount: inv.amount,
           approved_amount: inv.approved_amount,
           status: inv.status,
@@ -426,8 +566,9 @@ function shapePaymentOrder(p: PoVersion) {
   }
 }
 
-function dashboardPayload(): unknown {
-  const inv = invoices
+function dashboardPayload(fyFilter?: string | null): unknown {
+  const targetFy = !fyFilter || fyFilter === 'all' ? currentFiscalYear() : fyFilter
+  const inv = invoices.filter((i) => invoiceBudgetFy(i) === targetFy)
   const totalInv = inv.length
   const totalVal = inv.reduce((s, i) => s + i.amount, 0)
   const approved = inv.filter((i) => i.status === 'Approved')
@@ -439,10 +580,14 @@ function dashboardPayload(): unknown {
   const paid = inv.filter((i) => i.status === 'Paid')
   const signedOff = inv.filter((i) => ['Approved', 'Paid', 'Accepted'].includes(i.status))
   const approvedInvoiceVal = signedOff.reduce((s, i) => s + Number(i.approved_amount ?? i.amount ?? 0), 0)
-  const poGeneratedVal = pos.reduce((s, p) => s + Number(p.amount ?? 0), 0)
-  const cleared = pos.filter((p) => p.status === 'Cleared')
+  const ofFyPos = pos.filter((p) => {
+    const linked = invoices.find((i) => i.id === p.invoice_id)
+    return invoiceBudgetFy(linked ?? {}) === targetFy
+  })
+  const poGeneratedVal = ofFyPos.reduce((s, p) => s + Number(p.amount ?? 0), 0)
+  const cleared = ofFyPos.filter((p) => p.status === 'Cleared')
   const paymentReleasedVal = cleared.reduce((s, p) => s + Number(p.released_amount ?? p.amount ?? 0), 0)
-  const financePending = pos.filter((p) => (p.status ?? 'Generated') === 'Generated')
+  const financePending = ofFyPos.filter((p) => (p.status ?? 'Generated') === 'Generated')
 
   const today = new Date()
   const openContracts = contracts.filter((c) => !c.end_date || new Date(c.end_date) >= today).length
@@ -454,8 +599,9 @@ function dashboardPayload(): unknown {
 
   const monthly: Record<string, { month: string; total: number; count: number }> = {}
   for (const i of inv) {
-    if (!i.invoice_date) continue
-    const key = i.invoice_date.slice(0, 7)
+    const billed = i.service_to || i.invoice_date
+    if (!billed) continue
+    const key = billed.slice(0, 7)
     monthly[key] ??= { month: key, total: 0, count: 0 }
     monthly[key].total += i.amount
     monthly[key].count += 1
@@ -493,7 +639,7 @@ function dashboardPayload(): unknown {
       avgInvoice: totalInv ? totalVal / totalInv : 0,
       approvedInvoiceValue: approvedInvoiceVal,
       poGeneratedValue: poGeneratedVal,
-      poGeneratedCount: pos.length,
+      poGeneratedCount: ofFyPos.length,
       paymentReleasedValue: paymentReleasedVal,
       paymentReleasedCount: cleared.length,
       financePendingValue: financePending.reduce((s, p) => s + Number(p.amount ?? 0), 0),
@@ -729,7 +875,10 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const formType = isForm ? String((body as FormData).get('type') ?? '') : ''
 
-  if (m === 'GET' && path === '/api/reports/dashboard') return dashboardPayload() as T
+  if (m === 'GET' && matchPath(path) === '/api/reports/dashboard') {
+    const fyQ = new URLSearchParams(path.split('?')[1] ?? '').get('fy')
+    return dashboardPayload(fyQ) as T
+  }
   if (m === 'GET' && path === '/api/reports/summary') return summaryPayload() as T
 
   if (m === 'GET' && parts[0] === 'api' && parts[1] === 'invoices') {
@@ -744,7 +893,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       if (status && status !== 'all') list = list.filter((i) => i.status === status)
       if (contract && contract !== 'all') list = list.filter((i) => i.contract_id === contract)
       if (search) list = list.filter((i) => `${i.invoice_no} ${i.serial_no ?? ''}`.toLowerCase().includes(search))
-      if (fy && fy !== 'all') list = list.filter((i) => fiscalOf(i.invoice_date)?.fy === fy)
+      if (fy && fy !== 'all') list = list.filter((i) => invoiceBudgetFy(i) === fy)
       const sorted = [...list].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(listInvoice)
       const sliced = cap ? sorted.slice(0, cap) : sorted
       return { invoices: sliced, fy: fy || 'all', total: sorted.length, hasMore: cap > 0 && sorted.length > cap } as T
@@ -761,7 +910,9 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && parts.length === 2 && parts[0] === 'api' && parts[1] === 'invoices') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.invoice_no) fail('Invoice number is required')
-    assertOpenDate((b.invoice_date as string) ?? null)
+    if (!b.masterAccess) {
+      assertOpenDate((b.service_to as string) || (b.invoice_date as string) || null)
+    }
     const inv = makeInvoice({
       serial_no: (b.serial_no as string) ?? null,
       processing_date: (b.processing_date as string) ?? (b.invoice_date as string) ?? null,
@@ -819,7 +970,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'invoices' && parts[3] === 'po') {
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
-    assertOpenDate(inv.invoice_date)
+    assertOpenPayment(inv)
     if (inv.status !== 'Approved') fail('Payment order requires an approved invoice')
     const po = makePoForInvoice(inv)
     return { po } as T
@@ -829,8 +980,11 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
     const updates = (body ?? {}) as Record<string, unknown>
-    assertOpenDate(inv.invoice_date)
-    if ('invoice_date' in updates) assertOpenDate((updates.invoice_date as string) ?? null)
+    if (!updates.masterAccess) {
+      assertOpenDate(inv.service_to || inv.invoice_date)
+      if ('invoice_date' in updates) assertOpenDate((updates.invoice_date as string) ?? null)
+      if ('service_to' in updates) assertOpenDate((updates.service_to as string) ?? null)
+    }
     const fields: (keyof Invoice)[] = ['serial_no', 'processing_date', 'contract_id', 'invoice_no', 'invoice_date', 't1', 't2', 't3', 'tanker_name', 'trips', 'item_no', 'cost_element', 'service_from', 'service_to', 'amount', 'status', 'remarks']
     for (const f of fields) if (f in updates) inv[f] = updates[f] as never
     inv.updated_at = nowIso()
@@ -850,7 +1004,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   }
 
   if (m === 'GET' && path === '/api/contracts') {
-    return { contracts: [...contracts].sort((a, b) => a.contract_no.localeCompare(b.contract_no)) } as T
+    return { contracts: [...contracts].sort((a, b) => a.contract_no.localeCompare(b.contract_no)).map(decorateContract) } as T
   }
   if (m === 'POST' && path === '/api/contracts') {
     const b = (body ?? {}) as Record<string, unknown>
@@ -871,7 +1025,12 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       })(),
     }
     contracts.push(c)
-    return { contract: c } as T
+    const incoming = (b.services as Array<{ t1: string; t2?: string | null; t3?: string | null }>) ?? []
+    if (incoming.length) {
+      replaceContractServices(c.id, incoming)
+      c.service = incoming.map((s) => s.t2 || s.t1).filter(Boolean).join(', ') || c.service
+    }
+    return { contract: decorateContract(c) } as T
   }
   if (m === 'PUT' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'contracts') {
     const c = contracts.find((x) => x.id === parts[2])
@@ -883,24 +1042,32 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     for (const f of fields) if (f in b) c[f] = b[f] as never
     const v = vendors.find((x) => x.id === c.vendor_id)
     c.vendors = v ? [{ name: v.name, email: v.email }] : null
-    return { contract: c } as T
+    if (Array.isArray(b.services)) {
+      const incoming = b.services as Array<{ t1: string; t2?: string | null; t3?: string | null }>
+      replaceContractServices(c.id, incoming)
+      c.service = incoming.map((s) => s.t2 || s.t1).filter(Boolean).join(', ') || c.service
+    }
+    return { contract: decorateContract(c) } as T
   }
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'contracts') {
     const idx = contracts.findIndex((x) => x.id === parts[2])
     if (idx === -1) fail('Contract not found')
     assertOpenDate(contracts[idx].start_date)
     if (invoices.some((i) => i.contract_id === parts[2])) fail('Cannot delete contract with linked invoices')
+    replaceContractServices(parts[2], [])
     contracts.splice(idx, 1)
     return { ok: true } as T
   }
 
-  if (m === 'GET' && path === '/api/vendors') return { vendors: [...vendors].sort((a, b) => a.name.localeCompare(b.name)) } as T
+  if (m === 'GET' && path === '/api/vendors') return { vendors: [...vendors].sort((a, b) => a.name.localeCompare(b.name)).map(decorateVendor) } as T
   if (m === 'POST' && path === '/api/vendors') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.name) fail('Vendor name is required')
     const v: Vendor = { id: uid(), name: String(b.name), email: (b.email as string) ?? null, created_at: nowIso(), updated_at: nowIso() }
     vendors.push(v)
-    return { vendor: v } as T
+    if (Array.isArray(b.emails)) replaceVendorEmails(v.id, b.emails as Array<string | { email: string }>)
+    else if (v.email) replaceVendorEmails(v.id, [v.email])
+    return { vendor: decorateVendor(v) } as T
   }
   if (m === 'PUT' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'vendors') {
     const v = vendors.find((x) => x.id === parts[2])
@@ -909,19 +1076,23 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (b.name !== undefined) v.name = String(b.name)
     if (b.email !== undefined) v.email = (b.email as string) ?? null
     v.updated_at = nowIso()
-    return { vendor: v } as T
+    if (Array.isArray(b.emails)) replaceVendorEmails(v.id, b.emails as Array<string | { email: string }>)
+    else if (b.email !== undefined && v.email) replaceVendorEmails(v.id, [v.email])
+    return { vendor: decorateVendor(v) } as T
   }
   if (m === 'PUT' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'vendors' && parts[3] === 'email') {
     const v = vendors.find((x) => x.id === parts[2])
     if (!v) fail('Vendor not found')
     v.email = ((body ?? {}) as Record<string, unknown>).email as string ?? null
     v.updated_at = nowIso()
-    return { vendor: v } as T
+    replaceVendorEmails(v.id, v.email ? [v.email] : [])
+    return { vendor: decorateVendor(v) } as T
   }
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'vendors') {
     const idx = vendors.findIndex((x) => x.id === parts[2])
     if (idx === -1) fail('Vendor not found')
     if (contracts.some((c) => c.vendor_id === parts[2])) fail('Cannot delete vendor with linked contracts')
+    replaceVendorEmails(parts[2], [])
     vendors.splice(idx, 1)
     return { ok: true } as T
   }
@@ -1062,13 +1233,10 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'GET' && path === '/api/budgets') return { budgets: [...yearlyBudgets] } as T
   if (m === 'PUT' && path === '/api/budgets') {
     const fy = String(((body ?? {}) as { fy?: string }).fy ?? '').trim()
-    const incoming = ((body ?? {}) as { lines?: Array<{ id?: string; cost_element?: string; amount?: number; notes?: string }> }).lines
+    const payload = (body ?? {}) as { lines?: Array<{ id?: string; cost_element?: string; amount?: number; notes?: string }>; masterAccess?: boolean }
+    const incoming = payload.lines
     if (!fy) fail('fy is required')
     if (!Array.isArray(incoming)) fail('lines array is required')
-    assertOpenFy(fy)
-    for (let i = yearlyBudgets.length - 1; i >= 0; i--) {
-      if (yearlyBudgets[i]!.fy === fy) yearlyBudgets.splice(i, 1)
-    }
     const seen = new Set<string>()
     const unique: BudgetLine[] = []
     for (const row of incoming) {
@@ -1085,8 +1253,72 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
         notes: String(row.notes ?? '').trim(),
       })
     }
+    const previous = yearlyBudgets.filter((b) => b.fy === fy)
+    const increasing = unique.some((row) => {
+      const old = previous.find((x) => x.cost_element.toUpperCase() === row.cost_element.toUpperCase())
+      return isBudgetIncrease(old?.amount, row.amount)
+    })
+    if (increasing && !payload.masterAccess) fail('Budget increase requires Master Access')
+    if (!(increasing && payload.masterAccess)) assertOpenFy(fy)
+    for (let i = yearlyBudgets.length - 1; i >= 0; i--) {
+      if (yearlyBudgets[i]!.fy === fy) yearlyBudgets.splice(i, 1)
+    }
     yearlyBudgets.push(...unique)
     return { budgets: unique, fy } as T
+  }
+
+  if (m === 'GET' && parts[0] === 'api' && parts[1] === 'accruals') {
+    const fy = new URLSearchParams(path.split('?')[1] ?? '').get('fy')?.trim() ?? ''
+    const shaped = pos.map(shapePaymentOrder)
+    const snapFor = (year: string) => {
+      const override = accrualOverrides.find((row) => row.fy === year)?.amount ?? null
+      const snap = accrualForFy(year, invoices, shaped, override)
+      const unpaidInvoices = invoices
+        .filter((i) => invoiceBudgetFy(i) === year && i.status !== 'Paid')
+        .map((i) => ({
+          id: i.id,
+          invoice_no: i.invoice_no,
+          invoice_date: i.invoice_date,
+          service_to: i.service_to,
+          status: i.status,
+          amount: invoiceAccrualAmount(i),
+        }))
+      return { ...snap, invoices: unpaidInvoices }
+    }
+    if (!fy) {
+      const years = new Set<string>([
+        ...nearbyFiscalYears(new Date(), 3, 0),
+        ...invoices.map((i) => invoiceBudgetFy(i)).filter((y): y is string => Boolean(y)),
+        ...accrualOverrides.map((row) => row.fy),
+      ])
+      return { years: [...years].sort().map(snapFor) } as T
+    }
+    return snapFor(fy) as T
+  }
+  if (m === 'PUT' && path === '/api/accruals') {
+    const b = (body ?? {}) as { fy?: string; override?: number | null; masterAccess?: boolean }
+    const fy = String(b.fy ?? '').trim()
+    if (!fy) fail('fy is required')
+    if (!b.masterAccess) fail('Accrual override requires Master Access')
+    let override: number | null = null
+    if (b.override !== null && b.override !== undefined && String(b.override) !== '') {
+      override = Number(b.override)
+      if (!Number.isFinite(override) || override < 0) fail('override must be a non-negative number or null')
+    }
+    accrualOverrides = accrualOverrides.filter((row) => row.fy !== fy)
+    if (override != null) accrualOverrides.push({ fy, amount: override })
+    const snap = accrualForFy(fy, invoices, pos.map(shapePaymentOrder), override)
+    const unpaidInvoices = invoices
+      .filter((i) => invoiceBudgetFy(i) === fy && i.status !== 'Paid')
+      .map((i) => ({
+        id: i.id,
+        invoice_no: i.invoice_no,
+        invoice_date: i.invoice_date,
+        service_to: i.service_to,
+        status: i.status,
+        amount: invoiceAccrualAmount(i),
+      }))
+    return { ...snap, invoices: unpaidInvoices } as T
   }
 
   if (m === 'GET' && path === '/api/followups/pending') return pendingFollowups() as T
@@ -1113,13 +1345,18 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const po = pos.find((p) => p.id === parts[2])
     if (!po) fail('Payment order not found')
     const inv = invoices.find((i) => i.id === po.invoice_id)
-    assertOpenDate(inv?.invoice_date)
+    assertOpenPayment(inv ?? {})
     if (po.status === 'Cleared') fail('Payment order already cleared and payment released')
     if (po.status === 'Rejected') fail('Rejected payment orders cannot be approved')
-    const requested = (body as { releasedAmount?: number; remarks?: string } | null)?.releasedAmount
+    const payload = (body as { releasedAmount?: number; remarks?: string; releasedVia?: string; releaseReference?: string } | null)
+    const requested = payload?.releasedAmount
     const releasedAmount = requested == null ? po.amount : Number(requested)
     if (releasedAmount < 0) fail('Released amount cannot be negative')
-    const remarks = String((body as { remarks?: string } | null)?.remarks ?? '').trim() || null
+    const remarks = String(payload?.remarks ?? '').trim() || null
+    const viaRaw = payload?.releasedVia
+    const releasedVia = viaRaw == null || viaRaw === '' ? null : parseReleasedVia(viaRaw)
+    if (viaRaw != null && String(viaRaw).trim() !== '' && !releasedVia) fail('Invalid releasedVia')
+    const releaseReference = String(payload?.releaseReference ?? '').trim() || null
     const now = nowIso()
     po.status = 'Cleared'
     po.finance_approved_by = 'admin@prl.com.pk'
@@ -1128,6 +1365,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     po.released_amount = releasedAmount
     po.released_by = 'admin@prl.com.pk'
     po.released_at = now
+    po.released_via = releasedVia
+    po.release_reference = releaseReference
     poHistory.push({ id: uid(), po_id: po.id, invoice_id: po.invoice_id, action: 'FinanceApproved', actor: 'admin@prl.com.pk', amount: releasedAmount, remarks, created_at: now })
     poHistory.push({ id: uid(), po_id: po.id, invoice_id: po.invoice_id, action: 'PaymentReleased', actor: 'admin@prl.com.pk', amount: releasedAmount, remarks: remarks ?? 'Payment released to surveyor; amount deducted from budget', created_at: now })
     audit('FinanceClearPO', 'PaymentOrder', po.id, `PO ${po.serial_no} cleared by finance; Rs ${releasedAmount} released to surveyor`)
@@ -1142,7 +1381,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const po = pos.find((p) => p.id === parts[2])
     if (!po) fail('Payment order not found')
     const inv = invoices.find((i) => i.id === po.invoice_id)
-    assertOpenDate(inv?.invoice_date)
+    assertOpenPayment(inv ?? {})
     const reason = String((body as { reason?: string } | null)?.reason ?? '').trim()
     if (!reason) fail('Rejection reason is required')
     if (po.status === 'Cleared') fail('Cleared payment orders cannot be rejected')
@@ -1155,6 +1394,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     po.released_amount = null
     po.released_by = null
     po.released_at = null
+    po.released_via = null
+    po.release_reference = null
     poHistory.push({ id: uid(), po_id: po.id, invoice_id: po.invoice_id, action: 'FinanceRejected', actor: 'admin@prl.com.pk', amount: po.amount, remarks: reason, created_at: now })
     audit('FinanceRejectPO', 'PaymentOrder', po.id, `PO ${po.serial_no} rejected by finance: ${reason}`)
     return { po: shapePaymentOrder(po) } as T
