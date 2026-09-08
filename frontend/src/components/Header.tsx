@@ -4,7 +4,6 @@ import { useLocation, useNavigate, NavLink } from 'react-router-dom'
 import {
   Search,
   LogOut,
-  User as UserIcon,
   Command,
   Menu,
   X,
@@ -32,6 +31,7 @@ import { useAuth } from '../lib/auth'
 import { initials } from '../lib/format'
 import BrandLogo from './BrandLogo'
 import { SidebarNav } from './Sidebar'
+import { MasterAccessButton } from '../lib/masterAccess'
 
 const TITLES: Record<string, string> = {
   '/': 'Overview',
@@ -93,10 +93,24 @@ export default function Header() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
 
   useEffect(() => {
     setMobileOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    let current = false
+    const onScroll = () => {
+      const next = window.scrollY > 24
+      if (next === current) return
+      current = next
+      setScrolled(next)
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -120,7 +134,8 @@ export default function Header() {
 
   return (
     <>
-      <header className="glass sticky top-0 z-30 flex items-center justify-between gap-3 !rounded-none border-b border-[var(--border)] px-4 py-3 md:px-6">
+      <header className="app-chrome">
+      <div className={`app-header ${scrolled ? 'is-scrolled' : ''}`}>
         <div className="flex min-w-0 items-center gap-3">
           <button
             onClick={() => setMobileOpen(true)}
@@ -131,9 +146,9 @@ export default function Header() {
           </button>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="truncate text-lg font-extrabold tracking-tight leading-none">{title}</span>
+              <span className="app-header-title truncate font-extrabold tracking-tight leading-none">{title}</span>
               {demo && (
-                <span className="badge badge-info !px-2 !py-0.5 text-[0.62rem]">
+                <span className="badge badge-info px-2! py-0.5! text-[0.62rem]">
                   <FlaskConical size={10} /> Demo
                 </span>
               )}
@@ -144,7 +159,7 @@ export default function Header() {
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
+        <div className="flex shrink-0 items-center gap-2 md:gap-2.5">
           <LiveClock />
           <button
             onClick={() => setPaletteOpen(true)}
@@ -160,23 +175,26 @@ export default function Header() {
           <button onClick={() => setPaletteOpen(true)} className="btn btn-ghost btn-icon md:hidden" aria-label="Search">
             <Search size={16} />
           </button>
-          <button
-            onClick={() => setThemeOpen((v) => !v)}
-            className="btn btn-ghost btn-icon"
-            title="Appearance"
-            aria-label="Appearance settings"
-          >
-            <Palette size={16} />
-          </button>
-          <Notifications />
-          <div className="relative">
+          <div className="btn-cluster">
+            <button
+              onClick={() => setThemeOpen((v) => !v)}
+              className="btn btn-ghost btn-icon"
+              title="Appearance"
+              aria-label="Appearance settings"
+            >
+              <Palette size={16} />
+            </button>
+            <Notifications />
+            <MasterAccessButton />
+          </div>
+          <div className="btn-cluster">
             <button
               onClick={() => navigate('/control-tower')}
-              className="flex items-center gap-2 rounded-xl border border-[var(--border)] py-1 pl-1 pr-3 transition hover:bg-[var(--surface-hover)]"
+              className="flex items-center gap-2 rounded-md py-0.5 pl-0.5 pr-1.5 transition hover:bg-[var(--surface-hover)]"
               title={user?.email ?? 'Account'}
             >
               <span
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-white"
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-[0.65rem] font-bold text-white"
                 style={{ background: 'var(--gradient-primary)' }}
               >
                 {initials(user?.name ?? user?.email)}
@@ -187,14 +205,15 @@ export default function Header() {
               <span className="hidden rounded-md px-1.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-wide text-[var(--text-dim)] sm:block">
                 {user?.role ?? 'viewer'}
               </span>
-              <UserIcon size={14} className="text-[var(--text-muted)]" />
+            </button>
+            <button onClick={() => signOut()} className="btn btn-ghost btn-icon" title="Sign out" aria-label="Sign out">
+              <LogOut size={16} />
             </button>
           </div>
-          <button onClick={() => signOut()} className="btn btn-ghost btn-icon" title="Sign out" aria-label="Sign out">
-            <LogOut size={16} />
-          </button>
         </div>
+      </div>
       </header>
+      <div className="app-chrome-spacer" aria-hidden />
 
       {/* Mobile drawer — portal escapes the header's backdrop-filter containing block */}
       {createPortal(
@@ -257,7 +276,7 @@ export default function Header() {
               setThemeOpen(false)
             }}
           >
-            <div className="absolute right-4 top-16 md:right-6" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="absolute right-4 top-[4.5rem] md:right-6" onMouseDown={(e) => e.stopPropagation()}>
               <ThemePanel onClose={() => setThemeOpen(false)} />
             </div>
           </div>,

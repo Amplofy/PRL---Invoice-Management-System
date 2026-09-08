@@ -143,7 +143,7 @@ function AuthPanel() {
             </div>
           </label>
 
-          <button type="submit" disabled={loading} className="btn btn-primary w-full justify-center !py-3">
+          <button type="submit" disabled={loading} className="btn btn-primary w-full justify-center py-3!">
             {loading ? (
               <span className="flex items-center gap-2">
                 <PRLFlame size={18} />
@@ -170,7 +170,7 @@ function AuthPanel() {
           type="button"
           onClick={onEnterDemo}
           disabled={demoBusy}
-          className="btn btn-ghost w-full justify-between !border !border-[var(--border)] !px-4 !py-3"
+          className="btn btn-ghost w-full justify-between border! border-[var(--border)]! px-4! py-3!"
         >
           {demoBusy ? (
             <span className="flex items-center gap-2">

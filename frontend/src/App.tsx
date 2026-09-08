@@ -4,6 +4,7 @@ import { ThemeProvider } from './theme'
 import { ToastProvider } from './components/ui/Toast'
 import { AuthProvider } from './lib/auth'
 import { FyLockProvider } from './lib/FyLockProvider'
+import { MasterAccessProvider } from './lib/masterAccess'
 import BootScreen from './components/ui/BootScreen'
 import AppShell from './components/AppShell'
 import AuthGuard from './components/AuthGuard'
@@ -66,6 +67,7 @@ export default function App() {
       <ToastProvider>
         <AuthProvider>
           <FyLockProvider>
+          <MasterAccessProvider>
             {booting && <BootScreen onDone={() => setBooting(false)} />}
             <BrowserRouter>
             <Routes>
@@ -95,6 +97,7 @@ export default function App() {
               <Route path="*" element={<Navigate to="/control-tower" replace />} />
             </Routes>
           </BrowserRouter>
+          </MasterAccessProvider>
           </FyLockProvider>
         </AuthProvider>
       </ToastProvider>

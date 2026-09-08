@@ -81,7 +81,7 @@ export default function MappingTable({ schema, columns, mapping, onChange, detec
                         <Icon size={12} />
                       </span>
                       <span className="text-sm font-semibold">{el.label}</span>
-                      {el.required && <span className="badge badge-err !text-[0.6rem]">Required</span>}
+                      {el.required && <span className="badge badge-err text-[0.6rem]!">Required</span>}
                       <span className="text-[0.6rem] uppercase tracking-wide text-[var(--text-muted)]">{el.type}</span>
                     </div>
                   </td>
@@ -103,7 +103,7 @@ export default function MappingTable({ schema, columns, mapping, onChange, detec
                           <EyeOff size={11} /> hidden
                         </span>
                       )}
-                      {col?.duplicate && <span className="badge badge-warn !text-[0.6rem]">duplicate name</span>}
+                      {col?.duplicate && <span className="badge badge-warn text-[0.6rem]!">duplicate name</span>}
                       {entry?.columnKey && (
                         <button
                           className="rounded-full p-1 text-[var(--text-muted)] hover:bg-white/10 hover:text-[var(--text)]"
@@ -114,7 +114,7 @@ export default function MappingTable({ schema, columns, mapping, onChange, detec
                         </button>
                       )}
                       {entry?.confidence === 'low' && (
-                        <span className="badge badge-warn !text-[0.6rem]">low confidence</span>
+                        <span className="badge badge-warn text-[0.6rem]!">low confidence</span>
                       )}
                       {!entry?.columnKey && el.required && (
                         <span className="inline-flex items-center gap-1 text-[0.65rem] font-semibold text-[var(--err)]">
@@ -170,7 +170,7 @@ export default function MappingTable({ schema, columns, mapping, onChange, detec
                     )}
                   </span>
                   {c.hidden && <EyeOff size={11} className="text-[var(--text-muted)]" />}
-                  {mine && <span className="badge badge-ok !text-[0.6rem]">current</span>}
+                  {mine && <span className="badge badge-ok text-[0.6rem]!">current</span>}
                 </button>
               )
             })}

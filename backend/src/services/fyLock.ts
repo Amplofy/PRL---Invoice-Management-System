@@ -32,6 +32,24 @@ export function fiscalYearOfDate(dateStr: string | null | undefined): string | n
   return `FY${String(fiscalStartYear(d)).slice(2)}`
 }
 
+/** Date that owns budget and accrual: service end, else invoice date. */
+export function invoiceBudgetDate(inv: {
+  service_to?: string | null
+  invoice_date?: string | null
+}): string | null {
+  const end = String(inv.service_to ?? '').trim()
+  if (end) return end
+  const billed = String(inv.invoice_date ?? '').trim()
+  return billed || null
+}
+
+export function invoiceBudgetFy(inv: {
+  service_to?: string | null
+  invoice_date?: string | null
+}): string | null {
+  return fiscalYearOfDate(invoiceBudgetDate(inv))
+}
+
 export function isClosedFiscalYear(fy: string, d = new Date()): boolean {
   const y = fyStartYear(fy)
   if (y == null) return false
@@ -126,6 +144,18 @@ export function writeBlocked(userKey: string, dateStr: string | null | undefined
   if (!fy) return null
   if (isSessionUnlocked(userKey)) return null
   return fy
+}
+
+/** PO approve/reject/release on an unpaid closed-year invoice stays open. */
+export function writeBlockedForPayment(
+  userKey: string,
+  dateStr: string | null | undefined,
+  invoiceStatus: string | null | undefined,
+  serviceTo?: string | null,
+): string | null {
+  const budgetDate = serviceTo || dateStr
+  if (closedFyOf(budgetDate) && String(invoiceStatus ?? '') !== 'Paid') return null
+  return writeBlocked(userKey, budgetDate)
 }
 
 export function writeBlockedFy(userKey: string, fy: string): boolean {

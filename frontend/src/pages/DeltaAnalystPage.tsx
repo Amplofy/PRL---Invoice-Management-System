@@ -899,7 +899,7 @@ function FileSlot({
             {file.groups.length > 1 && (
               <label className="ml-auto flex items-center gap-1.5 font-semibold">
                 {file.format === 'pdf' ? 'Page' : 'Sheet'}
-                <select className="input !py-1 !text-xs" value={file.selectedGroup} onChange={(e) => onSelectGroup(e.target.value)}>
+                <select className="input py-1! text-xs!" value={file.selectedGroup} onChange={(e) => onSelectGroup(e.target.value)}>
                   {file.groups.map((g) => <option key={g.name} value={g.name}>{g.name} ({g.rowCount})</option>)}
                 </select>
               </label>

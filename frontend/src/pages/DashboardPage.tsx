@@ -13,6 +13,7 @@ import {
   PieChart,
   AlertTriangle,
   RotateCcw,
+  Wallet,
 } from 'lucide-react'
 import {
   Chart as ChartJS,
@@ -29,16 +30,19 @@ import { Line, Doughnut } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
 import { formatMoney, formatDate, timeAgo } from '../lib/format'
 import { useThemeColors } from '../lib/themeColors'
-import { currentFiscalYear, elapsedFyMonths, fiscalBounds, fiscalOf, fiscalShortRange, FY_MONTHS } from '../lib/fiscal'
+import { currentFiscalYear, elapsedFyMonths, fiscalShortRange, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { countsTowardUtilization } from '../lib/invoice'
 import { useLiveDomain } from '../lib/store'
+import { costElementBreakup, filterAccrualYears, fyKpis, monthlyTrendByBudgetDate, paymentSplit, statusBreakdown, yearlyBudgetFigures, type AccrualSortKey } from '../lib/fyAnalysis'
 import KpiCard from '../components/ui/KpiCard'
 import GlassCard from '../components/ui/GlassCard'
 import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import Reveal from '../components/ui/Reveal'
 import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
+import { ChartStage } from '../components/ui/EnergyWave'
+import { doughnutMotion, doughnutSlice, lineMotion, waveLine } from '../lib/chartWave'
 
 ChartJS.register(
   CategoryScale,
@@ -76,16 +80,6 @@ interface DashboardData {
   trend: Array<{ month: string; total: number; count: number }>
   statusBreakdown: { approved: number; paid?: number; pending: number; rejected: number }
   utilization: Array<{ contractNo: string; value: number; used: number; remaining: number; pct: number }>
-}
-
-function withAlpha(color: string, alpha: number): string {
-  if (color.startsWith('#')) {
-    const hex = color.slice(1)
-    const full = hex.length === 3 ? hex.split('').map((ch) => ch + ch).join('') : hex
-    const n = parseInt(full, 16)
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
-  }
-  return color
 }
 
 function DashboardSkeleton() {
@@ -153,6 +147,27 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [allInvoices, setAllInvoices] = useState<Array<Record<string, unknown>>>([])
+  const [hudFy, setHudFy] = useState(currentFiscalYear)
+  const [budgets, setBudgets] = useState<Array<{ fy: string; cost_element?: string; amount: number }>>([])
+  const [paymentOrders, setPaymentOrders] = useState<Array<{
+    amount?: number | null
+    released_amount?: number | null
+    status?: string | null
+    invoices?: { invoice_date?: string | null; service_to?: string | null; cost_element?: string | null } | null
+  }>>([])
+  const [accrualYears, setAccrualYears] = useState<Array<{
+    fy: string
+    unpaid: number
+    consumed: number
+    computed: number
+    override: number | null
+    secured: number
+    balance: number
+    invoices?: Array<{ id: string; invoice_no: string | null; amount: number; status: string | null }>
+  }>>([])
+  const [accrualSort, setAccrualSort] = useState<AccrualSortKey>('fy')
+  const [accrualFyFilter, setAccrualFyFilter] = useState('all')
+  const [accrualMinBalance, setAccrualMinBalance] = useState('')
   const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[] } | null>(null)
   const c = useThemeColors()
 
@@ -162,8 +177,17 @@ export default function DashboardPage() {
     try {
       const d = await apiGet<DashboardData>('/api/reports/dashboard')
       setData(d)
-      const inv = await apiGet<{ invoices: Array<Record<string, unknown>> }>(invoiceListPath({ fy: currentFiscalYear() }))
+      const [inv, bud, po, acc] = await Promise.all([
+        apiGet<{ invoices: Array<Record<string, unknown>> }>(invoiceListPath()),
+        apiGet<{ budgets: Array<{ fy: string; amount: number }> }>('/api/budgets'),
+        apiGet<{ paymentOrders: Array<{ amount?: number | null; released_amount?: number | null; invoices?: { invoice_date?: string | null; service_to?: string | null } | null }> }>('/api/payment-orders'),
+
+        apiGet<{ years?: Array<{ fy: string; unpaid: number; consumed: number; computed: number; override: number | null; secured: number; balance: number; invoices?: Array<{ id: string; invoice_no: string | null; amount: number; status: string | null }> }> }>('/api/accruals').catch(() => ({ years: [] })),
+      ])
       setAllInvoices(inv.invoices)
+      setBudgets(bud.budgets ?? [])
+      setPaymentOrders(po.paymentOrders ?? [])
+      setAccrualYears(acc.years ?? [])
     } catch (e) {
       setError((e as Error).message || 'Something went wrong while loading the dashboard.')
     } finally {
@@ -175,7 +199,7 @@ export default function DashboardPage() {
     void load()
   }, [load])
 
-  const [, liveVersion] = useLiveDomain(['invoices', 'paymentOrders'])
+  const [, liveVersion] = useLiveDomain(['invoices', 'paymentOrders', 'budgets'])
   useEffect(() => {
     if (liveVersion === 0) return
     void load()
@@ -196,25 +220,12 @@ export default function DashboardPage() {
     }
   }
 
-  const trendData = useMemo(() => {
-    const labels = data?.trend.map((t) => {
-      const [y, m] = t.month.split('-')
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-      return `${months[Number(m) - 1]} ${y}`
-    }) ?? []
-    return {
-      labels,
-      totals: data?.trend.map((t) => t.total) ?? [],
-      counts: data?.trend.map((t) => t.count) ?? [],
-    }
-  }, [data])
-
   const fyNow = currentFiscalYear()
   const fyElapsed = elapsedFyMonths()
 
   const fyInvoices = useMemo(
-    () => allInvoices.filter((i) => fiscalOf(String(i.invoice_date ?? ''))?.fy === fyNow),
-    [allInvoices, fyNow],
+    () => allInvoices.filter((i) => invoiceBudgetFy(i) === hudFy),
+    [allInvoices, hudFy],
   )
 
   const fyUtil = useMemo(() => {
@@ -241,54 +252,86 @@ export default function DashboardPage() {
       .sort((a, b) => b.pct - a.pct)
   }, [data, fyInvoices])
 
-  const fyVolume = useMemo(() => {
-    const bounds = fiscalBounds(fyNow)
-    if (!bounds) return []
-    return FY_MONTHS.slice(0, fyElapsed).map((label, idx) => {
-      const d = new Date(bounds.start.getFullYear(), bounds.start.getMonth() + idx, 1)
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-      let count = 0
-      let total = 0
-      for (const inv of fyInvoices) {
-        if (String(inv.invoice_date ?? '').startsWith(key)) {
-          count += 1
-          total += Number(inv.amount ?? 0)
-        }
-      }
-      return { label, key, count, total, isCurrent: idx === fyElapsed - 1 }
-    })
-  }, [fyInvoices, fyNow, fyElapsed])
+  const fyVolume = useMemo(
+    () => monthlyTrendByBudgetDate(fyInvoices, hudFy, hudFy === fyNow ? fyElapsed : 12),
+    [fyInvoices, hudFy, fyNow, fyElapsed],
+  )
+
+  const trendData = useMemo(
+    () => ({
+      labels: fyVolume.map((m) => `${m.label} ${hudFy}`),
+      totals: fyVolume.map((m) => m.total),
+      counts: fyVolume.map((m) => m.count),
+      keys: fyVolume.map((m) => m.key),
+    }),
+    [fyVolume, hudFy],
+  )
+
+  const fyChipOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...nearbyFiscalYears(new Date(), 2, 0),
+          ...(allInvoices.map((i) => invoiceBudgetFy(i)).filter(Boolean) as string[]),
+        ]),
+      ).sort(),
+    [allInvoices],
+  )
+
+  const hudBudget = useMemo(() => {
+    const figures = yearlyBudgetFigures(hudFy, budgets, paymentOrders)
+    const snap = accrualYears.find((y) => y.fy === hudFy) ?? null
+    return { ...figures, snap }
+  }, [budgets, paymentOrders, hudFy, accrualYears])
+
+  const k = useMemo(() => fyKpis(allInvoices, paymentOrders, hudFy), [allInvoices, paymentOrders, hudFy])
+  const fyStatus = useMemo(() => statusBreakdown(allInvoices, hudFy), [allInvoices, hudFy])
+  const split = useMemo(() => paymentSplit(paymentOrders, fyNow), [paymentOrders, fyNow])
+  const costBreak = useMemo(
+    () => costElementBreakup(hudFy, allInvoices, paymentOrders, budgets),
+    [hudFy, allInvoices, paymentOrders, budgets],
+  )
+  const priorAccrualRows = useMemo(
+    () =>
+      filterAccrualYears(accrualYears, {
+        fy: accrualFyFilter,
+        minBalance: Number(accrualMinBalance) || 0,
+        sort: accrualSort as AccrualSortKey,
+      }),
+    [accrualYears, accrualFyFilter, accrualMinBalance, accrualSort],
+  )
+  const pastAccrualTotal = useMemo(
+    () => accrualYears.filter((y) => isClosedFiscalYear(y.fy)).reduce((s, y) => s + y.balance, 0),
+    [accrualYears],
+  )
 
   const onTrendClick = (_e: unknown, els: Array<{ index?: number }>) => {
-    if (!els.length || !data) return
+    if (!els.length) return
     const idx = els[0].index ?? 0
-    const month = data.trend[idx]?.month
+    const month = trendData.keys[idx]
     if (!month) return
-    const rows = allInvoices.filter((i) => String(i.invoice_date ?? '').startsWith(month)).map(toDrillRow)
-    setDrill({ title: `Invoices · ${trendData.labels[idx] ?? month}`, subtitle: `${rows.length} invoices billed that month`, rows })
+    const rows = fyInvoices.filter((i) => String(invoiceBudgetDate(i) ?? '').startsWith(month)).map(toDrillRow)
+    setDrill({ title: `${hudFy} · ${trendData.labels[idx] ?? month}`, subtitle: `${rows.length} invoices by service end`, rows })
   }
 
   const onStatusClick = (_e: unknown, els: Array<{ index?: number }>) => {
     if (!els.length) return
     const statuses = ['Approved', 'Paid', 'Pending', 'Rejected']
     const st = statuses[els[0].index ?? 0]
-    const rows = allInvoices.filter((i) => i.status === st).map(toDrillRow)
+    const rows = fyInvoices.filter((i) => i.status === st).map(toDrillRow)
     setDrill({
-      title: `${st} Invoices`,
+      title: `${st} · ${hudFy}`,
       subtitle: `${rows.length} invoices · Rs ${formatMoney(rows.reduce((s, r) => s + r.amount, 0))}`,
       rows,
     })
   }
 
-  if (error && !data) return <DashboardError message={error} onRetry={load} />
-  if (loading && !data) return <DashboardSkeleton />
-
-  const k = data?.kpis
-  if (!k) return <DashboardSkeleton />
+  if (error && allInvoices.length === 0) return <DashboardError message={error} onRetry={load} />
+  if (loading && allInvoices.length === 0) return <DashboardSkeleton />
 
   const hasTrendData = trendData.totals.length > 0 && trendData.totals.some((v) => v > 0)
-  const paidCount = data.statusBreakdown.paid ?? 0
-  const statusTotal = data.statusBreakdown.approved + paidCount + data.statusBreakdown.pending + data.statusBreakdown.rejected
+  const paidCount = k.paidCount
+  const statusTotal = fyStatus.approved + fyStatus.paid + fyStatus.pending + fyStatus.rejected
   const hasFyUtil = fyUtil.length > 0
   const hasFyVol = fyVolume.some((m) => m.count > 0)
   const volMax = Math.max(0, ...fyVolume.map((m) => m.count))
@@ -296,113 +339,123 @@ export default function DashboardPage() {
 
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
-  const lineGradient = (area: { top: number; bottom: number }, ctx: CanvasRenderingContext2D) => {
-    const g = ctx.createLinearGradient(0, area.top, 0, area.bottom)
-    g.addColorStop(0, withAlpha(c.accent, 0.3))
-    g.addColorStop(1, withAlpha(c.accent, 0.01))
-    return g
-  }
-
   return (
     <div className="mx-auto max-w-[1440px] space-y-5">
       {/* Spotlight strip */}
       <Reveal>
-        <div className="ring-card glass-hover glass relative overflow-hidden rounded-2xl px-5 py-4 md:px-7">
-          <div
-            className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full opacity-30 blur-3xl"
-            style={{ background: 'radial-gradient(circle, var(--accent), transparent 70%)' }}
-          />
-          <div className="relative flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-lg font-extrabold tracking-tight">
-                {greeting()}, <span className="gradient-text">Control Tower</span>
-              </div>
-              <div className="mt-0.5 text-sm text-[var(--text-muted)]">{today}</div>
+        <div className="ct-spotlight">
+          <div className="ct-spotlight-copy">
+            <div className="ct-spotlight-title">
+              {greeting()}, <span className="gradient-text">Control Tower</span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="chip !cursor-default">
-                <BadgeCheck size={13} className="text-[var(--accent-3)]" /> {k.approvedCount} approved
-              </span>
-              <span className="chip !cursor-default">
-                <Banknote size={13} className="text-[var(--accent-2)]" /> {paidCount} paid
-              </span>
-              <span className="chip !cursor-default">
-                <Clock size={13} className="text-[var(--warn)]" /> {k.pendingCount} pending
-              </span>
-              <span className="chip !cursor-default">
-                <FileX2 size={13} className="text-[var(--danger)]" /> {k.rejectedCount} rejected
-              </span>
-              <span className="chip !cursor-default">
-                <FolderOpen size={13} className="text-[var(--accent)]" /> {k.openContracts} contracts
-              </span>
-              <span className="chip !cursor-default">
-                <Users size={13} className="text-[var(--accent-2)]" /> {k.activeUsers} users
-              </span>
-            </div>
+            <div className="ct-spotlight-date">{today}</div>
+          </div>
+          <div className="ct-spotlight-stats">
+            <span className="ct-spotlight-stat">
+              <BadgeCheck size={13} className="text-[var(--accent-3)]" /> {k.approvedCount} approved
+            </span>
+            <span className="ct-spotlight-stat">
+              <Banknote size={13} className="text-[var(--accent-2)]" /> {paidCount} paid
+            </span>
+            <span className="ct-spotlight-stat">
+              <Clock size={13} className="text-[var(--warn)]" /> {k.pendingCount} pending
+            </span>
+            <span className="ct-spotlight-stat">
+              <FileX2 size={13} className="text-[var(--danger)]" /> {k.rejectedCount} rejected
+            </span>
+            <span className="ct-spotlight-stat">
+              <FolderOpen size={13} className="text-[var(--accent)]" /> {data?.kpis.openContracts ?? 0} contracts
+            </span>
+            <span className="ct-spotlight-stat">
+              <Users size={13} className="text-[var(--accent-2)]" /> {data?.kpis.activeUsers ?? 0} users
+            </span>
           </div>
         </div>
       </Reveal>
 
-      {/* KPI row — even 4-column rhythm */}
+      <div className="flex flex-wrap items-center gap-2">
+        {fyChipOptions.map((year) => (
+          <button
+            key={year}
+            type="button"
+            className="chip"
+            style={hudFy === year ? { background: 'var(--accent)', color: '#fff' } : undefined}
+            onClick={() => setHudFy(year)}
+          >
+            {year}
+          </button>
+        ))}
+        <span className="text-xs text-[var(--text-dim)]">Budget year = service end, else invoice date</span>
+      </div>
+
+      {/* KPI row — scoped to selected FY */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          label="Total Invoices"
+          label={`${hudFy} Invoices`}
           value={k.totalInvoices}
           icon={<Receipt size={18} className="text-white" />}
           tone="info"
-          sub={`${formatMoney(k.avgInvoice)} avg value`}
+          sub={`${formatMoney(k.avgInvoice)} avg · this year only`}
           delay={0}
         />
         <KpiCard
-          label="Invoiced Value"
+          label={`${hudFy} Invoiced`}
           value={`Rs ${formatMoney(k.totalValue)}`}
           icon={<Banknote size={18} className="text-white" />}
           tone="ok"
-          sub="cumulative across all contracts"
+          sub="service ended in this FY"
           delay={60}
         />
         <KpiCard
-          label="Pending Approval"
-          value={k.pendingCount}
-          icon={<Clock size={18} className="text-white" />}
-          tone="warn"
-          sub={`Rs ${formatMoney(k.pendingValue)} awaiting decision`}
+          label={hudFy === fyNow ? `${hudFy} Remaining` : `${hudFy} Accrual Balance`}
+          value={`Rs ${formatMoney(hudFy === fyNow ? hudBudget.remaining : (hudBudget.snap?.balance ?? 0))}`}
+          icon={<Wallet size={18} className="text-white" />}
+          tone="ok"
+          sub={hudFy === fyNow ? `budget Rs ${formatMoney(hudBudget.yearly)} minus released this year` : 'closed year · not mixed with running remaining'}
           delay={120}
         />
         <KpiCard
-          label="Approved Value"
-          value={`Rs ${formatMoney(k.approvedValue)}`}
+          label={hudFy === fyNow ? 'Released this year' : 'Released from accrual'}
+          value={`Rs ${formatMoney(k.paymentReleasedValue)}`}
           icon={<BadgeCheck size={18} className="text-white" />}
           tone="purple"
-          sub={`${k.approvedCount} invoices approved`}
+          sub={hudFy === fyNow ? `${k.paymentReleasedCount} cleared against ${hudFy} budget` : `does not reduce ${fyNow} remaining`}
           delay={180}
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          label="Invoice Approved"
-          value={`Rs ${formatMoney(k.approvedInvoiceValue ?? k.approvedValue)}`}
+          label="Pending Approval"
+          value={k.pendingCount}
           icon={<BadgeCheck size={18} className="text-white" />}
-          tone="info"
-          sub="signed off before pay order"
+          tone="warn"
+          sub={`Rs ${formatMoney(k.pendingValue)} in ${hudFy}`}
           delay={200}
         />
         <KpiCard
           label="PO Generated"
-          value={`Rs ${formatMoney(k.poGeneratedValue ?? 0)}`}
+          value={`Rs ${formatMoney(k.poGeneratedValue)}`}
           icon={<Banknote size={18} className="text-white" />}
           tone="warn"
-          sub={`${k.financePendingCount ?? 0} awaiting finance`}
+          sub={`${k.financePendingCount} awaiting finance in ${hudFy}`}
           delay={240}
         />
         <KpiCard
-          label="Payment Released"
-          value={`Rs ${formatMoney(k.paymentReleasedValue ?? 0)}`}
+          label="Approved Value"
+          value={`Rs ${formatMoney(k.approvedInvoiceValue)}`}
           icon={<BadgeCheck size={18} className="text-white" />}
-          tone="ok"
-          sub={`${k.paymentReleasedCount ?? 0} cleared · deducted from budget`}
+          tone="info"
+          sub={`${k.approvedCount} signed off in ${hudFy}`}
           delay={280}
+        />
+        <KpiCard
+          label="Past-year Accrual"
+          value={`Rs ${formatMoney(pastAccrualTotal)}`}
+          icon={<Wallet size={18} className="text-white" />}
+          tone="purple"
+          sub={`closed FYs only · released from accrual Rs ${formatMoney(split.fromAccrual)}`}
+          delay={320}
         />
       </div>
 
@@ -411,11 +464,12 @@ export default function DashboardPage() {
         <Reveal className="lg:col-span-2" delay={80}>
           <GlassCard className="h-full p-5 md:p-6" hoverable>
             <div className="mb-1 flex items-center justify-between">
-              <div className="section-title !mb-0">Invoice Value Trend</div>
+              <div className="section-title mb-0!">{hudFy} invoice value</div>
               <span className="badge badge-neutral">click a point</span>
             </div>
             <div className="h-[300px]">
               {hasTrendData ? (
+                <ChartStage className="h-full" color={c.accent} values={trendData.totals}>
                 <Line
                   data={{
                     labels: trendData.labels,
@@ -423,19 +477,8 @@ export default function DashboardPage() {
                       {
                         label: 'Value (Rs)',
                         data: trendData.totals,
-                        borderColor: c.accent,
-                        backgroundColor: (context: { chart: ChartJS }) => {
-                          const { chartArea, ctx } = context.chart
-                          if (!chartArea) return 'transparent'
-                          return lineGradient(chartArea, ctx)
-                        },
-                        fill: true,
-                        tension: 0.42,
+                        ...waveLine(c.accent, true),
                         pointBackgroundColor: c.accent2,
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 1.5,
-                        pointRadius: 3.5,
-                        pointHoverRadius: 6.5,
                       },
                     ],
                   }}
@@ -443,13 +486,15 @@ export default function DashboardPage() {
                     responsive: true,
                     maintainAspectRatio: false,
                     onClick: onTrendClick,
+                    animation: lineMotion(),
                     plugins: { legend: { display: false } },
                     scales: {
                       x: { grid: { display: false }, ticks: { color: c.ticks } },
-                      y: { grid: { color: c.grid }, ticks: { color: c.ticks } },
+                      y: { beginAtZero: true, grace: '8%', grid: { color: c.grid }, ticks: { color: c.ticks } },
                     },
                   }}
                 />
+                </ChartStage>
               ) : (
                 <ChartEmpty
                   icon={Activity}
@@ -464,21 +509,20 @@ export default function DashboardPage() {
         <Reveal delay={140}>
           <GlassCard className="h-full overflow-hidden p-5 md:p-6" hoverable>
             <div className="mb-1 flex items-center justify-between">
-              <div className="section-title !mb-0">Status Breakdown</div>
+              <div className="section-title mb-0!">Status Breakdown</div>
               <span className="badge badge-neutral">click a slice</span>
             </div>
             <div className="h-[280px] overflow-hidden px-1">
               {statusTotal > 0 ? (
+                <ChartStage className="h-full" color={c.accent} values={[fyStatus.approved, fyStatus.paid, fyStatus.pending, fyStatus.rejected]}>
                 <Doughnut
                   data={{
                     labels: ['Approved', 'Paid', 'Pending', 'Rejected'],
                     datasets: [
                       {
-                        data: [data.statusBreakdown.approved, paidCount, data.statusBreakdown.pending, data.statusBreakdown.rejected],
+                        data: [fyStatus.approved, fyStatus.paid, fyStatus.pending, fyStatus.rejected],
                         backgroundColor: [c.accent3, c.accent2, c.warn, c.err],
-                        borderWidth: 0,
-                        hoverOffset: 4,
-                        borderRadius: 4,
+                        ...doughnutSlice(),
                       },
                     ],
                   }}
@@ -488,9 +532,11 @@ export default function DashboardPage() {
                     cutout: '72%',
                     onClick: onStatusClick,
                     layout: { padding: { top: 10, right: 16, bottom: 8, left: 16 } },
+                    animation: doughnutMotion(),
                     plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 10 } } },
                   }}
                 />
+                </ChartStage>
               ) : (
                 <ChartEmpty
                   icon={PieChart}
@@ -505,18 +551,67 @@ export default function DashboardPage() {
 
       {/* Fiscal operations HUD */}
       <Reveal delay={80}>
-        <section className="ct-fy glass">
+        <section className="ct-fy">
           <header className="ct-fy-head">
             <div>
               <h2 className="ct-fy-title">This fiscal year</h2>
-              <p className="ct-fy-sub">{fyNow} · {fiscalShortRange(fyNow)} · click a bar or contract to drill in</p>
+              <p className="ct-fy-sub">{hudFy} · {fiscalShortRange(hudFy)} · budget year is service end, then invoice date</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {fyChipOptions.map((year) => (
+                <button
+                  key={year}
+                  type="button"
+                  className="chip"
+                  style={hudFy === year ? { background: 'var(--accent)', color: '#fff' } : undefined}
+                  onClick={() => setHudFy(year)}
+                >
+                  {year}
+                </button>
+              ))}
               <Link to="/contracts" className="flex items-center gap-1 text-xs font-semibold text-[var(--accent)]">
                 Contracts <ArrowUpRight size={14} />
               </Link>
             </div>
           </header>
+
+          <div className="ct-fy-kpis">
+            {hudFy === fyNow ? (
+              <>
+                <div className="ct-fy-tile">
+                  <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Yearly budget</div>
+                  <div className="mt-1 text-lg font-black">Rs {formatMoney(hudBudget.yearly)}</div>
+                </div>
+                <div className="ct-fy-tile">
+                  <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Released this year</div>
+                  <div className="mt-1 text-lg font-black">Rs {formatMoney(hudBudget.released)}</div>
+                </div>
+                <div className="ct-fy-tile">
+                  <div className="flex items-center gap-1 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                    <Wallet size={12} /> Remaining
+                  </div>
+                  <div className="mt-1 text-lg font-black text-[var(--accent-3)]">Rs {formatMoney(hudBudget.remaining)}</div>
+                  <p className="mt-1 text-[0.7rem] text-[var(--text-dim)]">Running year only. Prior-year payments stay on Accrual Balance.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="ct-fy-tile">
+                  <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Sundry Accrual</div>
+                  <div className="mt-1 text-lg font-black">Rs {formatMoney(hudBudget.snap?.secured ?? 0)}</div>
+                </div>
+                <div className="ct-fy-tile">
+                  <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Accrual Balance</div>
+                  <div className="mt-1 text-lg font-black">Rs {formatMoney(hudBudget.snap?.balance ?? 0)}</div>
+                </div>
+                <div className="ct-fy-tile">
+                  <div className="text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">Released in year</div>
+                  <div className="mt-1 text-lg font-black">Rs {formatMoney(hudBudget.snap?.consumed ?? hudBudget.released)}</div>
+                  <p className="mt-1 text-[0.7rem] text-[var(--text-dim)]">Does not reduce {fyNow} remaining budget.</p>
+                </div>
+              </>
+            )}
+          </div>
 
           {hasFyUtil || hasFyVol ? (
             <div className={`ct-fy-grid${hasFyUtil && hasFyVol ? ' is-split' : ''}`}>
@@ -524,7 +619,7 @@ export default function DashboardPage() {
                 <div className="ct-pane">
                   <div className="ct-pane-head">
                     <div className="ct-pane-title">Contract utilization</div>
-                    <div className="ct-pane-meta">{fyUtil.length} drawing {fyNow}</div>
+                    <div className="ct-pane-meta">{fyUtil.length} drawing {hudFy}</div>
                   </div>
                   <div className="ct-util-list">
                     {fyUtil.map((u, i) => {
@@ -543,7 +638,7 @@ export default function DashboardPage() {
                               })
                               .map(toDrillRow)
                             setDrill({
-                              title: `${u.contractNo} · ${fyNow}`,
+                              title: `${u.contractNo} · ${hudFy}`,
                               subtitle: `${rows.length} invoices this fiscal year · Rs ${formatMoney(u.used)} used`,
                               rows,
                             })
@@ -577,10 +672,10 @@ export default function DashboardPage() {
                           style={{ ['--h' as string]: String((m.count <= 0 ? 0.06 : Math.max(0.14, m.count / volMax)).toFixed(3)), ['--i' as string]: String(i) }}
                           onClick={() => {
                             const rows = allInvoices
-                              .filter((i) => String(i.invoice_date ?? '').startsWith(m.key))
+                              .filter((i) => invoiceBudgetFy(i) === hudFy && String(invoiceBudgetDate(i) ?? '').startsWith(m.key))
                               .map(toDrillRow)
                             setDrill({
-                              title: `Invoices · ${m.label} ${fyNow}`,
+                              title: `Invoices · ${m.label} ${hudFy}`,
                               subtitle: `${rows.length} invoices · Rs ${formatMoney(m.total)}`,
                               rows,
                             })
@@ -601,12 +696,116 @@ export default function DashboardPage() {
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-dashed border-[var(--border)] text-[var(--text-muted)]">
                 <Activity size={18} />
               </span>
-              <div className="text-sm font-bold">No {fyNow} activity yet</div>
+              <div className="text-sm font-bold">No {hudFy} activity yet</div>
               <div className="max-w-sm text-xs leading-relaxed text-[var(--text-muted)]">
                 Invoices posted this fiscal year will populate utilization and monthly volume here.
               </div>
             </div>
           )}
+          <div className="mt-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <div className="text-sm font-bold">{hudFy} budget breakup</div>
+                <p className="mt-1 text-xs text-[var(--text-dim)]">
+                  {hudFy === fyNow
+                    ? 'Remaining is yearly budget minus payments released for invoices whose service ended in this year.'
+                    : 'Closed year: unpaid sits on Accrual Balance. Released-in-year does not hit running remaining.'}
+                </p>
+              </div>
+            </div>
+            {costBreak.length === 0 ? (
+              <p className="mt-2 text-sm text-[var(--text-muted)]">No cost-element lines for {hudFy}.</p>
+            ) : (
+              <div className="table-scroll mt-2">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Cost element</th>
+                      <th className="text-right">Yearly budget</th>
+                      <th className="text-right">Released</th>
+                      <th className="text-right">{hudFy === fyNow ? 'Remaining' : 'Unpaid'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costBreak.map((row) => (
+                      <tr key={row.code}>
+                        <td className="font-semibold">{row.code}</td>
+                        <td className="text-right tabular-nums">Rs {formatMoney(row.budget)}</td>
+                        <td className="text-right tabular-nums">Rs {formatMoney(row.released)}</td>
+                        <td className="text-right font-semibold tabular-nums">
+                          Rs {formatMoney(hudFy === fyNow ? row.remaining : row.unpaid)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+            <div className="mt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-bold">Past-year accruals</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select className="input input-fit py-1!" value={accrualFyFilter} onChange={(e) => setAccrualFyFilter(e.target.value)}>
+                    <option value="all">All closed FYs</option>
+                    {accrualYears.filter((y) => isClosedFiscalYear(y.fy)).map((y) => (
+                      <option key={y.fy} value={y.fy}>{y.fy}</option>
+                    ))}
+                  </select>
+                  <input
+                    className="input input-fit-sm py-1!"
+                    type="number"
+                    min={0}
+                    placeholder="Min balance"
+                    value={accrualMinBalance}
+                    onChange={(e) => setAccrualMinBalance(e.target.value)}
+                  />
+                  <select className="input input-fit py-1!" value={accrualSort} onChange={(e) => setAccrualSort(e.target.value as AccrualSortKey)}>
+                    <option value="fy">Sort FY</option>
+                    <option value="secured">Sort accrual</option>
+                    <option value="unpaid">Sort unpaid</option>
+                    <option value="consumed">Sort released</option>
+                    <option value="balance">Sort balance</option>
+                  </select>
+                </div>
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-dim)]">
+                Closed-year unpaid invoices sit here. They never mix with {fyNow} remaining budget.
+              </p>
+              {priorAccrualRows.length === 0 ? (
+                <p className="mt-2 text-sm text-[var(--text-muted)]">No closed-year accrual matches the filter.</p>
+              ) : (
+              <div className="table-scroll mt-2">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>FY</th>
+                      <th className="text-right">Sundry Accrual</th>
+                      <th className="text-right">Unpaid</th>
+                      <th className="text-right">Released in year</th>
+                      <th className="text-right">Accrual Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priorAccrualRows.map((row) => (
+                      <tr key={row.fy}>
+                        <td>
+                          <button type="button" className="font-semibold text-[var(--accent)]" onClick={() => setHudFy(row.fy)}>
+                            {row.fy}
+                          </button>
+                        </td>
+                        <td className="text-right tabular-nums">Rs {formatMoney(row.secured)}</td>
+                        <td className="text-right tabular-nums">Rs {formatMoney(row.unpaid)}</td>
+                        <td className="text-right tabular-nums">Rs {formatMoney(row.consumed)}</td>
+                        <td className="text-right font-semibold tabular-nums">Rs {formatMoney(row.balance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              )}
+            </div>
         </section>
       </Reveal>
 
@@ -614,7 +813,7 @@ export default function DashboardPage() {
       <Reveal delay={100}>
         <GlassCard className="overflow-hidden" hoverable>
           <div className="flex items-center justify-between px-5 pt-5 md:px-6">
-            <div className="section-title !mb-0">Recent Invoices</div>
+            <div className="section-title mb-0!">Recent Invoices</div>
             <Link to="/invoices" className="flex items-center gap-1 text-xs font-semibold text-[var(--accent)]">
               View all <ArrowUpRight size={14} />
             </Link>

@@ -7,8 +7,8 @@ import {
   Lock, KeyRound,
 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
-import { formatMoney } from '../lib/format'
-import { currentFiscalYear, fiscalOf, fiscalShortRange, isClosedFiscalYear, nearbyFiscalYears, shiftFiscalYear } from '../lib/fiscal'
+import { formatDate, formatMoney } from '../lib/format'
+import { currentFiscalYear, fiscalShortRange, invoiceBudgetFy, isClosedFiscalYear, isMiscCostElement, nearbyFiscalYears, shiftFiscalYear, MISC_COST_ELEMENT } from '../lib/fiscal'
 import { useToast } from '../components/ui/Toast'
 import { emitCrossModule, useLiveDomain } from '../lib/store'
 import PageHeader from '../components/PageHeader'
@@ -22,9 +22,25 @@ import Toggle from '../components/ui/Toggle'
 import SummaryCards from '../components/ui/SummaryCards'
 import { useFyLock } from '../lib/FyLockProvider'
 import { poReleasedAmount } from '../lib/paymentOrder'
+import { useMasterAccess } from '../lib/masterAccess'
+import { isBudgetIncrease } from '../lib/accrual'
 
 interface Setting { key: string; value: string }
-interface Vendor { id: string; name: string; email: string | null }
+interface VendorEmail {
+  id?: string
+  email: string
+  label?: string
+  is_primary?: boolean
+}
+interface Vendor { id: string; name: string; email: string | null; emails?: VendorEmail[] }
+
+const EMAIL_LABELS = ['surveyor', 'billing', 'ops', 'other'] as const
+
+function vendorEmailList(v: Vendor): string[] {
+  const fromRows = (v.emails ?? []).map((e) => e.email.trim()).filter(Boolean)
+  if (fromRows.length) return Array.from(new Set(fromRows))
+  return v.email?.trim() ? [v.email.trim()] : []
+}
 interface ServiceMatrix {
   id: string
   t1: string
@@ -42,7 +58,7 @@ interface AdminPo {
   status: string | null
   amount?: number | null
   released_amount?: number | null
-  invoices?: { cost_element?: string | null; invoice_date?: string | null } | null
+  invoices?: { cost_element?: string | null; invoice_date?: string | null; service_to?: string | null } | null
 }
 
 interface DraftLine {
@@ -50,6 +66,23 @@ interface DraftLine {
   cost_element: string
   amount: string
   notes: string
+}
+
+interface AccrualView {
+  fy: string
+  unpaid: number
+  consumed: number
+  computed: number
+  override: number | null
+  secured: number
+  balance: number
+  invoices?: Array<{
+    id: string
+    invoice_no: string | null
+    invoice_date: string | null
+    status: string | null
+    amount: number
+  }>
 }
 
 const COMPANY_KEYS = ['cost_center', 'maximum_invoice_amount', 'expiring_threshold_days'] as const
@@ -93,6 +126,7 @@ function mergeSettings(loaded: Setting[]): Setting[] {
   for (const s of loaded) {
     if (s.key === 'yearly_budgets') continue
     if (s.key === 'financial_year') continue
+    if (s.key === 'fy_accrual_overrides') continue
     if (!known.includes(s.key)) out.push(s)
   }
   return out
@@ -112,6 +146,7 @@ export default function AdminPage() {
   const [budgets, setBudgets] = useState<BudgetLine[]>([])
   const [paymentOrders, setPaymentOrders] = useState<AdminPo[]>([])
   const [loading, setLoading] = useState(true)
+  const [budgetFocusFy, setBudgetFocusFy] = useState<string | null>(null)
   const toast = useToast()
 
   const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'vendors', 'budgets', 'settings', 'paymentOrders'])
@@ -148,12 +183,11 @@ export default function AdminPage() {
   }, [load])
 
   const fyNow = currentFiscalYear()
-  const missingEmails = vendors.filter((v) => !v.email).length
+  const missingEmails = vendors.filter((v) => !vendorEmailList(v).length).length
   const fyBudget = budgets.filter((b) => b.fy === fyNow)
   const fyBudgetTotal = fyBudget.reduce((s, b) => s + b.amount, 0)
   const fyActual = paymentOrders.reduce((s, p) => {
-    const date = p.invoices?.invoice_date
-    if (fiscalOf(date)?.fy !== fyNow) return s
+    if (invoiceBudgetFy(p.invoices ?? {}) !== fyNow) return s
     return s + poReleasedAmount(p)
   }, 0)
 
@@ -196,10 +230,14 @@ export default function AdminPage() {
           budgetTotal={fyBudgetTotal}
           actual={fyActual}
           onOpen={(id) => setTab(id)}
+          onOpenClosedFy={(year) => {
+            setBudgetFocusFy(year)
+            setTab('budgets')
+          }}
         />
       )}
       {tab === 'budgets' && (
-        <BudgetPanel costs={costs} paymentOrders={paymentOrders} saved={budgets} onSaved={setBudgets} />
+        <BudgetPanel costs={costs} paymentOrders={paymentOrders} saved={budgets} onSaved={setBudgets} focusFy={budgetFocusFy} />
       )}
       {tab === 'vendors' && <VendorPanel vendors={vendors} onReload={load} />}
       {tab === 'catalog' && <CatalogPanel matrix={matrix} costs={costs} onReload={load} />}
@@ -218,7 +256,7 @@ export default function AdminPage() {
 }
 
 function OverviewPanel({
-  loading, vendorCount, missingEmails, matrixCount, costCount, fy, budgetTotal, actual, onOpen,
+  loading, vendorCount, missingEmails, matrixCount, costCount, fy, budgetTotal, actual, onOpen, onOpenClosedFy,
 }: {
   loading: boolean
   vendorCount: number
@@ -229,8 +267,22 @@ function OverviewPanel({
   budgetTotal: number
   actual: number
   onOpen: (id: string) => void
+  onOpenClosedFy: (year: string) => void
 }) {
   const util = budgetTotal > 0 ? (actual / budgetTotal) * 100 : 0
+  const priorFy = shiftFiscalYear(fy, -1)
+  const [prior, setPrior] = useState<AccrualView | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void apiGet<AccrualView>(`/api/accruals?fy=${encodeURIComponent(priorFy)}`)
+      .then((d) => {
+        if (!cancelled) setPrior(d)
+      })
+      .catch(() => {
+        if (!cancelled) setPrior(null)
+      })
+    return () => { cancelled = true }
+  }, [priorFy])
   return (
     <>
       <GlassCard className="flex flex-wrap items-center gap-4 p-5">
@@ -244,6 +296,23 @@ function OverviewPanel({
         </div>
         <span className="badge badge-info">Auto</span>
       </GlassCard>
+      {prior && isClosedFiscalYear(priorFy) && (
+        <GlassCard className="flex flex-wrap items-center gap-4 p-5">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--warn)_16%,transparent)] text-[var(--warn)]">
+            <Lock size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">{priorFy} Sundry Accrual</div>
+            <div className="text-2xl font-black tracking-tight">Rs {formatMoney(prior.secured)}</div>
+            <p className="mt-0.5 text-xs text-[var(--text-dim)]">
+              Accrual Balance Rs {formatMoney(prior.balance)} · {prior.invoices?.length ?? 0} unpaid invoice{(prior.invoices?.length ?? 0) === 1 ? '' : 's'}. Closed-year payments do not reduce {fy} remaining.
+            </p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => onOpenClosedFy(priorFy)}>
+            Open {priorFy} budgets
+          </Button>
+        </GlassCard>
+      )}
       <SummaryCards
         items={[
           { label: `${fy} budget`, value: `Rs ${formatMoney(budgetTotal)}`, sub: budgetTotal === 0 ? 'Not entered yet' : `${util.toFixed(0)}% used`, icon: <Wallet size={16} />, tone: budgetTotal === 0 ? 'warn' : 'primary' },
@@ -260,6 +329,13 @@ function OverviewPanel({
               <li>
                 <button type="button" className="flex items-start gap-2 text-left text-[var(--warn)] hover:underline" onClick={() => onOpen('budgets')}>
                   <AlertTriangle size={14} className="mt-0.5 shrink-0" /> Enter {fy} budget amounts so Reports can track burn.
+                </button>
+              </li>
+            )}
+            {prior && (prior.unpaid > 0 || (prior.invoices?.length ?? 0) > 0) && (
+              <li>
+                <button type="button" className="flex items-start gap-2 text-left text-[var(--warn)] hover:underline" onClick={() => onOpenClosedFy(priorFy)}>
+                  <Wallet size={14} className="mt-0.5 shrink-0" /> {priorFy} still has unpaid invoices feeding Sundry Accrual.
                 </button>
               </li>
             )}
@@ -296,38 +372,81 @@ function OverviewPanel({
 }
 
 function BudgetPanel({
-  costs, paymentOrders, saved, onSaved,
+  costs, paymentOrders, saved, onSaved, focusFy,
 }: {
   costs: CostElement[]
   paymentOrders: AdminPo[]
   saved: BudgetLine[]
   onSaved: (rows: BudgetLine[]) => void
+  focusFy?: string | null
 }) {
-  const [fy, setFy] = useState(currentFiscalYear())
+  const [fy, setFy] = useState(focusFy || currentFiscalYear())
   const [extraYears, setExtraYears] = useState<string[]>([])
   const [draft, setDraft] = useState<DraftLine[]>([])
   const [saving, setSaving] = useState(false)
   const toast = useToast()
   const { guardFy } = useFyLock()
+  const { unlocked: masterOn, requestUnlock } = useMasterAccess()
+  const [accrual, setAccrual] = useState<AccrualView | null>(null)
+  const [overrideDraft, setOverrideDraft] = useState('')
+  const [savingOverride, setSavingOverride] = useState(false)
   const running = currentFiscalYear()
+  const priorFy = shiftFiscalYear(running, -1)
+  const [priorAccrual, setPriorAccrual] = useState<AccrualView | null>(null)
   const years = useMemo(() => {
     const set = new Set<string>([...nearbyFiscalYears(), ...saved.map((b) => b.fy), ...extraYears])
     return [...set].sort()
   }, [saved, extraYears])
 
   useEffect(() => {
+    if (focusFy) setFy(focusFy)
+  }, [focusFy])
+
+  useEffect(() => {
     const existing = saved.filter((b) => b.fy === fy)
-    if (existing.length > 0) {
-      setDraft(existing.map((b) => ({ id: b.id, cost_element: b.cost_element, amount: String(b.amount), notes: b.notes })))
+    const rows = existing.length > 0
+      ? existing.map((b) => ({ id: b.id, cost_element: b.cost_element, amount: String(b.amount), notes: b.notes }))
+      : costs.map((c) => ({ id: newDraftId(), cost_element: c.code, amount: '', notes: '' }))
+    if (!rows.some((r) => isMiscCostElement(r.cost_element))) {
+      rows.push({ id: newDraftId(), cost_element: MISC_COST_ELEMENT, amount: '', notes: 'Admin miscellaneous' })
+    }
+    setDraft(rows)
+  }, [fy, saved, costs])
+
+  useEffect(() => {
+    let cancelled = false
+    void apiGet<AccrualView>(`/api/accruals?fy=${encodeURIComponent(fy)}`)
+      .then((d) => {
+        if (cancelled) return
+        setAccrual(d)
+        setOverrideDraft(d.override != null ? String(d.override) : '')
+      })
+      .catch(() => {
+        if (!cancelled) setAccrual(null)
+      })
+    return () => { cancelled = true }
+  }, [fy, paymentOrders])
+
+  useEffect(() => {
+    if (fy !== running) {
+      setPriorAccrual(null)
       return
     }
-    setDraft(costs.map((c) => ({ id: newDraftId(), cost_element: c.code, amount: '', notes: '' })))
-  }, [fy, saved, costs])
+    let cancelled = false
+    void apiGet<AccrualView>(`/api/accruals?fy=${encodeURIComponent(priorFy)}`)
+      .then((d) => {
+        if (!cancelled) setPriorAccrual(d)
+      })
+      .catch(() => {
+        if (!cancelled) setPriorAccrual(null)
+      })
+    return () => { cancelled = true }
+  }, [fy, running, priorFy, paymentOrders])
 
   const actuals = useMemo(() => {
     const map = new Map<string, number>()
     for (const p of paymentOrders) {
-      if (fiscalOf(p.invoices?.invoice_date)?.fy !== fy) continue
+      if (invoiceBudgetFy(p.invoices ?? {}) !== fy) continue
       const code = p.invoices?.cost_element || ''
       if (!code) continue
       map.set(code, (map.get(code) ?? 0) + poReleasedAmount(p))
@@ -351,10 +470,21 @@ function BudgetPanel({
       toast.error('Add at least one cost element')
       return
     }
-    if (!(await guardFy(fy))) return
+    const previous = new Map(
+      saved.filter((b) => b.fy === fy).map((b) => [b.cost_element.toUpperCase(), b.amount]),
+    )
+    const increasing = lines.some((l) => isBudgetIncrease(previous.get(l.cost_element.toUpperCase()), l.amount))
+    if (increasing && !masterOn) {
+      toast.error('Budget increase requires Master Access')
+      requestUnlock()
+      return
+    }
+    if (!(increasing && masterOn && isClosedFiscalYear(fy))) {
+      if (!(await guardFy(fy))) return
+    }
     setSaving(true)
     try {
-      const res = await apiPut<{ budgets: BudgetLine[] }>('/api/budgets', { fy, lines })
+      const res = await apiPut<{ budgets: BudgetLine[] }>('/api/budgets', { fy, lines, masterAccess: masterOn })
       const others = saved.filter((b) => b.fy !== fy)
        onSaved([...others, ...res.budgets])
        toast.success(`${fy} budget saved`)
@@ -368,6 +498,31 @@ function BudgetPanel({
 
   const setLine = (id: string, patch: Partial<DraftLine>) => {
     setDraft((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)))
+  }
+
+  const saveOverride = async (raw = overrideDraft) => {
+    if (!masterOn) {
+      requestUnlock()
+      return
+    }
+    const trimmed = raw.trim()
+    const override = trimmed === '' ? null : Number(trimmed)
+    if (override != null && (!Number.isFinite(override) || override < 0)) {
+      toast.error('Enter a non-negative amount, or leave blank to use the computed accrual')
+      return
+    }
+    setSavingOverride(true)
+    try {
+      const d = await apiPut<AccrualView>('/api/accruals', { fy, override, masterAccess: true })
+      setAccrual(d)
+      setOverrideDraft(d.override != null ? String(d.override) : '')
+      toast.success(override == null ? `${fy} accrual uses computed sum` : `${fy} accrual override saved`)
+      emitCrossModule('budget', 'update', fy)
+    } catch (e) {
+      toast.error('Accrual save failed', (e as Error).message)
+    } finally {
+      setSavingOverride(false)
+    }
   }
 
   return (
@@ -410,6 +565,111 @@ function BudgetPanel({
           <Save size={14} /> {saving ? 'Saving…' : `Save ${fy}`}
         </Button>
       </div>
+      {fy === running && priorAccrual && isClosedFiscalYear(priorFy) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--warn)_8%,transparent)] px-5 py-3">
+          <div className="text-sm">
+            <span className="font-semibold">{priorFy} is closed.</span>{' '}
+            Sundry Accrual Rs {formatMoney(priorAccrual.secured)} · Accrual Balance Rs {formatMoney(priorAccrual.balance)} · {priorAccrual.invoices?.length ?? 0} unpaid
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => setFy(priorFy)}>
+            Open {priorFy}
+          </Button>
+        </div>
+      )}
+      {accrual && (
+        <>
+        <div className="grid gap-3 border-b border-[var(--border)] px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Yearly Budget</div>
+            <div className="mt-1 text-lg font-bold tabular-nums">Rs {formatMoney(totalBudget)}</div>
+            <div className="text-xs text-[var(--text-dim)]">{fy} entered lines</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Released</div>
+            <div className="mt-1 text-lg font-bold tabular-nums">Rs {formatMoney(totalActual)}</div>
+            <div className="text-xs text-[var(--text-dim)]">Against {fy} invoices · remaining Rs {formatMoney(totalBudget - totalActual)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Sundry Accrual</div>
+            <div className="mt-1 text-lg font-bold tabular-nums">Rs {formatMoney(accrual.secured)}</div>
+            <div className="text-xs text-[var(--text-dim)]">
+              {accrual.override != null
+                ? 'Master Access override'
+                : isClosedFiscalYear(fy)
+                  ? 'Computed unpaid + released'
+                  : 'Unpaid invoices of this year (secures at close)'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Accrual Balance</div>
+            <div className={`mt-1 text-lg font-bold tabular-nums ${accrual.balance < 0 ? 'text-[var(--danger)]' : ''}`}>
+              Rs {formatMoney(accrual.balance)}
+            </div>
+            <div className="text-xs text-[var(--text-dim)]">
+              Unpaid Rs {formatMoney(accrual.unpaid)} · released Rs {formatMoney(accrual.consumed)}
+              {accrual.balance < 0 ? ' · below zero' : ''}
+            </div>
+          </div>
+        </div>
+        {isClosedFiscalYear(fy) && (
+          <div className="border-b border-[var(--border)] px-5 py-3">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Override (Master Access)</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                className="input max-w-[12rem] text-right tabular-nums"
+                inputMode="decimal"
+                value={overrideDraft}
+                onChange={(e) => setOverrideDraft(e.target.value)}
+                placeholder={String(accrual.computed)}
+                disabled={!masterOn}
+              />
+              <Button size="sm" variant="ghost" onClick={() => void saveOverride()} disabled={savingOverride || !masterOn}>
+                {savingOverride ? 'Saving…' : 'Save'}
+              </Button>
+              {!masterOn && (
+                <button type="button" className="text-xs text-[var(--accent)] underline-offset-2 hover:underline" onClick={requestUnlock}>
+                  Unlock Master Access to override
+                </button>
+              )}
+              {masterOn && (
+                <button type="button" className="text-xs text-[var(--text-muted)] underline-offset-2 hover:underline" onClick={() => void saveOverride('')}>
+                  Clear override
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {(accrual.invoices ?? []).length > 0 && (
+          <div className="border-b border-[var(--border)] px-5 py-3">
+            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
+              {isClosedFiscalYear(fy) ? 'Unpaid prior-year invoices' : 'Unpaid invoices'}
+            </div>
+            <div className="mt-2 table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Invoice</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th className="text-right">Amount (Rs)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(accrual.invoices ?? []).map((inv) => (
+                    <tr key={inv.id}>
+                      <td className="font-semibold">{inv.invoice_no ?? '—'}</td>
+                      <td className="text-xs">{formatDate(inv.invoice_date)}</td>
+                      <td className="text-xs">{inv.status ?? '—'}</td>
+                      <td className="text-right tabular-nums">{formatMoney(inv.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        </>
+      )}
       <div className="table-scroll">
         <table className="data-table">
           <thead>
@@ -431,11 +691,19 @@ function BudgetPanel({
               return (
                 <tr key={d.id}>
                   <td>
-                    <select className="input min-w-[10rem]" value={d.cost_element} onChange={(e) => setLine(d.id, { cost_element: e.target.value })}>
+                    <select
+                      className="input min-w-[10rem]"
+                      value={d.cost_element}
+                      onChange={(e) => setLine(d.id, { cost_element: e.target.value })}
+                      disabled={isMiscCostElement(d.cost_element)}
+                    >
                       <option value="">Select…</option>
                       {costs.map((c) => (
                         <option key={c.code} value={c.code}>{c.code} — {c.name ?? 'unnamed'}</option>
                       ))}
+                      {!costs.some((c) => isMiscCostElement(c.code)) && (
+                        <option value={MISC_COST_ELEMENT}>MISC — Miscellaneous</option>
+                      )}
                     </select>
                   </td>
                   <td>
@@ -455,9 +723,13 @@ function BudgetPanel({
                     <input className="input" value={d.notes} onChange={(e) => setLine(d.id, { notes: e.target.value })} placeholder="Optional" />
                   </td>
                   <td>
-                    <button type="button" className="btn btn-ghost" style={{ padding: '0.4rem' }} aria-label="Remove line" onClick={() => setDraft((prev) => prev.filter((x) => x.id !== d.id))}>
-                      <Trash2 size={14} className="text-[var(--danger)]" />
-                    </button>
+                    {isMiscCostElement(d.cost_element) ? (
+                      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-[var(--text-dim)]">Misc.</span>
+                    ) : (
+                      <button type="button" className="btn btn-ghost" style={{ padding: '0.4rem' }} aria-label="Remove line" onClick={() => setDraft((prev) => prev.filter((x) => x.id !== d.id))}>
+                        <Trash2 size={14} className="text-[var(--danger)]" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               )
@@ -482,7 +754,7 @@ function VendorPanel({ vendors, onReload }: { vendors: Vendor[]; onReload: () =>
   const [editing, setEditing] = useState<Vendor | null>(null)
   const [creating, setCreating] = useState(false)
   const toast = useToast()
-  const filtered = vendors.filter((v) => `${v.name} ${v.email ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const filtered = vendors.filter((v) => `${v.name} ${vendorEmailList(v).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()))
 
   const remove = async (v: Vendor) => {
     if (!window.confirm(`Delete vendor ${v.name}?`)) return
@@ -509,7 +781,7 @@ function VendorPanel({ vendors, onReload }: { vendors: Vendor[]; onReload: () =>
           <thead>
             <tr>
               <th>Vendor</th>
-              <th>Email</th>
+              <th>Emails</th>
               <th className="text-right">Actions</th>
             </tr>
           </thead>
@@ -517,7 +789,9 @@ function VendorPanel({ vendors, onReload }: { vendors: Vendor[]; onReload: () =>
             {filtered.map((v) => (
               <tr key={v.id}>
                 <td className="font-semibold">{v.name}</td>
-                <td className={v.email ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}>{v.email ?? 'No email'}</td>
+                <td className={vendorEmailList(v).length ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}>
+                  {vendorEmailList(v).length ? vendorEmailList(v).join(', ') : 'No email'}
+                </td>
                 <td>
                   <div className="flex justify-end gap-1">
                     <button type="button" className="btn btn-ghost" style={{ padding: '0.4rem 0.6rem' }} aria-label={`Edit ${v.name}`} onClick={() => setEditing(v)}><Pencil size={14} /></button>
@@ -802,7 +1076,7 @@ function AlertsPanel({
   const fyBudget = budgets.filter((b) => b.fy === fy)
   const totalBudget = fyBudget.reduce((s, b) => s + b.amount, 0)
   const fyActual = paymentOrders.reduce((s, p) => {
-    if (fiscalOf(p.invoices?.invoice_date)?.fy !== fy) return s
+    if (invoiceBudgetFy(p.invoices ?? {}) !== fy) return s
     return s + poReleasedAmount(p)
   }, 0)
   const util = totalBudget > 0 ? (fyActual / totalBudget) * 100 : 0
@@ -875,7 +1149,7 @@ function SettingsPanel({
   const toast = useToast()
   const visible = mail ? settings.filter((s) => keys.includes(s.key)) : [
     ...settings.filter((s) => keys.includes(s.key)),
-    ...settings.filter((s) => !COMPANY_KEYS.includes(s.key as typeof COMPANY_KEYS[number]) && !RULE_KEYS.includes(s.key as typeof RULE_KEYS[number]) && !MAIL_KEYS.includes(s.key as typeof MAIL_KEYS[number]) && s.key !== 'yearly_budgets' && s.key !== 'financial_year'),
+    ...settings.filter((s) => !COMPANY_KEYS.includes(s.key as typeof COMPANY_KEYS[number]) && !RULE_KEYS.includes(s.key as typeof RULE_KEYS[number]) && !MAIL_KEYS.includes(s.key as typeof MAIL_KEYS[number]) && s.key !== 'yearly_budgets' && s.key !== 'financial_year' && s.key !== 'fy_accrual_overrides'),
   ]
 
   const setSetting = (key: string, value: string) =>
@@ -931,25 +1205,67 @@ function SettingsPanel({
   )
 }
 
+function emptyEmailRow(isPrimary = false): VendorEmail {
+  return { email: '', label: 'surveyor', is_primary: isPrimary }
+}
+
+function emailsFromVendor(v: Vendor | null): VendorEmail[] {
+  if (!v) return [emptyEmailRow(true)]
+  const rows = (v.emails ?? []).map((e) => ({
+    email: e.email,
+    label: e.label || 'surveyor',
+    is_primary: Boolean(e.is_primary),
+  }))
+  if (rows.length) {
+    if (!rows.some((r) => r.is_primary)) rows[0].is_primary = true
+    return rows
+  }
+  if (v.email) return [{ email: v.email, label: 'surveyor', is_primary: true }]
+  return [emptyEmailRow(true)]
+}
+
 function VendorForm({ initial, onClose, onSaved }: { initial: Vendor | null; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(initial?.name ?? '')
-  const [email, setEmail] = useState(initial?.email ?? '')
+  const [emails, setEmails] = useState<VendorEmail[]>(() => emailsFromVendor(initial))
   const [saving, setSaving] = useState(false)
   const toast = useToast()
+
+  const setRow = (idx: number, patch: Partial<VendorEmail>) => {
+    setEmails((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)))
+  }
+
+  const setPrimary = (idx: number) => {
+    setEmails((prev) => prev.map((row, i) => ({ ...row, is_primary: i === idx })))
+  }
 
   const submit = async () => {
     if (!name.trim()) {
       toast.error('Vendor name is required')
       return
     }
+    const cleaned = emails
+      .map((row, idx) => ({
+        email: row.email.trim(),
+        label: row.label || 'surveyor',
+        is_primary: Boolean(row.is_primary) || idx === 0,
+      }))
+      .filter((row) => row.email)
+    if (cleaned.length && !cleaned.some((row) => row.is_primary)) cleaned[0].is_primary = true
+    let seen = false
+    for (const row of cleaned) {
+      if (row.is_primary && seen) row.is_primary = false
+      else if (row.is_primary) seen = true
+    }
+    const primary = cleaned.find((row) => row.is_primary)?.email ?? cleaned[0]?.email ?? null
     setSaving(true)
     try {
-      if (initial) await apiPut(`/api/vendors/${initial.id}`, { name: name.trim(), email: email.trim() || null })
-      else await apiPost('/api/vendors', { name: name.trim(), email: email.trim() || null })
-       toast.success(initial ? 'Vendor updated' : 'Vendor added')
-       onSaved()
-       emitCrossModule('vendor', initial ? 'update' : 'create', initial?.id)
-     } catch (e) {
+      const body = { name: name.trim(), email: primary, emails: cleaned }
+      if (initial) await apiPut(`/api/vendors/${initial.id}`, body)
+      else await apiPost('/api/vendors', body)
+      toast.success(initial ? 'Vendor updated' : 'Vendor added')
+      onSaved()
+      emitCrossModule('vendor', initial ? 'update' : 'create', initial?.id)
+    } catch (e) {
       toast.error('Save failed', (e as Error).message)
     } finally {
       setSaving(false)
@@ -965,7 +1281,52 @@ function VendorForm({ initial, onClose, onSaved }: { initial: Vendor | null; onC
     }>
       <div className="grid grid-cols-1 gap-4">
         <Field label="Name" required><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></Field>
-        <Field label="Surveyor email"><input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="surveyor@vendor.com" /></Field>
+        <div>
+          <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Emails</span>
+          <div className="space-y-2">
+            {emails.map((row, idx) => (
+              <div key={`email-${idx}`} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_7.5rem_auto_auto]">
+                <input
+                  type="email"
+                  className="input"
+                  value={row.email}
+                  onChange={(e) => setRow(idx, { email: e.target.value })}
+                  placeholder="surveyor@vendor.com"
+                />
+                <select className="input" value={row.label || 'surveyor'} onChange={(e) => setRow(idx, { label: e.target.value })}>
+                  {EMAIL_LABELS.map((label) => (
+                    <option key={label} value={label}>{label}</option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                  <input type="radio" name="vendor-primary-email" checked={Boolean(row.is_primary)} onChange={() => setPrimary(idx)} />
+                  Primary
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  aria-label="Remove email"
+                  disabled={emails.length === 1}
+                  onClick={() => setEmails((prev) => {
+                    const next = prev.filter((_, i) => i !== idx)
+                    if (next.length && !next.some((r) => r.is_primary)) next[0].is_primary = true
+                    return next
+                  })}
+                >
+                  <Trash2 size={14} className="text-[var(--danger)]" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2"
+            onClick={() => setEmails((prev) => [...prev, emptyEmailRow(prev.length === 0)])}
+          >
+            <Plus size={14} /> Add email
+          </Button>
+        </div>
       </div>
     </Modal>
   )

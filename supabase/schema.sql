@@ -71,6 +71,16 @@ create table if not exists public.vendors (
   updated_at  timestamptz not null default now()
 );
 
+create table if not exists public.vendor_emails (
+  id          uuid primary key default gen_random_uuid(),
+  vendor_id   uuid not null references public.vendors(id) on delete cascade,
+  email       text not null,
+  label       text not null default 'surveyor',
+  is_primary  boolean not null default false,
+  created_at  timestamptz not null default now(),
+  unique (vendor_id, email)
+);
+
 -- -------------------------------------------------------------
 -- Contracts
 -- -------------------------------------------------------------
@@ -82,7 +92,7 @@ create table if not exists public.contracts (
   start_date  date not null,
   end_date    date not null,
   value       numeric(18,2) not null default 0 check (value >= 0),
-  status      text not null default 'Open' check (status in ('Open','Closed','Expiring')),
+  status      text not null default 'Open' check (status in ('Open','Closed','Expiring','Expired')),
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -98,6 +108,16 @@ create table if not exists public.service_matrix (
   cost_element    text not null,
   tanker_required boolean not null default false,
   trips           boolean not null default false
+);
+
+create table if not exists public.contract_services (
+  id                 uuid primary key default gen_random_uuid(),
+  contract_id        uuid not null references public.contracts(id) on delete cascade,
+  service_matrix_id  uuid not null references public.service_matrix(id) on delete restrict,
+  t1                 text not null,
+  t2                 text,
+  t3                 text,
+  unique (contract_id, service_matrix_id)
 );
 
 -- -------------------------------------------------------------
@@ -157,7 +177,9 @@ create table if not exists public.po_versions (
   finance_remarks     text,
   released_amount     numeric(18,2),
   released_by         text,
-  released_at         timestamptz
+  released_at         timestamptz,
+  released_via        text check (released_via is null or released_via in ('cheque', 'bank_transfer', 'rtgs', 'other')),
+  release_reference   text
 );
 
 -- -------------------------------------------------------------
@@ -286,7 +308,10 @@ create table if not exists public.followup_emails (
 create index if not exists idx_invoices_contract on public.invoices(contract_id);
 create index if not exists idx_invoices_status on public.invoices(status);
 create index if not exists idx_vendors_name on public.vendors(name);
+create index if not exists idx_vendor_emails_vendor on public.vendor_emails(vendor_id);
+create unique index if not exists idx_vendor_emails_one_primary on public.vendor_emails(vendor_id) where is_primary;
 create index if not exists idx_contracts_vendor on public.contracts(vendor_id);
+create index if not exists idx_contract_services_contract on public.contract_services(contract_id);
 create index if not exists idx_comparison_results_cmp on public.comparison_results(comparison_id);
 create index if not exists idx_audit_timestamp on public.audit_log(timestamp);
 create index if not exists idx_po_versions_invoice on public.po_versions(invoice_id);

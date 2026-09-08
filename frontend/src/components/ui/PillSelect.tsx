@@ -26,12 +26,12 @@ export default function PillSelect({ options, value, onChange, label }: PillSele
           <button
             key={o.value}
             onClick={() => onChange(o.value)}
-            className={`rounded-full px-3 py-1 text-xs font-semibold transition-all duration-200 ${
+            className={`px-3 py-1 text-xs font-semibold transition-colors duration-200 ${
               active
-                ? 'text-white shadow-[0_2px_10px_-2px_color-mix(in_srgb,var(--accent)_60%,transparent)]'
+                ? 'text-white'
                 : 'border border-[var(--border)] text-[var(--text-dim)] hover:border-[var(--accent)] hover:text-[var(--accent)]'
             }`}
-            style={active ? { background: 'var(--gradient-primary)' } : undefined}
+            style={{ borderRadius: 6, background: active ? 'var(--accent)' : undefined }}
           >
             {o.label}
           </button>
