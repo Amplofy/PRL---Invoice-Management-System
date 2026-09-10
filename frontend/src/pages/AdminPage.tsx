@@ -58,7 +58,7 @@ interface AdminPo {
   status: string | null
   amount?: number | null
   released_amount?: number | null
-  invoices?: { cost_element?: string | null; invoice_date?: string | null; service_to?: string | null } | null
+  invoices?: { cost_element?: string | null; invoice_date?: string | null; service_from?: string | null; service_to?: string | null } | null
 }
 
 interface DraftLine {

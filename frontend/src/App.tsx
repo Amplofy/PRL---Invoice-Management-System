@@ -45,6 +45,16 @@ function ProtectedAdminLayout() {
   )
 }
 
+function ProtectedUsersLayout() {
+  return (
+    <AuthGuard anyPermission={['users.manage', 'roles.manage']}>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </AuthGuard>
+  )
+}
+
 export default function App() {
   const [booting, setBooting] = useState(() => {
     try {
@@ -91,7 +101,7 @@ export default function App() {
               <Route path="/admin" element={<ProtectedAdminLayout />}>
                 <Route index element={<AdminPage />} />
               </Route>
-              <Route path="/users" element={<ProtectedAdminLayout />}>
+              <Route path="/users" element={<ProtectedUsersLayout />}>
                 <Route index element={<UsersPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/control-tower" replace />} />

@@ -32,18 +32,20 @@ export function fiscalYearOfDate(dateStr: string | null | undefined): string | n
   return `FY${String(fiscalStartYear(d)).slice(2)}`
 }
 
-/** Date that owns budget and accrual: service end, else invoice date. */
+/** Date that owns budget and accrual: service start, else invoice date. */
 export function invoiceBudgetDate(inv: {
+  service_from?: string | null
   service_to?: string | null
   invoice_date?: string | null
 }): string | null {
-  const end = String(inv.service_to ?? '').trim()
-  if (end) return end
+  const start = String(inv.service_from ?? '').trim()
+  if (start) return start
   const billed = String(inv.invoice_date ?? '').trim()
   return billed || null
 }
 
 export function invoiceBudgetFy(inv: {
+  service_from?: string | null
   service_to?: string | null
   invoice_date?: string | null
 }): string | null {
@@ -151,9 +153,9 @@ export function writeBlockedForPayment(
   userKey: string,
   dateStr: string | null | undefined,
   invoiceStatus: string | null | undefined,
-  serviceTo?: string | null,
+  serviceFrom?: string | null,
 ): string | null {
-  const budgetDate = serviceTo || dateStr
+  const budgetDate = String(serviceFrom ?? '').trim() || dateStr
   if (closedFyOf(budgetDate) && String(invoiceStatus ?? '') !== 'Paid') return null
   return writeBlocked(userKey, budgetDate)
 }

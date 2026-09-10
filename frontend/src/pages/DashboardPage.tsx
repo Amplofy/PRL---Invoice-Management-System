@@ -15,18 +15,6 @@ import {
   RotateCcw,
   Wallet,
 } from 'lucide-react'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js'
-import { Line, Doughnut } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
 import { formatMoney, formatDate, timeAgo } from '../lib/format'
 import { useThemeColors } from '../lib/themeColors'
@@ -34,6 +22,7 @@ import { currentFiscalYear, elapsedFyMonths, fiscalShortRange, invoiceBudgetDate
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { countsTowardUtilization } from '../lib/invoice'
 import { useLiveDomain } from '../lib/store'
+import { contractNoOf, vendorNameOf } from '../lib/relations'
 import { costElementBreakup, filterAccrualYears, fyKpis, monthlyTrendByBudgetDate, paymentSplit, statusBreakdown, yearlyBudgetFigures, type AccrualSortKey } from '../lib/fyAnalysis'
 import KpiCard from '../components/ui/KpiCard'
 import GlassCard from '../components/ui/GlassCard'
@@ -41,19 +30,8 @@ import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import Reveal from '../components/ui/Reveal'
 import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
-import { ChartStage } from '../components/ui/EnergyWave'
-import { doughnutMotion, doughnutSlice, lineMotion, waveLine } from '../lib/chartWave'
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Tooltip,
-  Legend,
-  Filler,
-)
+import { InvoiceValueChart } from '../components/ui/InvoiceValueChart'
+import { HudRing } from '../components/ui/HudViz'
 
 interface DashboardData {
   kpis: {
@@ -153,7 +131,7 @@ export default function DashboardPage() {
     amount?: number | null
     released_amount?: number | null
     status?: string | null
-    invoices?: { invoice_date?: string | null; service_to?: string | null; cost_element?: string | null } | null
+    invoices?: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null; cost_element?: string | null } | null
   }>>([])
   const [accrualYears, setAccrualYears] = useState<Array<{
     fy: string
@@ -180,7 +158,7 @@ export default function DashboardPage() {
       const [inv, bud, po, acc] = await Promise.all([
         apiGet<{ invoices: Array<Record<string, unknown>> }>(invoiceListPath()),
         apiGet<{ budgets: Array<{ fy: string; amount: number }> }>('/api/budgets'),
-        apiGet<{ paymentOrders: Array<{ amount?: number | null; released_amount?: number | null; invoices?: { invoice_date?: string | null; service_to?: string | null } | null }> }>('/api/payment-orders'),
+        apiGet<{ paymentOrders: Array<{ amount?: number | null; released_amount?: number | null; invoices?: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null } | null }> }>('/api/payment-orders'),
 
         apiGet<{ years?: Array<{ fy: string; unpaid: number; consumed: number; computed: number; override: number | null; secured: number; balance: number; invoices?: Array<{ id: string; invoice_no: string | null; amount: number; status: string | null }> }> }>('/api/accruals').catch(() => ({ years: [] })),
       ])
@@ -208,13 +186,12 @@ export default function DashboardPage() {
   const recent = useMemo(() => allInvoices.slice(0, 6), [allInvoices])
 
   const toDrillRow = (inv: Record<string, unknown>): DrillRow => {
-    const rel = inv.contracts as { contract_no?: string; vendors?: Array<{ name?: string }> | null } | null
     return {
       id: String(inv.id),
       invoice_no: String(inv.invoice_no ?? ''),
       invoice_date: (inv.invoice_date as string | null) ?? null,
-      vendor: rel?.vendors?.[0]?.name ?? 'Unknown',
-      contract_no: rel?.contract_no ?? '',
+      vendor: vendorNameOf(inv, 'Unknown'),
+      contract_no: contractNoOf(inv, ''),
       amount: Number(inv.amount ?? 0),
       status: String(inv.status ?? ''),
     }
@@ -305,19 +282,17 @@ export default function DashboardPage() {
     [accrualYears],
   )
 
-  const onTrendClick = (_e: unknown, els: Array<{ index?: number }>) => {
-    if (!els.length) return
-    const idx = els[0].index ?? 0
+  const onTrendClick = (idx: number) => {
     const month = trendData.keys[idx]
     if (!month) return
     const rows = fyInvoices.filter((i) => String(invoiceBudgetDate(i) ?? '').startsWith(month)).map(toDrillRow)
     setDrill({ title: `${hudFy} · ${trendData.labels[idx] ?? month}`, subtitle: `${rows.length} invoices by service end`, rows })
   }
 
-  const onStatusClick = (_e: unknown, els: Array<{ index?: number }>) => {
-    if (!els.length) return
+  const onStatusClick = (index: number) => {
     const statuses = ['Approved', 'Paid', 'Pending', 'Rejected']
-    const st = statuses[els[0].index ?? 0]
+    const st = statuses[index]
+    if (!st) return
     const rows = fyInvoices.filter((i) => i.status === st).map(toDrillRow)
     setDrill({
       title: `${st} · ${hudFy}`,
@@ -469,32 +444,14 @@ export default function DashboardPage() {
             </div>
             <div className="h-[300px]">
               {hasTrendData ? (
-                <ChartStage className="h-full" color={c.accent} values={trendData.totals}>
-                <Line
-                  data={{
-                    labels: trendData.labels,
-                    datasets: [
-                      {
-                        label: 'Value (Rs)',
-                        data: trendData.totals,
-                        ...waveLine(c.accent, true),
-                        pointBackgroundColor: c.accent2,
-                      },
-                    ],
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    onClick: onTrendClick,
-                    animation: lineMotion(),
-                    plugins: { legend: { display: false } },
-                    scales: {
-                      x: { grid: { display: false }, ticks: { color: c.ticks } },
-                      y: { beginAtZero: true, grace: '8%', grid: { color: c.grid }, ticks: { color: c.ticks } },
-                    },
-                  }}
+                <InvoiceValueChart
+                  key={hudFy}
+                  labels={trendData.labels}
+                  values={trendData.totals}
+                  counts={trendData.counts}
+                  color={c.accent}
+                  onSelect={onTrendClick}
                 />
-                </ChartStage>
               ) : (
                 <ChartEmpty
                   icon={Activity}
@@ -512,31 +469,23 @@ export default function DashboardPage() {
               <div className="section-title mb-0!">Status Breakdown</div>
               <span className="badge badge-neutral">click a slice</span>
             </div>
-            <div className="h-[280px] overflow-hidden px-1">
+            <div className="min-h-[280px] px-1">
               {statusTotal > 0 ? (
-                <ChartStage className="h-full" color={c.accent} values={[fyStatus.approved, fyStatus.paid, fyStatus.pending, fyStatus.rejected]}>
-                <Doughnut
-                  data={{
-                    labels: ['Approved', 'Paid', 'Pending', 'Rejected'],
-                    datasets: [
-                      {
-                        data: [fyStatus.approved, fyStatus.paid, fyStatus.pending, fyStatus.rejected],
-                        backgroundColor: [c.accent3, c.accent2, c.warn, c.err],
-                        ...doughnutSlice(),
-                      },
-                    ],
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    cutout: '72%',
-                    onClick: onStatusClick,
-                    layout: { padding: { top: 10, right: 16, bottom: 8, left: 16 } },
-                    animation: doughnutMotion(),
-                    plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 10 } } },
-                  }}
+                <HudRing
+                  slices={[
+                    { label: 'Approved', value: fyStatus.approved, color: c.accent3 },
+                    { label: 'Paid', value: fyStatus.paid, color: c.accent2 },
+                    { label: 'Pending', value: fyStatus.pending, color: c.warn },
+                    { label: 'Rejected', value: fyStatus.rejected, color: c.err },
+                  ]}
+                  onSlice={onStatusClick}
+                  center={
+                    <div>
+                      <div className="text-2xl font-black tabular-nums">{statusTotal}</div>
+                      <div className="text-[0.58rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">invoices</div>
+                    </div>
+                  }
                 />
-                </ChartStage>
               ) : (
                 <ChartEmpty
                   icon={PieChart}
@@ -833,16 +782,13 @@ export default function DashboardPage() {
               <tbody>
                 {recent.map((inv) => {
                   const i = inv as Record<string, unknown>
-                  const rel = i.contracts as
-                    | { contract_no?: string; vendors?: Array<{ name?: string }> | null }
-                    | null
                   return (
                     <tr key={String(i.id)}>
                       <td className="font-semibold">{String(i.invoice_no ?? '')}</td>
                       <td>{formatDate(i.invoice_date as string)}</td>
                       <td>
-                        <div className="text-sm">{rel?.vendors?.[0]?.name ?? 'Unknown'}</div>
-                        <div className="text-xs text-[var(--text-muted)]">{rel?.contract_no ?? ''}</div>
+                        <div className="text-sm">{vendorNameOf(i, 'Unknown')}</div>
+                        <div className="text-xs text-[var(--text-muted)]">{contractNoOf(i, '')}</div>
                       </td>
                       <td className="text-right font-semibold tabular-nums">{formatMoney(Number(i.amount))}</td>
                       <td>

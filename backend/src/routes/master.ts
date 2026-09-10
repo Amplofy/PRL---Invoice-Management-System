@@ -1,9 +1,19 @@
 import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
-import { authRequired, requireRole } from '../middleware/auth.js'
+import { authRequired, requirePermission, requireRole } from '../middleware/auth.js'
 import { invoiceBudgetFy, LOCKED_FY_MESSAGE, writeBlocked, writeBlockedFy } from '../services/fyLock.js'
 import { accrualForFy, invoiceAccrualAmount, isBudgetIncrease } from '../services/accrual.js'
-import type { AuthUser } from '../types/index.js'
+import { vendorsAsList } from '../services/embed.js'
+import {
+  createCustomRole,
+  createDirectoryUser,
+  deleteCustomRole,
+  deleteDirectoryUser,
+  listDirectoryUsers,
+  updateCustomRole,
+  updateDirectoryUser,
+} from '../services/usersAdmin.js'
+import type { AuthUser, AuthedRequest } from '../types/index.js'
 
 export const masterRouter = Router()
 
@@ -238,7 +248,8 @@ masterRouter.get('/contracts', authRequired, async (_req, res, next) => {
       res.status(500).json({ error: `Failed to load contracts: ${error?.message}` })
       return
     }
-    res.json({ contracts: await attachContractServices((data ?? []) as Array<{ id: string }>) })
+    const rows = (data ?? []).map((c) => ({ ...c, vendors: vendorsAsList((c as { vendors?: unknown }).vendors) }))
+    res.json({ contracts: await attachContractServices(rows as Array<{ id: string }>) })
   } catch (err) {
     next(err)
   }
@@ -506,75 +517,61 @@ masterRouter.delete('/cost-elements/:code', authRequired, requireRole('admin'), 
 // -------------------------------------------------------------
 // Users & roles
 // -------------------------------------------------------------
-masterRouter.get('/users', authRequired, requireRole('admin'), async (_req, res, next) => {
+masterRouter.get('/me', authRequired, async (req, res, next) => {
   try {
-    const supabase = getSupabase()
-    const { data, error } = await supabase
-      .from('users')
-      .select('*, roles(name, color)')
-      .order('full_name')
-    if (error) {
-      res.status(500).json({ error: `Failed to load users: ${error?.message}` })
-      return
-    }
-    res.json({ users: data ?? [] })
+    const user = (req as AuthedRequest).user
+    res.json({
+      id: user.id,
+      email: user.email ?? '',
+      name: user.fullName ?? null,
+      role: user.role,
+      permissions: user.permissions ?? [],
+      status: user.status ?? 'active',
+      username: user.username ?? null,
+    })
   } catch (err) {
     next(err)
   }
 })
 
-masterRouter.post('/users', authRequired, requireRole('admin'), async (req, res, next) => {
+masterRouter.get('/users', authRequired, requirePermission('users.manage', 'roles.manage'), async (_req, res, next) => {
   try {
-    const supabase = getSupabase()
-    const body = req.body ?? {}
-    const { data, error } = await supabase
-      .from('users')
-      .insert({
-        username: body.username,
-        full_name: body.full_name,
-        email: body.email,
-        role_id: body.role_id,
-        status: body.status ?? 'active',
-      })
-      .select()
-      .single()
-    if (error) {
-      res.status(400).json({ error: error.message })
-      return
-    }
-    res.status(201).json({ user: data })
+    const users = await listDirectoryUsers()
+    res.json({ users })
   } catch (err) {
     next(err)
   }
 })
 
-masterRouter.put('/users/:id', authRequired, requireRole('admin'), async (req, res, next) => {
+masterRouter.post('/users', authRequired, requirePermission('users.manage'), async (req, res, next) => {
   try {
-    const supabase = getSupabase()
-    const { data, error } = await supabase
-      .from('users')
-      .update(req.body ?? {})
-      .eq('id', req.params.id)
-      .select()
-      .single()
-    if (error || !data) {
-      res.status(400).json({ error: error?.message || 'User not found' })
-      return
-    }
-    res.json({ user: data })
+    const actor = (req as AuthedRequest).user
+    const user = await createDirectoryUser(req.body ?? {}, actor.email)
+    res.status(201).json({ user })
   } catch (err) {
     next(err)
   }
 })
 
-masterRouter.delete('/users/:id', authRequired, requireRole('admin'), async (req, res, next) => {
+masterRouter.put('/users/:id', authRequired, requirePermission('users.manage'), async (req, res, next) => {
   try {
-    const supabase = getSupabase()
-    const { error } = await supabase.from('users').delete().eq('id', req.params.id)
-    if (error) {
-      res.status(400).json({ error: error.message })
-      return
-    }
+    const actor = (req as AuthedRequest).user
+    const user = await updateDirectoryUser(
+      String(req.params.id),
+      req.body ?? {},
+      { id: actor.id, email: actor.email },
+      actor.email,
+    )
+    res.json({ user })
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.delete('/users/:id', authRequired, requirePermission('users.manage'), async (req, res, next) => {
+  try {
+    const actor = (req as AuthedRequest).user
+    await deleteDirectoryUser(String(req.params.id), { id: actor.id, email: actor.email }, actor.email)
     res.json({ ok: true })
   } catch (err) {
     next(err)
@@ -607,6 +604,36 @@ masterRouter.get('/permissions', authRequired, async (_req, res, next) => {
       return
     }
     res.json({ permissions: data ?? [] })
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.post('/roles', authRequired, requirePermission('roles.manage'), async (req, res, next) => {
+  try {
+    const actor = (req as AuthedRequest).user
+    const role = await createCustomRole(req.body ?? {}, actor.email)
+    res.status(201).json({ role })
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.put('/roles/:id', authRequired, requirePermission('roles.manage'), async (req, res, next) => {
+  try {
+    const actor = (req as AuthedRequest).user
+    const role = await updateCustomRole(String(req.params.id), req.body ?? {}, actor.email)
+    res.json({ role })
+  } catch (err) {
+    next(err)
+  }
+})
+
+masterRouter.delete('/roles/:id', authRequired, requirePermission('roles.manage'), async (req, res, next) => {
+  try {
+    const actor = (req as AuthedRequest).user
+    await deleteCustomRole(String(req.params.id), actor.email)
+    res.json({ ok: true })
   } catch (err) {
     next(err)
   }
@@ -776,14 +803,15 @@ async function loadAccrualSnapshot(fy: string) {
   const supabase = getSupabase()
   const [{ data: setting }, { data: invoiceRows }, { data: poRows }] = await Promise.all([
     supabase.from('app_settings').select('value').eq('key', ACCRUAL_SETTING_KEY).maybeSingle(),
-    supabase.from('invoices').select('id, invoice_no, invoice_date, service_to, amount, approved_amount, status'),
-    supabase.from('po_versions').select('status, released_amount, amount, invoices(invoice_date, service_to)'),
+    supabase.from('invoices').select('id, invoice_no, invoice_date, service_from, service_to, amount, approved_amount, status'),
+    supabase.from('po_versions').select('status, released_amount, amount, invoices(invoice_date, service_from, service_to)'),
   ])
   const override = parseAccrualOverrides(setting?.value).find((row) => row.fy === fy)?.amount ?? null
   const invoices = (invoiceRows ?? []) as Array<{
     id: string
     invoice_no: string | null
     invoice_date: string | null
+    service_from?: string | null
     service_to?: string | null
     amount: unknown
     approved_amount: unknown
@@ -793,7 +821,7 @@ async function loadAccrualSnapshot(fy: string) {
     status?: unknown
     released_amount?: unknown
     amount?: unknown
-    invoices?: { invoice_date?: string | null; service_to?: string | null } | { invoice_date?: string | null; service_to?: string | null }[] | null
+    invoices?: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null } | { invoice_date?: string | null; service_from?: string | null; service_to?: string | null }[] | null
   }>
   const shapedPos = pos.map((p) => ({
     ...p,
@@ -806,6 +834,7 @@ async function loadAccrualSnapshot(fy: string) {
       id: i.id,
       invoice_no: i.invoice_no,
       invoice_date: i.invoice_date,
+      service_from: i.service_from ?? null,
       service_to: i.service_to ?? null,
       status: i.status,
       amount: invoiceAccrualAmount(i),

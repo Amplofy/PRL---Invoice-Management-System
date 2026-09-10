@@ -5,6 +5,9 @@ export type AuthUser = {
   role: string
   email?: string
   fullName?: string
+  permissions: string[]
+  status?: string
+  username?: string
 }
 
 export type AuthedRequest = Request & {

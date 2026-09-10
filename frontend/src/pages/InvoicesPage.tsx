@@ -28,12 +28,14 @@ import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
 import SortableTh from '../components/ui/SortableTh'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { currentFiscalYear, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
+import { ColumnResizeProvider, HeaderTh } from '../components/ui/ResizableTh'
+import { currentFiscalYear, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
 import { useFyLock } from '../lib/FyLockProvider'
 import { useMasterAccess } from '../lib/masterAccess'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { emitCrossModule, useLiveDomain } from '../lib/store'
 import { isUnpaidPriorYearInvoice } from '../lib/accrual'
+import { contractNoOf as relContractNo, vendorNameOf } from '../lib/relations'
 
 interface VendorRef {
   name: string | null
@@ -82,7 +84,9 @@ const INVOICE_COLUMN_DEFS = [
   { key: 'vendor', label: 'Vendor' },
   { key: 'contract', label: 'Contract' },
   { key: 'item', label: 'Item' },
-  { key: 'service', label: 'Service' },
+  { key: 't1', label: 'Type' },
+  { key: 't2', label: 'Service' },
+  { key: 't3', label: 'Detail' },
   { key: 'tanker', label: 'Tanker' },
   { key: 'trips', label: 'Trips' },
   { key: 'cost_element', label: 'Cost Element' },
@@ -93,13 +97,13 @@ const INVOICE_COLUMN_DEFS = [
   { key: 'remarks', label: 'Remarks' },
 ]
 
-const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 'item', 'budget_fy', 'amount', 'status']
+const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 't1', 't2', 't3', 'budget_fy', 'amount', 'status']
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const col = useColumnVisibility(
-    'prl-eoms-cols-invoices',
+    'prl-eoms-cols-invoices-v2',
     INVOICE_COLUMN_DEFS.map((c) => c.key),
     INVOICE_DEFAULT_COLUMNS,
   )
@@ -173,7 +177,7 @@ export default function InvoicesPage() {
 
   const deleteInvoice = async (inv: Invoice) => {
     if (!window.confirm(`Delete invoice ${inv.invoice_no ?? ''}?`)) return
-    if (!(await guardWrite(inv.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(inv)))) return
     try {
       await apiDelete(`/api/invoices/${inv.id}`)
       toast.success('Invoice deleted')
@@ -185,7 +189,7 @@ export default function InvoicesPage() {
   }
 
   const approve = async (inv: Invoice) => {
-    if (!(await guardWrite(inv.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(inv)))) return
     try {
       const res = await apiPost<{ invoice: Invoice; po?: { id: string } | null }>(`/api/invoices/${inv.id}/approve`, {})
       if (res.po) {
@@ -213,7 +217,7 @@ export default function InvoicesPage() {
       toast.error('Rejection reason is required')
       return
     }
-    if (!(await guardWrite(rejecting.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(rejecting)))) return
     try {
       await apiPost(`/api/invoices/${rejecting.id}/reject`, { reason: rejectReason })
       toast.success('Invoice rejected')
@@ -228,7 +232,7 @@ export default function InvoicesPage() {
 
   const generatePo = async () => {
     if (!generatingPo) return
-    if (!isUnpaidPriorYearInvoice(generatingPo) && !(await guardWrite(generatingPo.invoice_date))) return
+    if (!isUnpaidPriorYearInvoice(generatingPo) && !(await guardWrite(invoiceBudgetDate(generatingPo)))) return
     try {
       await apiPost(`/api/invoices/${generatingPo.id}/po`, {})
       setPoReady((m) => ({ ...m, [generatingPo.id]: true }))
@@ -246,14 +250,14 @@ export default function InvoicesPage() {
   }
 
   const vendorOf = (inv: Invoice) => {
-    const rel = inv.contracts
-    const c = Array.isArray(rel) ? rel[0] : rel
-    return c?.vendors?.[0]?.name ?? '—'
+    const named = vendorNameOf(inv)
+    if (named !== '—') return named
+    return vendorNameOf(contracts.find((c) => c.id === inv.contract_id) ?? null)
   }
   const contractNoOf = (inv: Invoice) => {
-    const rel = inv.contracts
-    const c = Array.isArray(rel) ? rel[0] : rel
-    return c?.contract_no ?? '—'
+    const named = relContractNo(inv)
+    if (named !== '—') return named
+    return contracts.find((c) => c.id === inv.contract_id)?.contract_no ?? '—'
   }
 
   const filterColumns = useMemo<FilterColumnDef[]>(
@@ -268,11 +272,14 @@ export default function InvoicesPage() {
       { key: 'item_no', label: 'Item', type: 'text' },
       { key: 'tanker_name', label: 'Tanker', type: 'text' },
       { key: 'cost_element', label: 'Cost Element', type: 'text' },
+      { key: 't1', label: 'Type', type: 'select', options: [...new Set(invoices.map((i) => i.t1).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
+      { key: 't2', label: 'Service', type: 'select', options: [...new Set(invoices.map((i) => i.t2).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
+      { key: 't3', label: 'Detail', type: 'select', options: [...new Set(invoices.map((i) => i.t3).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
       { key: 'budget_fy', label: 'Budget FY', type: 'select', options: fyChoices.map((y) => ({ value: y, label: y })) },
       { key: 'amount', label: 'Amount', type: 'number' },
       { key: 'remarks', label: 'Remarks', type: 'text' },
     ],
-    [contracts, fyChoices],
+    [contracts, fyChoices, invoices],
   )
 
   const invoiceFilterValue = (inv: Invoice, key: string): string | number | null => {
@@ -292,7 +299,7 @@ export default function InvoicesPage() {
     const q = search.toLowerCase()
     const searched = q
       ? invoices.filter((i) =>
-          `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${vendorOf(i)} ${contractNoOf(i)} ${i.item_no ?? ''}`
+          `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${vendorOf(i)} ${contractNoOf(i)} ${i.item_no ?? ''} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''}`
             .toLowerCase()
             .includes(q),
         )
@@ -380,7 +387,7 @@ export default function InvoicesPage() {
     const ids = [...selected]
     if (ids.length === 0) return
     const rows = invoices.filter((i) => selected.has(i.id))
-    if (!(await guardWrite(...rows.map((i) => i.invoice_date)))) return
+    if (!(await guardWrite(...rows.map((i) => invoiceBudgetDate(i))))) return
     setBulkBusy(true)
     try {
       const d = await apiPost<{ approved: number; poCreated: number; failed: string[] }>(
@@ -407,7 +414,7 @@ export default function InvoicesPage() {
       return
     }
     const rows = invoices.filter((i) => selected.has(i.id))
-    if (!(await guardWrite(...rows.map((i) => i.invoice_date)))) return
+    if (!(await guardWrite(...rows.map((i) => invoiceBudgetDate(i))))) return
     setBulkBusy(true)
     try {
       const d = await apiPost<{ rejected: number }>('/api/invoices/bulk-reject', {
@@ -431,6 +438,9 @@ export default function InvoicesPage() {
     { key: 'vendor', label: 'Vendor' },
     { key: 'contract', label: 'Contract' },
     { key: 'status', label: 'Status' },
+    { key: 't1', label: 'Type' },
+    { key: 't2', label: 'Service' },
+    { key: 't3', label: 'Detail' },
     { key: 'item_no', label: 'Item' },
     { key: 'cost_element', label: 'Cost Element' },
     { key: 'budget_fy', label: 'Budget FY' },
@@ -470,6 +480,9 @@ export default function InvoicesPage() {
         ...(col.show('vendor') ? { vendor: vendorOf(i) } : {}),
         ...(col.show('contract') ? { contract: contractNoOf(i) } : {}),
         ...(col.show('item') ? { item_no: i.item_no ?? '' } : {}),
+        ...(col.show('t1') ? { type: i.t1 ?? '' } : {}),
+        ...(col.show('t2') ? { service: i.t2 ?? '' } : {}),
+        ...(col.show('t3') ? { detail: i.t3 ?? '' } : {}),
         ...(col.show('cost_element') ? { cost_element: i.cost_element ?? '' } : {}),
         ...(col.show('amount') ? { amount: i.amount } : {}),
         ...(col.show('status') ? { status: i.status } : {}),
@@ -556,6 +569,7 @@ export default function InvoicesPage() {
             { key: 'invoice_date', label: 'Date' },
             { key: 'invoice_no', label: 'Invoice no' },
             { key: 'vendor', label: 'Vendor' },
+            { key: 't1', label: 'Type' },
             { key: 'amount', label: 'Amount' },
             { key: 'status', label: 'Status' },
             { key: 'budget_fy', label: 'Budget FY' },
@@ -580,11 +594,12 @@ export default function InvoicesPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
+        <ColumnResizeProvider storageKey="prl-eoms-colw-invoices">
         <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
-                <th className="w-9 pr-0">
+                <HeaderTh columnKey="select" className="w-9 pr-0" resizable={false}>
                   <input
                     type="checkbox"
                     className="cursor-pointer accent-[var(--accent)]"
@@ -596,7 +611,7 @@ export default function InvoicesPage() {
                     disabled={pendingSorted.length === 0}
                     title="Select all pending invoices"
                   />
-                </th>
+                </HeaderTh>
                 {col.show('invoice_no') && <SortableTh label="Invoice No" columnKey="invoice_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('serial') && <SortableTh label="Serial" columnKey="serial_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('date') && <SortableTh label="Date" columnKey="invoice_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
@@ -604,16 +619,18 @@ export default function InvoicesPage() {
                 {col.show('vendor') && <SortableTh label="Vendor" columnKey="vendor" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('contract') && <SortableTh label="Contract" columnKey="contract" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('item') && <SortableTh label="Item" columnKey="item_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
-                {col.show('service') && <th>Service</th>}
-                {col.show('tanker') && <th>Tanker</th>}
+                {col.show('t1') && <SortableTh label="Type" columnKey="t1" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('t2') && <SortableTh label="Service" columnKey="t2" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('t3') && <SortableTh label="Detail" columnKey="t3" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('tanker') && <HeaderTh columnKey="tanker">Tanker</HeaderTh>}
                 {col.show('trips') && <SortableTh label="Trips" columnKey="trips" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('cost_element') && <SortableTh label="Cost Element" columnKey="cost_element" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('budget_fy') && <SortableTh label="Budget FY" columnKey="budget_fy" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
-                {col.show('service_period') && <th>Service Period</th>}
+                {col.show('service_period') && <HeaderTh columnKey="service_period">Service Period</HeaderTh>}
                 {col.show('amount') && <SortableTh label="Amount" columnKey="amount" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
-                {col.show('remarks') && <th>Remarks</th>}
-                <th className="text-right">Actions</th>
+                {col.show('remarks') && <HeaderTh columnKey="remarks">Remarks</HeaderTh>}
+                <HeaderTh columnKey="actions" align="right">Actions</HeaderTh>
               </tr>
             </thead>
             <tbody>
@@ -657,11 +674,9 @@ export default function InvoicesPage() {
                   {col.show('vendor') && <td>{vendorOf(inv)}</td>}
                   {col.show('contract') && <td className="text-xs">{contractNoOf(inv)}</td>}
                   {col.show('item') && <td className="text-xs">{inv.item_no ?? '—'}</td>}
-                  {col.show('service') && (
-                    <td className="max-w-[11rem] truncate text-xs" title={[inv.t1, inv.t2, inv.t3].filter(Boolean).join(' → ')}>
-                      {[inv.t1, inv.t2, inv.t3].filter(Boolean).join(' → ') || '—'}
-                    </td>
-                  )}
+                  {col.show('t1') && <td className="text-xs">{inv.t1 ?? '—'}</td>}
+                  {col.show('t2') && <td className="text-xs">{inv.t2 ?? '—'}</td>}
+                  {col.show('t3') && <td className="text-xs">{inv.t3 ?? '—'}</td>}
                   {col.show('tanker') && <td className="text-xs">{inv.tanker_name ?? '—'}</td>}
                   {col.show('trips') && <td className="text-right text-xs">{inv.trips ?? '—'}</td>}
                   {col.show('cost_element') && <td className="text-xs">{inv.cost_element ?? '—'}</td>}
@@ -683,7 +698,7 @@ export default function InvoicesPage() {
                     </td>
                   )}
                   {col.show('remarks') && (
-                    <td className="max-w-[10rem] truncate text-xs text-[var(--text-muted)]" title={inv.remarks ?? undefined}>
+                    <td className="text-xs text-[var(--text-muted)]" title={inv.remarks ?? undefined}>
                       {inv.remarks ?? '—'}
                     </td>
                   )}
@@ -799,6 +814,7 @@ export default function InvoicesPage() {
             }
           />
         )}
+        </ColumnResizeProvider>
       </GlassCard>
 
       {(creating || editing) && (
@@ -937,7 +953,7 @@ function toContractLite(c: ContractFull): ContractLite {
     value: Number(c.value ?? 0),
     start_date: c.start_date,
     end_date: c.end_date,
-    vendor: c.vendors?.[0]?.name ?? null,
+    vendor: vendorNameOf(c, '') || null,
     service: c.service ?? null,
     status: c.status ?? null,
     services: c.services,
@@ -1074,7 +1090,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       focusFirstIssue()
       return
     }
-    if (!masterOn && !(await guardWrite(invoice?.invoice_date, form.invoice_date, form.service_to))) return
+    if (!masterOn && !(await guardWrite(invoiceBudgetDate(invoice ?? {}), invoiceBudgetDate(form)))) return
     setSaving(true)
     try {
       const body = {
@@ -1219,7 +1235,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                       .map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.contract_no}
-                        {c.vendors?.[0]?.name ? ` — ${c.vendors[0].name}` : ''}
+                        {vendorNameOf(c, '') ? ` — ${vendorNameOf(c, '')}` : ''}
                         {contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}
                       </option>
                     ))}

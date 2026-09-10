@@ -1,16 +1,17 @@
 import { useEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabaseEnabled, isDemoMode } from '../lib/supabase'
-import { useAuth, isAdmin } from '../lib/auth'
+import { useAuth, isAdmin, hasAnyPermission } from '../lib/auth'
 import Button from './ui/Button'
 import PRLFlame from './ui/PRLFlame'
 
 interface AuthGuardProps {
   children: ReactNode
   adminOnly?: boolean
+  anyPermission?: string[]
 }
 
-export default function AuthGuard({ children, adminOnly = false }: AuthGuardProps) {
+export default function AuthGuard({ children, adminOnly = false, anyPermission }: AuthGuardProps) {
   const { user, loading } = useAuth()
   const navigate = useNavigate()
 
@@ -18,7 +19,8 @@ export default function AuthGuard({ children, adminOnly = false }: AuthGuardProp
     if (loading) return
     if (!user) navigate('/login', { replace: true })
     else if (adminOnly && !isAdmin(user.role)) navigate('/control-tower', { replace: true })
-  }, [user, loading, adminOnly, navigate])
+    else if (anyPermission && !hasAnyPermission(user, anyPermission)) navigate('/control-tower', { replace: true })
+  }, [user, loading, adminOnly, anyPermission, navigate])
 
   if (!supabaseEnabled && !isDemoMode()) {
     return (

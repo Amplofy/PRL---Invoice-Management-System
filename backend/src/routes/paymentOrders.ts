@@ -16,11 +16,12 @@ import {
   type PoHistoryRow,
 } from '../services/poFinance.js'
 import type { AuthUser } from '../types/index.js'
+import { normalizeInvoiceEmbed } from '../services/embed.js'
 
 export const paymentOrdersRouter = Router()
 
 const PO_SELECT =
-  '*, invoices(id, invoice_no, invoice_date, service_to, amount, approved_amount, status, cost_element, contracts(contract_no, vendors(name)))'
+  '*, invoices(id, invoice_no, invoice_date, service_from, service_to, amount, approved_amount, status, cost_element, t1, t2, t3, contracts(contract_no, vendor_id, vendors(name, email)))'
 
 function actorKey(req: { user?: AuthUser }): string {
   return req.user?.id || req.user?.email || 'anon'
@@ -58,7 +59,7 @@ function shapePo(row: Record<string, unknown>, history: PoHistoryRow[] = []) {
     ...row,
     status,
     amount: generated,
-    invoices: invoice,
+    invoices: normalizeInvoiceEmbed(invoice),
     history,
     approved_amount: invoiceApprovedAmount(invoice),
     released_amount: status === PO_STATUS.Cleared ? poReleasedAmount({ status, released_amount: row.released_amount, amount: generated }) : money(row.released_amount),
@@ -143,7 +144,7 @@ paymentOrdersRouter.post('/payment-orders/:id/approve', authRequired, async (req
       return
     }
     const invoice = firstRel(existing.invoices as NestedInvoice | NestedInvoice[] | null)
-    const locked = writeBlockedForPayment(actorKey(req as { user?: AuthUser }), invoice?.invoice_date, invoice?.status, invoice?.service_to)
+    const locked = writeBlockedForPayment(actorKey(req as { user?: AuthUser }), invoice?.invoice_date, invoice?.status, invoice?.service_from)
     if (locked) {
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return
@@ -262,7 +263,7 @@ paymentOrdersRouter.post('/payment-orders/:id/reject', authRequired, async (req,
       return
     }
     const invoice = firstRel(existing.invoices as NestedInvoice | NestedInvoice[] | null)
-    const locked = writeBlockedForPayment(actorKey(req as { user?: AuthUser }), invoice?.invoice_date, invoice?.status, invoice?.service_to)
+    const locked = writeBlockedForPayment(actorKey(req as { user?: AuthUser }), invoice?.invoice_date, invoice?.status, invoice?.service_from)
     if (locked) {
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return

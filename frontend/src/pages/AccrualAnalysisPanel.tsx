@@ -7,6 +7,7 @@ interface AccrualInvoiceRow {
   id: string
   invoice_no: string | null
   invoice_date: string | null
+  service_from?: string | null
   service_to?: string | null
   status: string | null
   amount: number

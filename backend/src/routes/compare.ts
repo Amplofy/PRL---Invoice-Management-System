@@ -3,6 +3,7 @@ import multer from 'multer'
 import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { parseFileGroups } from '../services/parse.js'
+import { inferColumns } from '../services/parseTable.js'
 import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
 import { getUploadedFile } from './uploads.js'
 import { getSetting } from '../services/settingsService.js'
@@ -34,7 +35,8 @@ compareRouter.post('/parse', authRequired, upload.single('file'), async (req, re
         name: g.name,
         rowCount: g.rows.length,
         rows: g.rows,
-        columns: g.rows.length > 0 ? Object.keys(g.rows[0]!).filter((c) => c !== 'line') : [],
+        columns: inferColumns(g.rows),
+        warnings: g.warnings ?? [],
       })),
     })
   } catch (err) {

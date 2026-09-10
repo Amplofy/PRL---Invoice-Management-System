@@ -1,8 +1,8 @@
 import type { NextFunction, Request, Response } from 'express'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env.js'
-import { getSupabase } from '../config/supabase.js'
 import type { AuthUser } from '../types/index.js'
+import { loadAuthContext } from '../services/usersAdmin.js'
 
 type JwtPayload = {
   sub?: string
@@ -33,20 +33,20 @@ export async function authRequired(
       return
     }
 
-    const supabase = getSupabase()
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id, full_name, role_id, roles(name)')
-      .eq('id', payload.sub)
-      .maybeSingle()
-
-    const role = (profile as { roles?: { name?: string } } | null)?.roles?.name ?? 'viewer'
+    const ctx = await loadAuthContext(payload.sub, payload.email)
+    if (ctx.inactive) {
+      res.status(403).json({ error: 'This account is inactive' })
+      return
+    }
 
     ;(req as Request & { user: AuthUser }).user = {
       id: payload.sub,
-      role,
+      role: ctx.role,
       email: payload.email,
-      fullName: profile?.full_name,
+      fullName: ctx.fullName,
+      permissions: ctx.permissions,
+      status: ctx.status,
+      username: ctx.username,
     }
     next()
   } catch (err) {
@@ -66,5 +66,25 @@ export function requireRole(...roles: string[]) {
       return
     }
     next()
+  }
+}
+
+export function requirePermission(...codes: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const user = (req as Request & { user: AuthUser }).user
+    if (!user) {
+      res.status(401).json({ error: 'Unauthorized' })
+      return
+    }
+    if (user.role === 'admin' || user.role === 'superadmin') {
+      next()
+      return
+    }
+    const perms = user.permissions ?? []
+    if (codes.some((code) => perms.includes(code))) {
+      next()
+      return
+    }
+    res.status(403).json({ error: 'Forbidden: missing permission' })
   }
 }

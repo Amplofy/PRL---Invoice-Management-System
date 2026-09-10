@@ -1,6 +1,7 @@
 import { parseLocalGroups } from './importParser'
-import { currentFiscalYear, fiscalOf, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from './fiscal'
+import { currentFiscalYear, fiscalOf, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from './fiscal'
 import { hashFyPassword, LOCKED_FY_MESSAGE, normalizeUnlockPassword, verifyFyPassword } from './fyCrypto'
+import { vendorNameOf } from './relations'
 import { accrualForFy, invoiceAccrualAmount, isBudgetIncrease, isUnpaidPriorYearInvoice, parseReleasedVia } from './accrual'
 
 const R_ADMIN = '00000000-0000-0000-0000-000000000001'
@@ -36,7 +37,18 @@ const PERMISSION_IDS = [
 
 interface Permission { id: string; name: string; category: string }
 interface Role { id: string; name: string; description: string; color: string; role_permissions: { permission_id: string }[] }
-interface UserRow { id: string; username: string; full_name: string; email: string; role_id: string | null; status: string; roles: { name: string; color: string } | null }
+interface UserRow {
+  id: string
+  username: string
+  full_name: string
+  email: string
+  role_id: string | null
+  status: string
+  auth_id: string | null
+  last_login: string | null
+  can_sign_in?: boolean
+  roles: { name: string; color: string } | null
+}
 interface Vendor { id: string; name: string; email: string | null; created_at: string; updated_at: string }
 interface VendorEmail { id: string; vendor_id: string; email: string; label: string; is_primary: boolean }
 interface ContractService { id: string; contract_id: string; service_matrix_id: string; t1: string; t2: string | null; t3: string | null }
@@ -182,10 +194,10 @@ const roleById = (id: string | null): { name: string; color: string } | null => 
 }
 
 const users: UserRow[] = [
-  { id: '00000000-0000-0000-0000-000000000301', username: 'a.malik', full_name: 'Abdul Moiz', email: 'a.malik@prl.com.pk', role_id: R_ADMIN, status: 'active', roles: roleById(R_ADMIN) },
-  { id: '00000000-0000-0000-0000-000000000302', username: 'approver', full_name: 'S. Khan', email: 's.khan@prl.com.pk', role_id: R_APPROVER, status: 'active', roles: roleById(R_APPROVER) },
-  { id: '00000000-0000-0000-0000-000000000303', username: 'processor', full_name: 'R. Ahmed', email: 'r.ahmed@prl.com.pk', role_id: R_PROCESSOR, status: 'active', roles: roleById(R_PROCESSOR) },
-  { id: '00000000-0000-0000-0000-000000000304', username: 'finance', full_name: 'F. Hussain', email: 'f.hussain@prl.com.pk', role_id: R_FINANCE, status: 'active', roles: roleById(R_FINANCE) },
+  { id: '00000000-0000-0000-0000-000000000301', username: 'a.malik', full_name: 'Abdul Moiz', email: 'a.malik@prl.com.pk', role_id: R_ADMIN, status: 'active', auth_id: 'demo-admin-id', last_login: iso('2026-09-08T09:15:00Z'), can_sign_in: true, roles: roleById(R_ADMIN) },
+  { id: '00000000-0000-0000-0000-000000000302', username: 'approver', full_name: 'S. Khan', email: 's.khan@prl.com.pk', role_id: R_APPROVER, status: 'active', auth_id: '00000000-0000-0000-0000-000000000302', last_login: iso('2026-09-07T14:02:00Z'), can_sign_in: true, roles: roleById(R_APPROVER) },
+  { id: '00000000-0000-0000-0000-000000000303', username: 'processor', full_name: 'R. Ahmed', email: 'r.ahmed@prl.com.pk', role_id: R_PROCESSOR, status: 'active', auth_id: null, last_login: null, can_sign_in: false, roles: roleById(R_PROCESSOR) },
+  { id: '00000000-0000-0000-0000-000000000304', username: 'finance', full_name: 'F. Hussain', email: 'f.hussain@prl.com.pk', role_id: R_FINANCE, status: 'active', auth_id: '00000000-0000-0000-0000-000000000304', last_login: iso('2026-09-08T08:40:00Z'), can_sign_in: true, roles: roleById(R_FINANCE) },
 ]
 
 const vendors: Vendor[] = [
@@ -492,10 +504,10 @@ function assertOpenFy(fy: string): void {
 }
 
 function assertOpenPayment(
-  inv: { invoice_date?: string | null; service_to?: string | null; status?: string | null },
+  inv: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null; status?: string | null },
 ): void {
   if (isUnpaidPriorYearInvoice(inv)) return
-  assertOpenDate(inv.service_to || inv.invoice_date)
+  assertOpenDate(invoiceBudgetDate(inv))
 }
 
 function toMoney(v: unknown): number {
@@ -554,11 +566,15 @@ function shapePaymentOrder(p: PoVersion) {
           id: inv.id,
           invoice_no: inv.invoice_no,
           invoice_date: inv.invoice_date,
+          service_from: inv.service_from,
           service_to: inv.service_to,
           amount: inv.amount,
           approved_amount: inv.approved_amount,
           status: inv.status,
           cost_element: inv.cost_element,
+          t1: inv.t1,
+          t2: inv.t2,
+          t3: inv.t3,
           contracts: { contract_no: rel?.contract_no ?? null, vendors: rel?.vendors ?? null },
         }
       : null,
@@ -599,7 +615,7 @@ function dashboardPayload(fyFilter?: string | null): unknown {
 
   const monthly: Record<string, { month: string; total: number; count: number }> = {}
   for (const i of inv) {
-    const billed = i.service_to || i.invoice_date
+    const billed = invoiceBudgetDate(i)
     if (!billed) continue
     const key = billed.slice(0, 7)
     monthly[key] ??= { month: key, total: 0, count: 0 }
@@ -657,7 +673,7 @@ function summaryPayload(): unknown {
   const byService: Record<string, number> = {}
   for (const i of inv) {
     const rel = embedContract(contractById(i.contract_id))
-    const vendorName = rel?.vendors?.[0]?.name ?? 'Unknown'
+    const vendorName = vendorNameOf(rel, 'Unknown')
     const service = rel?.service ?? 'Unknown'
     byVendor[vendorName] ??= { vendor: vendorName, total: 0, count: 0, approved: 0 }
     byVendor[vendorName].total += i.amount
@@ -875,6 +891,18 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const formType = isForm ? String((body as FormData).get('type') ?? '') : ''
 
+  if (m === 'GET' && path === '/api/me') {
+    return {
+      id: 'demo-admin-id',
+      email: 'admin@prl.com.pk',
+      name: 'PRL Admin (Demo)',
+      role: 'admin',
+      permissions: PERMISSION_IDS,
+      status: 'active',
+      username: 'a.malik',
+    } as T
+  }
+
   if (m === 'GET' && matchPath(path) === '/api/reports/dashboard') {
     const fyQ = new URLSearchParams(path.split('?')[1] ?? '').get('fy')
     return dashboardPayload(fyQ) as T
@@ -904,14 +932,14 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     }
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
-    return { invoice: { ...inv, contracts: contractById(inv.contract_id) } } as T
+    return { invoice: listInvoice(inv) } as T
   }
 
   if (m === 'POST' && parts.length === 2 && parts[0] === 'api' && parts[1] === 'invoices') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.invoice_no) fail('Invoice number is required')
     if (!b.masterAccess) {
-      assertOpenDate((b.service_to as string) || (b.invoice_date as string) || null)
+      assertOpenDate(invoiceBudgetDate(b))
     }
     const inv = makeInvoice({
       serial_no: (b.serial_no as string) ?? null,
@@ -941,7 +969,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'invoices' && parts[3] === 'approve') {
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
-    assertOpenDate(inv.invoice_date)
+    assertOpenDate(invoiceBudgetDate(inv))
     inv.status = 'Approved'
     inv.approved_by = 'admin@prl.com.pk'
     inv.approved_date = nowIso()
@@ -957,7 +985,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!reason) fail('Rejection reason is required')
     const inv = invoices.find((i) => i.id === parts[2])
     if (!inv) fail('Invoice not found')
-    assertOpenDate(inv.invoice_date)
+    assertOpenDate(invoiceBudgetDate(inv))
     inv.status = 'Rejected'
     inv.approved_by = 'admin@prl.com.pk'
     inv.approved_date = nowIso()
@@ -981,9 +1009,9 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!inv) fail('Invoice not found')
     const updates = (body ?? {}) as Record<string, unknown>
     if (!updates.masterAccess) {
-      assertOpenDate(inv.service_to || inv.invoice_date)
+      assertOpenDate(invoiceBudgetDate(inv))
       if ('invoice_date' in updates) assertOpenDate((updates.invoice_date as string) ?? null)
-      if ('service_to' in updates) assertOpenDate((updates.service_to as string) ?? null)
+      if ('service_from' in updates) assertOpenDate((updates.service_from as string) ?? null)
     }
     const fields: (keyof Invoice)[] = ['serial_no', 'processing_date', 'contract_id', 'invoice_no', 'invoice_date', 't1', 't2', 't3', 'tanker_name', 'trips', 'item_no', 'cost_element', 'service_from', 'service_to', 'amount', 'status', 'remarks']
     for (const f of fields) if (f in updates) inv[f] = updates[f] as never
@@ -996,7 +1024,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'invoices') {
     const idx = invoices.findIndex((i) => i.id === parts[2])
     if (idx === -1) fail('Invoice not found')
-    assertOpenDate(invoices[idx].invoice_date)
+    assertOpenDate(invoiceBudgetDate(invoices[idx]))
     if (pos.some((p) => p.invoice_id === parts[2])) fail('Cannot delete invoice with generated payment orders')
     invoices.splice(idx, 1)
     audit('Delete', 'Invoice', parts[2], 'Invoice deleted')
@@ -1149,11 +1177,33 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     return { ok: true } as T
   }
 
-  if (m === 'GET' && path === '/api/users') return { users } as T
+  if (m === 'GET' && path === '/api/users') {
+    return { users: users.map((u) => ({ ...u, can_sign_in: Boolean(u.auth_id) })) } as T
+  }
   if (m === 'POST' && path === '/api/users') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.username) fail('Username is required')
-    const u: UserRow = { id: uid(), username: String(b.username), full_name: (b.full_name as string) ?? '', email: (b.email as string) ?? '', role_id: (b.role_id as string) ?? null, status: (b.status as string) ?? 'active', roles: roleById((b.role_id as string) ?? null) }
+    if (!b.full_name) fail('Full name is required')
+    if (!b.email) fail('Email is required')
+    if (!b.role_id) fail('Role is required')
+    if (!b.password || String(b.password).length < 8) fail('Password must be at least 8 characters')
+    const username = String(b.username).trim().toLowerCase()
+    const email = String(b.email).trim().toLowerCase()
+    if (users.some((x) => x.username === username)) fail('Username already exists')
+    if (users.some((x) => x.email === email)) fail('Email already exists')
+    const id = uid()
+    const u: UserRow = {
+      id,
+      username,
+      full_name: String(b.full_name).trim(),
+      email,
+      role_id: String(b.role_id),
+      status: (b.status as string) ?? 'active',
+      auth_id: id,
+      last_login: null,
+      can_sign_in: true,
+      roles: roleById(String(b.role_id)),
+    }
     users.push(u)
     return { user: u } as T
   }
@@ -1161,20 +1211,76 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const u = users.find((x) => x.id === parts[2])
     if (!u) fail('User not found')
     const b = (body ?? {}) as Record<string, unknown>
-    const fields: (keyof UserRow)[] = ['username', 'full_name', 'email', 'role_id', 'status']
-    for (const f of fields) if (f in b) u[f] = b[f] as never
+    if (b.username !== undefined) u.username = String(b.username).trim().toLowerCase()
+    if (b.full_name !== undefined) u.full_name = String(b.full_name).trim()
+    if (b.email !== undefined) u.email = String(b.email).trim().toLowerCase()
+    if (b.role_id !== undefined) u.role_id = (b.role_id as string) || null
+    if (b.status !== undefined) {
+      if (u.auth_id === 'demo-admin-id' && b.status === 'inactive') fail('You cannot deactivate your own account')
+      u.status = String(b.status)
+    }
+    if (b.password) {
+      if (String(b.password).length < 8) fail('Password must be at least 8 characters')
+      if (!u.auth_id) u.auth_id = u.id
+      u.can_sign_in = true
+    }
     u.roles = roleById(u.role_id)
+    u.can_sign_in = Boolean(u.auth_id)
     return { user: u } as T
   }
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'users') {
     const idx = users.findIndex((x) => x.id === parts[2])
     if (idx === -1) fail('User not found')
+    if (users[idx].auth_id === 'demo-admin-id') fail('You cannot delete your own account')
     users.splice(idx, 1)
     return { ok: true } as T
   }
 
   if (m === 'GET' && path === '/api/roles') return { roles } as T
   if (m === 'GET' && path === '/api/permissions') return { permissions } as T
+  if (m === 'POST' && path === '/api/roles') {
+    const b = (body ?? {}) as Record<string, unknown>
+    const name = String(b.name ?? '').trim().toLowerCase()
+    if (name.length < 2) fail('Role name must be at least 2 characters')
+    if (roles.some((r) => r.name === name)) fail('Role name already exists')
+    const permissionIds = Array.isArray(b.permission_ids) ? (b.permission_ids as string[]) : []
+    const role: Role = {
+      id: uid(),
+      name,
+      description: String(b.description ?? ''),
+      color: String(b.color ?? '#60a5fa'),
+      role_permissions: permissionIds.map((permission_id) => ({ permission_id })),
+    }
+    roles.push(role)
+    return { role } as T
+  }
+  if (m === 'PUT' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'roles') {
+    const role = roles.find((x) => x.id === parts[2])
+    if (!role) fail('Role not found')
+    const b = (body ?? {}) as Record<string, unknown>
+    const system = role.id.startsWith('00000000-0000-0000-0000-00000000000')
+    if (b.name !== undefined) {
+      const nextName = String(b.name).trim().toLowerCase()
+      if (system && nextName !== role.name) fail('System role names cannot be changed')
+      role.name = nextName
+    }
+    if (b.description !== undefined) role.description = String(b.description ?? '')
+    if (b.color !== undefined) role.color = String(b.color ?? role.color)
+    if (Array.isArray(b.permission_ids)) {
+      const ids = role.id === R_ADMIN ? PERMISSION_IDS : (b.permission_ids as string[])
+      role.role_permissions = ids.map((permission_id) => ({ permission_id }))
+    }
+    return { role } as T
+  }
+  if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'roles') {
+    const idx = roles.findIndex((x) => x.id === parts[2])
+    if (idx === -1) fail('Role not found')
+    const role = roles[idx]
+    if (role.id.startsWith('00000000-0000-0000-0000-00000000000')) fail('System roles cannot be deleted')
+    if (users.some((u) => u.role_id === role.id)) fail('Cannot delete a role that is still assigned to users')
+    roles.splice(idx, 1)
+    return { ok: true } as T
+  }
   if (m === 'GET' && path === '/api/audit-log') return { auditLog: auditLog.slice(0, 200) } as T
 
   if (m === 'GET' && matchPath(path) === '/api/fy-lock') {
@@ -1279,6 +1385,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
           id: i.id,
           invoice_no: i.invoice_no,
           invoice_date: i.invoice_date,
+          service_from: i.service_from,
           service_to: i.service_to,
           status: i.status,
           amount: invoiceAccrualAmount(i),
@@ -1314,6 +1421,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
         id: i.id,
         invoice_no: i.invoice_no,
         invoice_date: i.invoice_date,
+        service_from: i.service_from,
         service_to: i.service_to,
         status: i.status,
         amount: invoiceAccrualAmount(i),
@@ -1327,7 +1435,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!Array.isArray(ids) || !ids.length) fail('invoiceIds array is required')
     for (const id of ids) {
       const inv = invoices.find((i) => i.id === id)
-      if (inv) assertOpenDate(inv.invoice_date)
+      if (inv) assertOpenDate(invoiceBudgetDate(inv))
     }
     audit('SendFollowups', 'Email', null, `Sent ${ids.length} follow-up email(s)`)
     return { sent: ids, failed: [] } as T
@@ -1469,7 +1577,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     for (const id of ids) {
       const inv = invoices.find((x) => x.id === id)
       if (!inv) continue
-      assertOpenDate(inv.invoice_date)
+      assertOpenDate(invoiceBudgetDate(inv))
       inv.status = 'Approved'
       approved++
       poCreated++
@@ -1485,7 +1593,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     for (const id of (b.ids ?? []).map(String)) {
       const inv = invoices.find((x) => x.id === id)
       if (!inv) continue
-      assertOpenDate(inv.invoice_date)
+      assertOpenDate(invoiceBudgetDate(inv))
       inv.status = 'Rejected'
       inv.remarks = reason
       rejected++

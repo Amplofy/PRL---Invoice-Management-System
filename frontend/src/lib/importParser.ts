@@ -16,6 +16,7 @@ export interface LocalParsedGroup {
   rowCount: number
   rows: Record<string, unknown>[]
   columns: string[]
+  warnings?: string[]
 }
 
 export interface SourceColumn {
@@ -159,10 +160,10 @@ export async function parseLocalGroups(file: File): Promise<{
         rowCount: rows.length,
         rows,
         columns: rows.length > 0 ? Object.keys(rows[0]!) : [],
+        warnings: rows.length === 0 ? ['This sheet is empty.'] : undefined,
       }
     })
-    .filter((g) => g.rows.length > 0)
-  if (groups.length === 0) throw new Error('No readable rows found in the file')
+  if (groups.every((g) => g.rows.length === 0)) throw new Error('No readable rows found in the file')
   return {
     fileName: name,
     format: lower.endsWith('.csv') ? 'csv' : 'xlsx',

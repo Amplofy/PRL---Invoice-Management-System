@@ -22,6 +22,7 @@ export function isBudgetIncrease(previous: number | undefined, next: number): bo
 
 export interface AccrualInvoice {
   invoice_date?: string | null
+  service_from?: string | null
   service_to?: string | null
   status?: string | null
   amount?: unknown
@@ -32,7 +33,7 @@ export interface AccrualPo {
   status?: unknown
   released_amount?: unknown
   amount?: unknown
-  invoices?: { invoice_date?: string | null; service_to?: string | null } | null
+  invoices?: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null } | null
 }
 
 export interface AccrualSnapshot {

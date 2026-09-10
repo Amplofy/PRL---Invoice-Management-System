@@ -44,6 +44,7 @@ export type NestedInvoice = {
   id?: string
   invoice_no?: string | null
   invoice_date?: string | null
+  service_from?: string | null
   service_to?: string | null
   amount?: unknown
   approved_amount?: unknown

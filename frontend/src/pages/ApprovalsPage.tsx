@@ -16,11 +16,14 @@ import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
 import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { useFyLock } from '../lib/FyLockProvider'
+import { invoiceBudgetDate } from '../lib/fiscal'
+import { contractNoOf, vendorNameOf } from '../lib/relations'
 
 interface ApprovalInvoice {
   id: string
   invoice_no: string | null
   invoice_date: string | null
+  service_from?: string | null
   amount: number
   remarks: string | null
   t1: string | null
@@ -58,12 +61,10 @@ export default function ApprovalsPage() {
   }, [load])
 
   const vendorOf = (i: ApprovalInvoice) => {
-    const c = Array.isArray(i.contracts) ? i.contracts[0] : i.contracts
-    return c?.vendors?.[0]?.name ?? '—'
+    return vendorNameOf(i)
   }
   const contractOf = (i: ApprovalInvoice) => {
-    const c = Array.isArray(i.contracts) ? i.contracts[0] : i.contracts
-    return c?.contract_no ?? '—'
+    return contractNoOf(i)
   }
   const serviceOf = (i: ApprovalInvoice) => {
     const c = Array.isArray(i.contracts) ? i.contracts[0] : i.contracts
@@ -71,7 +72,7 @@ export default function ApprovalsPage() {
   }
 
   const approve = async (inv: ApprovalInvoice) => {
-    if (!(await guardWrite(inv.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(inv)))) return
     try {
       const res = await apiPost<{ invoice: ApprovalInvoice; po?: { id: string } | null }>(
         `/api/invoices/${inv.id}/approve`,
@@ -97,7 +98,7 @@ export default function ApprovalsPage() {
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
     return pending.filter((i) =>
-      `${i.invoice_no ?? ''} ${vendorOf(i)} ${contractOf(i)} ${serviceOf(i)}`.toLowerCase().includes(q),
+      `${i.invoice_no ?? ''} ${vendorOf(i)} ${contractOf(i)} ${serviceOf(i)} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''}`.toLowerCase().includes(q),
     )
   }, [pending, search])
 
@@ -114,6 +115,8 @@ export default function ApprovalsPage() {
               ? Number(row.amount ?? 0)
               : key === 'vendor'
                 ? String(vendorOf(row))
+                : key === 't1'
+                  ? String(row.t1 ?? '')
                 : String(row.invoice_no ?? ''),
       ),
     [filtered, sortBy, sortDir],
@@ -128,6 +131,9 @@ export default function ApprovalsPage() {
         vendor: vendorOf(i),
         contract: contractOf(i),
         service: serviceOf(i),
+        type: i.t1 ?? '',
+        service_type: i.t2 ?? '',
+        detail: i.t3 ?? '',
         amount: i.amount,
         remarks: i.remarks ?? '',
       })),
@@ -139,7 +145,7 @@ export default function ApprovalsPage() {
       toast.error('A rejection reason is required')
       return
     }
-    if (!(await guardWrite(rejecting.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(rejecting)))) return
     try {
       await apiPost(`/api/invoices/${rejecting.id}/reject`, { reason: reason.trim() })
       toast.success('Invoice rejected')
@@ -174,6 +180,7 @@ export default function ApprovalsPage() {
               { key: 'amount', label: 'Amount' },
               { key: 'vendor', label: 'Vendor' },
               { key: 'invoice_no', label: 'Invoice #' },
+              { key: 't1', label: 'Type' },
             ],
             value: sortBy,
             direction: sortDir,
@@ -203,8 +210,10 @@ export default function ApprovalsPage() {
                   <span>Date: <b className="text-[var(--text)]">{formatDate(inv.invoice_date)}</b></span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--text-muted)]">
-                  {serviceOf(inv) !== '—' && <span>Service: {serviceOf(inv)}</span>}
-                  {inv.t1 && <span>T1: {inv.t1}{inv.t2 ? ` → ${inv.t2}` : ''}{inv.t3 ? ` → ${inv.t3}` : ''}</span>}
+                  {serviceOf(inv) !== '—' && !inv.t2 && <span>Service: {serviceOf(inv)}</span>}
+                  {inv.t1 && <span>Type: <b className="text-[var(--text)]">{inv.t1}</b></span>}
+                  {inv.t2 && <span>Service: <b className="text-[var(--text)]">{inv.t2}</b></span>}
+                  {inv.t3 && <span>Detail: <b className="text-[var(--text)]">{inv.t3}</b></span>}
                   {inv.tanker_name && <span>Tanker: {inv.tanker_name}</span>}
                 </div>
                 {inv.remarks && <div className="mt-2 text-sm text-[var(--text-dim)]">Note: {inv.remarks}</div>}

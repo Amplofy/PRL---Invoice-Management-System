@@ -1,18 +1,32 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase, isDemoMode, exitDemo } from './supabase'
+import { apiGet, ApiError } from './api'
 
 export interface AuthUser {
   id: string
   email: string
   name: string | null
   role: string
+  permissions: string[]
+  username?: string | null
+  status?: string
+}
+
+type MeResponse = {
+  id: string
+  email: string
+  name: string | null
+  role: string
+  permissions: string[]
+  username?: string | null
+  status?: string
 }
 
 interface AuthContextValue {
   user: AuthUser | null
   loading: boolean
   demo: boolean
-  refresh: () => Promise<void>
+  refresh: () => Promise<AuthUser | null>
   signOut: () => Promise<void>
 }
 
@@ -26,54 +40,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       if (isDemoMode()) {
-        setUser({
-          id: 'demo-admin-id',
-          email: 'admin@prl.com.pk',
-          name: 'PRL Admin (Demo)',
-          role: 'admin',
-        })
         setDemo(true)
-        return
+        const me = await apiGet<MeResponse>('/api/me')
+        const next: AuthUser = {
+          id: me.id,
+          email: me.email,
+          name: me.name,
+          role: me.role,
+          permissions: me.permissions ?? [],
+          username: me.username,
+          status: me.status,
+        }
+        setUser(next)
+        return next
       }
       setDemo(false)
       if (!supabase) {
         setUser(null)
-        return
+        return null
       }
       const { data } = await supabase.auth.getSession()
       const session = data.session
       if (!session) {
         setUser(null)
-        return
+        return null
       }
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id, email, full_name, roles(name)')
-        .eq('id', session.user.id)
-        .single()
-      const p = profile as unknown as {
-        id: string
-        email: string
-        full_name: string | null
-        roles: { name: string } | null
-      } | null
-      setUser({
-        id: session.user.id,
-        email: p?.email ?? session.user.email ?? '',
-        name: p?.full_name ?? null,
-        role: p?.roles?.name ?? 'viewer',
-      })
-    } catch {
+      const me = await apiGet<MeResponse>('/api/me')
+      const next: AuthUser = {
+        id: me.id,
+        email: me.email || session.user.email || '',
+        name: me.name,
+        role: me.role,
+        permissions: me.permissions ?? [],
+        username: me.username,
+        status: me.status,
+      }
+      setUser(next)
+      return next
+    } catch (err) {
       setUser(null)
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        await supabase?.auth.signOut()
+      }
+      throw err
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    refresh()
+    refresh().catch(() => undefined)
     const { data: sub } = supabase?.auth.onAuthStateChange(() => {
-      refresh()
+      refresh().catch(() => undefined)
     }) ?? { data: { subscription: { unsubscribe: () => {} } } }
     return () => sub.subscription.unsubscribe()
   }, [refresh])
@@ -105,4 +123,14 @@ export function isAdmin(role: string | null | undefined): boolean {
 
 export function isFinanceOfficial(role: string | null | undefined): boolean {
   return isAdmin(role) || role === 'finance'
+}
+
+export function hasPermission(user: AuthUser | null | undefined, code: string): boolean {
+  if (!user) return false
+  if (isAdmin(user.role)) return true
+  return (user.permissions ?? []).includes(code)
+}
+
+export function hasAnyPermission(user: AuthUser | null | undefined, codes: string[]): boolean {
+  return codes.some((code) => hasPermission(user, code))
 }
