@@ -422,6 +422,7 @@ function matchRows(
       .map((r, i) => ({ num: parseNumberLoose(r[cc]), i }))
       .filter((x): x is { num: number; i: number } => x.num !== null)
       .sort((a, b) => a.num - b.num)
+    const used = new Set<number>()
     baseRows.forEach((br, bi) => {
       const bn = parseNumberLoose(br[bc])
       const key = bn === null ? keyOf(br, [bc]) : String(bn)
@@ -429,19 +430,26 @@ function matchRows(
         matches.push({ baseIdx: bi, compareIdx: null, key, score: 0 })
         return
       }
-      // binary search nearest
+      // binary search nearest unused compare row
       let lo = 0
       let hi = cNums.length - 1
       let best: { num: number; i: number } | null = null
       while (lo <= hi) {
         const mid = (lo + hi) >> 1
         const cur = cNums[mid]!
-        if (!best || Math.abs(cur.num - bn) < Math.abs(best.num - bn)) best = cur
+        if (!used.has(cur.i) && (!best || Math.abs(cur.num - bn) < Math.abs(best.num - bn))) best = cur
         if (cur.num < bn) lo = mid + 1
         else hi = mid - 1
       }
-      const ok = best !== null && Math.abs(best.num - bn) <= Math.max(Math.abs(bn) * 0.01, 1e-9)
-      matches.push({ baseIdx: bi, compareIdx: ok ? best!.i : null, key, score: ok ? 1 : 0 })
+      if (!best) {
+        for (const cur of cNums) {
+          if (used.has(cur.i)) continue
+          if (!best || Math.abs(cur.num - bn) < Math.abs(best.num - bn)) best = cur
+        }
+      }
+      const ok = best !== null && !used.has(best.i) && Math.abs(best.num - bn) <= Math.max(Math.abs(bn) * 0.01, 1e-9)
+      if (ok && best) used.add(best.i)
+      matches.push({ baseIdx: bi, compareIdx: ok && best ? best.i : null, key, score: ok ? 1 : 0 })
     })
     return matches
   }
@@ -450,19 +458,23 @@ function matchRows(
     const bc = candidate.baseCols[0]
     const cc = candidate.compareCols[0]
     const cKeys = compareRows.map((r, i) => ({ k: fuzzKey(r[cc]), i }))
+    const used = new Set<number>()
     baseRows.forEach((br, bi) => {
       const raw = keyOf(br, [bc])
       const bk = fuzzKey(br[bc])
       let bestIdx: number | null = null
       let bestScore = 0
       for (const { k, i } of cKeys) {
+        if (used.has(i)) continue
         const s = similarity(bk, k)
         if (s > bestScore) {
           bestScore = s
           bestIdx = i
         }
       }
-      matches.push({ baseIdx: bi, compareIdx: bestScore >= FUZZ_THRESHOLD ? bestIdx : null, key: raw, score: bestScore })
+      const hit = bestScore >= FUZZ_THRESHOLD ? bestIdx : null
+      if (hit !== null) used.add(hit)
+      matches.push({ baseIdx: bi, compareIdx: hit, key: raw, score: bestScore })
     })
     return matches
   }
@@ -479,7 +491,8 @@ function matchRows(
   baseRows.forEach((br, bi) => {
     const k = candidate.baseCols.map((c) => String(br[c] ?? '').trim().toLowerCase()).join('¦')
     const hit = index.get(k)
-    matches.push({ baseIdx: bi, compareIdx: hit?.[0] ?? null, key: keyOf(br, candidate.baseCols), score: hit ? 1 : 0 })
+    const idx = hit?.shift()
+    matches.push({ baseIdx: bi, compareIdx: idx ?? null, key: keyOf(br, candidate.baseCols), score: idx !== undefined ? 1 : 0 })
   })
   return matches
 }

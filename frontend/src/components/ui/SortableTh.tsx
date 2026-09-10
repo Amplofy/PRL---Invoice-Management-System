@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import type { SortDirection } from '../../lib/export'
+import { HeaderTh } from './ResizableTh'
 
 interface SortableThProps {
   label: string
@@ -29,7 +30,7 @@ export default function SortableTh({
   }
 
   return (
-    <th className={`${align === 'right' ? 'text-right' : ''} ${className}`.trim()}>
+    <HeaderTh columnKey={columnKey} align={align} className={className}>
       <button
         type="button"
         className={`th-sort ${active ? 'is-active' : ''} ${align === 'right' ? 'ml-auto' : ''}`}
@@ -42,6 +43,6 @@ export default function SortableTh({
           {active && direction === 'desc' ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
         </span>
       </button>
-    </th>
+    </HeaderTh>
   )
 }

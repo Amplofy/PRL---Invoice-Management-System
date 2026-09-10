@@ -21,6 +21,7 @@ import {
   poStatusTone,
   type PoHistoryEvent,
 } from '../lib/paymentOrder'
+import { contractNoOf, vendorNameOf } from '../lib/relations'
 
 interface HistoryOrder {
   id: string
@@ -75,8 +76,8 @@ export default function PoHistoryPage() {
     void load()
   }, [liveVersion, load])
 
-  const vendorOf = (o: HistoryOrder) => o.invoices?.contracts?.vendors?.[0]?.name ?? '—'
-  const contractOf = (o: HistoryOrder) => o.invoices?.contracts?.contract_no ?? '—'
+  const vendorOf = (o: HistoryOrder) => vendorNameOf(o)
+  const contractOf = (o: HistoryOrder) => contractNoOf(o)
 
   const events = useMemo(() => {
     const rows: Array<{ order: HistoryOrder; event: PoHistoryEvent; at: string }> = []

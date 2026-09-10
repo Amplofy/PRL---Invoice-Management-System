@@ -22,7 +22,7 @@ export function parseReleasedVia(raw: unknown): ReleasedVia | null {
 }
 
 export function isUnpaidPriorYearInvoice(
-  invoice: { invoice_date?: string | null; service_to?: string | null; status?: string | null },
+  invoice: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null; status?: string | null },
   asOf = new Date(),
 ): boolean {
   const fy = invoiceBudgetFy(invoice)
@@ -38,6 +38,7 @@ export function invoiceAccrualAmount(inv: { amount?: unknown; approved_amount?: 
 export interface AccrualInvoice {
   id?: string
   invoice_date?: string | null
+  service_from?: string | null
   service_to?: string | null
   status?: string | null
   amount?: unknown
@@ -48,7 +49,7 @@ export interface AccrualPo {
   status?: unknown
   released_amount?: unknown
   amount?: unknown
-  invoices?: { invoice_date?: string | null; service_to?: string | null } | null
+  invoices?: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null } | null
 }
 
 export interface AccrualSnapshot {

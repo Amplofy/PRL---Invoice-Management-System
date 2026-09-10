@@ -12,6 +12,7 @@ import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import { useLiveDomain } from '../lib/store'
 import type { BadgeTone } from '../components/ui/StatusBadge'
+import { contractNoOf, vendorNameOf } from '../lib/relations'
 
 interface ServiceMatrixRow {
   id: string
@@ -103,7 +104,7 @@ export default function WorkflowPage() {
       if (t2 && i.t2 !== t2) return false
       if (t3 && i.t3 !== t3) return false
       if (q) {
-        const hay = `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${i.contracts?.contract_no ?? ''} ${i.contracts?.vendors?.[0]?.name ?? ''}`.toLowerCase()
+        const hay = `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${contractNoOf(i)} ${vendorNameOf(i)} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true
@@ -128,32 +129,32 @@ export default function WorkflowPage() {
       <GlassCard className="p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label>
-            <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">T1</span>
+            <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Type</span>
             <select className="input" value={t1} onChange={(e) => { setT1(e.target.value); setT2(''); setT3('') }}>
-              <option value="">All T1</option>
+              <option value="">All types</option>
               {t1Options.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
           </label>
           <label>
-            <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">T2</span>
+            <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Service</span>
             <select
               className="input"
               value={t2}
               onChange={(e) => { setT2(e.target.value); setT3('') }}
               disabled={!t1}
             >
-              <option value="">All T2</option>
+              <option value="">All services</option>
               {t2Options.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
           </label>
           <label>
-            <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">T3</span>
+            <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Detail</span>
             <select className="input" value={t3} onChange={(e) => setT3(e.target.value)} disabled={!t1}>
-              <option value="">All T3</option>
+              <option value="">All details</option>
               {t3Options.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
@@ -203,14 +204,18 @@ export default function WorkflowPage() {
                     </div>
                     <div className="mt-1 text-sm font-bold">{i.invoice_no ?? '—'}</div>
                     <div className="mt-0.5 text-xs text-[var(--text-dim)]">
-                      {i.contracts?.vendors?.[0]?.name ?? '—'}
+                      {vendorNameOf(i)}
                     </div>
                     <div className="mt-1.5 flex items-center justify-between">
-                      <span className="badge badge-info text-[0.6rem]!">{i.contracts?.contract_no ?? '—'}</span>
+                      <span className="badge badge-info text-[0.6rem]!">{contractNoOf(i)}</span>
                       <span className="text-sm font-extrabold">Rs {formatMoney(i.amount)}</span>
                     </div>
                     <div className="mt-1 flex items-center justify-between text-[0.65rem] text-[var(--text-muted)]">
-                      <span className="truncate">{[i.t1, i.t2, i.t3].filter(Boolean).join(' → ') || '—'}</span>
+                      <div className="min-w-0 space-y-0.5">
+                        <div>Type: {i.t1 || '—'}</div>
+                        <div>Service: {i.t2 || '—'}</div>
+                        {i.t3 ? <div>Detail: {i.t3}</div> : null}
+                      </div>
                       <ArrowRight size={11} className="shrink-0" />
                     </div>
                   </Link>
@@ -230,7 +235,7 @@ export default function WorkflowPage() {
 
       {!loading && filtered.length === 0 && (
         <GlassCard>
-          <EmptyState title="No invoices match" description="Adjust the T1/T2/T3 cascade or clear the search." />
+          <EmptyState title="No invoices match" description="Adjust Type, Service, or Detail filters, or clear the search." />
         </GlassCard>
       )}
     </div>

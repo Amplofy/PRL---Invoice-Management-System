@@ -24,6 +24,8 @@ import { groupRows } from '../lib/grouping'
 import { useFyLock } from '../lib/FyLockProvider'
 import { isClosedDate } from '../lib/fiscal'
 import SortableTh from '../components/ui/SortableTh'
+import { ColumnResizeProvider, HeaderTh } from '../components/ui/ResizableTh'
+import { vendorNameOf } from '../lib/relations'
 import { t1Options, t2Options, t3Options, type ServiceMatrixRow } from '../lib/invoice'
 
 interface Vendor {
@@ -47,7 +49,9 @@ interface Contract {
 const CONTRACT_COLUMN_DEFS = [
   { key: 'contract_no', label: 'Contract No' },
   { key: 'vendor', label: 'Vendor' },
-  { key: 'service', label: 'Service' },
+  { key: 't1', label: 'Type' },
+  { key: 't2', label: 'Service' },
+  { key: 't3', label: 'Detail' },
   { key: 'start_date', label: 'Start' },
   { key: 'end_date', label: 'End' },
   { key: 'period_days', label: 'Period (days)' },
@@ -55,7 +59,7 @@ const CONTRACT_COLUMN_DEFS = [
   { key: 'status', label: 'Status' },
 ]
 
-const CONTRACT_DEFAULT_COLUMNS = ['contract_no', 'vendor', 'service', 'start_date', 'end_date', 'value', 'status']
+const CONTRACT_DEFAULT_COLUMNS = ['contract_no', 'vendor', 't1', 't2', 't3', 'start_date', 'end_date', 'value', 'status']
 
 function contractPeriodDays(c: Contract): number | null {
   if (!c.start_date || !c.end_date) return null
@@ -81,10 +85,20 @@ function contractServicesLabel(c: Contract): string {
   return c.service ?? ''
 }
 
+function uniqueServiceField(c: Contract, field: 't1' | 't2' | 't3'): string {
+  if (c.services?.length) {
+    return [...new Set(c.services.map((s) => String(s[field] ?? '').trim()).filter(Boolean))].join('; ')
+  }
+  if (field === 't2') return c.service ?? ''
+  return ''
+}
+
 const CONTRACT_FILTER_COLUMNS: FilterColumnDef[] = [
   { key: 'contract_no', label: 'Contract No', type: 'text' },
   { key: 'vendor', label: 'Vendor', type: 'text' },
-  { key: 'service', label: 'Service', type: 'text' },
+  { key: 't1', label: 'Type', type: 'text' },
+  { key: 't2', label: 'Service', type: 'text' },
+  { key: 't3', label: 'Detail', type: 'text' },
   { key: 'status', label: 'Status', type: 'select' },
   { key: 'value', label: 'Value', type: 'number' },
   { key: 'start_date', label: 'Start Date', type: 'date' },
@@ -108,7 +122,7 @@ export default function ContractsPage() {
   const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [groupKey, setGroupKey] = useState<string | null>(null)
   const col = useColumnVisibility(
-    'prl-eoms-cols-contracts',
+    'prl-eoms-cols-contracts-v2',
     CONTRACT_COLUMN_DEFS.map((c) => c.key),
     CONTRACT_DEFAULT_COLUMNS,
   )
@@ -146,7 +160,7 @@ export default function ContractsPage() {
     navigate(location.pathname, { replace: true, state: {} })
   }, [location.state, location.pathname, navigate, admin])
 
-  const vendorName = (c: Contract) => c.vendors?.[0]?.name ?? '—'
+  const vendorName = (c: Contract) => vendorNameOf(c)
 
   const daysLeft = (c: Contract): number | null => {
     if (!c.end_date) return null
@@ -203,7 +217,9 @@ export default function ContractsPage() {
       : contracts
     return applyFilters(searched, filters, filterColumns, (c, key) => {
       if (key === 'vendor') return vendorName(c)
-      if (key === 'service') return contractServicesLabel(c)
+      if (key === 't1') return uniqueServiceField(c, 't1')
+      if (key === 't2') return uniqueServiceField(c, 't2')
+      if (key === 't3') return uniqueServiceField(c, 't3')
       return (c as unknown as Record<string, string | number | null>)[key] ?? null
     }, filterLogic)
   }, [contracts, search, filters, filterColumns, filterLogic])
@@ -213,13 +229,17 @@ export default function ContractsPage() {
 
   const GROUP_BY_CONTRACT = [
     { key: 'vendor', label: 'Vendor' },
-    { key: 'service', label: 'Service' },
+    { key: 't1', label: 'Type' },
+    { key: 't2', label: 'Service' },
+    { key: 't3', label: 'Detail' },
     { key: 'status', label: 'Status' },
   ]
 
   const contractGroupValue = (c: Contract, key: string): string | number | null => {
     if (key === 'vendor') return vendorName(c)
-    if (key === 'service') return contractServicesLabel(c)
+    if (key === 't1') return uniqueServiceField(c, 't1')
+    if (key === 't2') return uniqueServiceField(c, 't2')
+    if (key === 't3') return uniqueServiceField(c, 't3')
     return (c as unknown as Record<string, string | number | null>)[key] ?? null
   }
 
@@ -240,6 +260,12 @@ export default function ContractsPage() {
                 ? String(vendorName(row))
                   : key === 'period_days'
                     ? Number(contractPeriodDays(row) ?? 0)
+                    : key === 't1'
+                      ? uniqueServiceField(row, 't1')
+                      : key === 't2'
+                        ? uniqueServiceField(row, 't2')
+                        : key === 't3'
+                          ? uniqueServiceField(row, 't3')
                     : String((row as unknown as Record<string, unknown>)[key] ?? ''),
       ),
     [filtered, sortBy, sortDir],
@@ -259,7 +285,9 @@ export default function ContractsPage() {
       sorted.map((c) => ({
         ...(col.show('contract_no') ? { contract_no: c.contract_no } : {}),
         ...(col.show('vendor') ? { vendor: vendorName(c) } : {}),
-                ...(col.show('service') ? { service: contractServicesLabel(c) } : {}),
+        ...(col.show('t1') ? { type: uniqueServiceField(c, 't1') } : {}),
+        ...(col.show('t2') ? { service: uniqueServiceField(c, 't2') } : {}),
+        ...(col.show('t3') ? { detail: uniqueServiceField(c, 't3') } : {}),
         ...(col.show('start_date') ? { start_date: c.start_date ?? '' } : {}),
         ...(col.show('end_date') ? { end_date: c.end_date ?? '' } : {}),
         ...(col.show('period_days') ? { period_days: contractPeriodDays(c) ?? '' } : {}),
@@ -346,19 +374,22 @@ export default function ContractsPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
+        <ColumnResizeProvider storageKey="prl-eoms-colw-contracts">
         <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
                 {col.show('contract_no') && <SortableTh label="Contract No" columnKey="contract_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('vendor') && <SortableTh label="Vendor" columnKey="vendor" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
-                {col.show('service') && <SortableTh label="Service" columnKey="service" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('t1') && <SortableTh label="Type" columnKey="t1" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('t2') && <SortableTh label="Service" columnKey="t2" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('t3') && <SortableTh label="Detail" columnKey="t3" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('start_date') && <SortableTh label="Start" columnKey="start_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
                 {col.show('end_date') && <SortableTh label="End" columnKey="end_date" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
                 {col.show('period_days') && <SortableTh label="Period (days)" columnKey="period_days" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('value') && <SortableTh label="Value" columnKey="value" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
-                {admin && <th className="text-right">Actions</th>}
+                {admin && <HeaderTh columnKey="actions" className="text-right" align="right" resizable={false}>Actions</HeaderTh>}
               </tr>
             </thead>
             <tbody>
@@ -376,7 +407,9 @@ export default function ContractsPage() {
                       </td>
                     )}
                     {col.show('vendor') && <td>{vendorName(c)}</td>}
-                    {col.show('service') && <td className="text-xs">{contractServicesLabel(c) || '—'}</td>}
+                    {col.show('t1') && <td className="text-xs">{uniqueServiceField(c, 't1') || '—'}</td>}
+                    {col.show('t2') && <td className="text-xs">{uniqueServiceField(c, 't2') || '—'}</td>}
+                    {col.show('t3') && <td className="text-xs">{uniqueServiceField(c, 't3') || '—'}</td>}
                     {col.show('start_date') && <td>{formatDate(c.start_date)}</td>}
                     {col.show('end_date') && <td>{formatDate(c.end_date)}</td>}
                     {col.show('period_days') && (
@@ -456,6 +489,7 @@ export default function ContractsPage() {
             }
           />
         )}
+        </ColumnResizeProvider>
       </GlassCard>
 
       {(creating || editing) && (

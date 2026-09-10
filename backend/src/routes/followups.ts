@@ -3,7 +3,8 @@ import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
 import { getSetting } from '../services/settingsService.js'
-import { LOCKED_FY_MESSAGE, writeBlocked } from '../services/fyLock.js'
+import { invoiceBudgetDate, LOCKED_FY_MESSAGE, writeBlocked } from '../services/fyLock.js'
+import { firstEmbed, vendorsAsList } from '../services/embed.js'
 import type { AuthUser, PendingFollowup } from '../types/index.js'
 
 export const followupsRouter = Router()
@@ -33,6 +34,7 @@ followupsRouter.get('/pending', authRequired, async (_req, res, next) => {
     const { data: invoices, error } = await supabase
       .from('invoices')
       .select('id, invoice_no, invoice_date, amount, contracts(contract_no, vendor_id, vendors(name, email))')
+      .select('id, invoice_no, invoice_date, service_from, amount, contracts(contract_no, vendor_id, vendors(name, email))')
       .eq('status', 'Pending')
       .order('created_at', { ascending: true })
     if (error) {
@@ -41,19 +43,16 @@ followupsRouter.get('/pending', authRequired, async (_req, res, next) => {
     }
     const list: PendingFollowup[] = (invoices ?? [])
       .map((inv) => {
-        const rel = inv.contracts as unknown as
-          | { contract_no: string; vendor_id: string; vendors: { name: string; email: string | null }[] | null }
-          | null
-        const contract = Array.isArray(rel) ? rel[0] : rel
-        const vendor = contract?.vendors?.[0] ?? null
+        const contract = firstEmbed(inv.contracts as Record<string, unknown> | Record<string, unknown>[] | null)
+        const vendor = vendorsAsList(contract?.vendors)[0] as { name?: string; email?: string | null } | undefined
         return {
           invoiceId: inv.id,
           invoiceNo: inv.invoice_no,
           invoiceDate: inv.invoice_date,
           amount: Number(inv.amount || 0),
-          contractNo: contract?.contract_no ?? '',
-          vendorId: contract?.vendor_id ?? '',
-          vendorName: vendor?.name ?? 'Unknown',
+          contractNo: String(contract?.contract_no ?? ''),
+          vendorId: String(contract?.vendor_id ?? ''),
+          vendorName: String(vendor?.name ?? 'Unknown'),
           email: vendor?.email ?? '',
         }
       })
@@ -77,7 +76,7 @@ followupsRouter.post('/send', authRequired, async (req, res, next) => {
     const supabase = getSupabase()
     const { data: invoices } = await supabase
       .from('invoices')
-      .select('id, invoice_no, invoice_date, amount, contracts(contract_no, vendor_id, vendors(name, email))')
+      .select('id, invoice_no, invoice_date, service_from, amount, contracts(contract_no, vendor_id, vendors(name, email))')
       .in('id', invoiceIds)
       .eq('status', 'Pending')
 
@@ -87,23 +86,20 @@ followupsRouter.post('/send', authRequired, async (req, res, next) => {
     const failed: { invoiceId: string; reason: string }[] = []
 
     for (const inv of invoices ?? []) {
-      const locked = writeBlocked(actorKey(req as { user?: AuthUser }), inv.invoice_date as string | null)
+      const locked = writeBlocked(actorKey(req as { user?: AuthUser }), invoiceBudgetDate(inv))
       if (locked) {
         failed.push({ invoiceId: inv.id, reason: LOCKED_FY_MESSAGE })
         continue
       }
-      const rel = inv.contracts as unknown as
-        | { contract_no: string; vendor_id: string; vendors: { name: string; email: string | null }[] | null }
-        | null
-      const contract = Array.isArray(rel) ? rel[0] : rel
-      const vendor = contract?.vendors?.[0] ?? null
+      const contract = firstEmbed(inv.contracts as Record<string, unknown> | Record<string, unknown>[] | null)
+      const vendor = vendorsAsList(contract?.vendors)[0] as { name?: string; email?: string | null } | undefined
       if (!vendor?.email) {
         failed.push({ invoiceId: inv.id, reason: 'No surveyor email on vendor' })
         continue
       }
       const data = {
         vendorName: vendor.name,
-        contractNo: contract?.contract_no ?? '',
+        contractNo: String(contract?.contract_no ?? ''),
         invoiceNo: inv.invoice_no,
         invoiceDate: fmtDate(inv.invoice_date as string | null),
         amount: fmtMoney(Number(inv.amount || 0)),
@@ -114,7 +110,7 @@ followupsRouter.post('/send', authRequired, async (req, res, next) => {
       const result = await sendEmail(vendor.email, subject, textToHtml(body))
       await supabase.from('followup_emails').insert({
         invoice_id: inv.id,
-        vendor_id: vendor.id,
+        vendor_id: contract?.vendor_id ?? null,
         recipient: vendor.email,
         subject,
         body,

@@ -35,7 +35,9 @@ import { isSignedOff } from '../lib/invoice'
 import { costElementBreakup, filterAccrualYears, yearlyBudgetFigures, type AccrualSortKey } from '../lib/fyAnalysis'
 import AccrualAnalysisPanel from './AccrualAnalysisPanel'
 import { ChartStage, MixWave } from '../components/ui/EnergyWave'
+import { contractNoOf, vendorNameOf } from '../lib/relations'
 import { barDataset, barMotion, doughnutMotion, doughnutSlice, lineMotion, waveLine } from '../lib/chartWave'
+import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler)
 
@@ -43,12 +45,16 @@ interface Invoice {
   id: string
   invoice_no: string | null
   invoice_date: string | null
+  service_from?: string | null
   service_to?: string | null
   contract_id: string | null
   cost_element: string | null
   amount: number
   approved_amount?: number | null
   status: string
+  t1?: string | null
+  t2?: string | null
+  t3?: string | null
   contracts: { contract_no: string | null; vendors: Array<{ name: string | null }> | null } | null
 }
 interface ReportPo {
@@ -162,6 +168,8 @@ export default function ReportsPage() {
   const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const toast = useToast()
   const c = useThemeColors()
+  const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[] } | null>(null)
+  const [spendHover, setSpendHover] = useState<number | null>(null)
 
   const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'budgets', 'paymentOrders'])
   const reload = useCallback(() => {
@@ -211,9 +219,7 @@ export default function ReportsPage() {
   }, [liveVersion, reload])
 
   const vendorOf = (inv: Invoice) => {
-    const rel = inv.contracts
-    const cn = Array.isArray(rel) ? rel[0] : rel
-    return cn?.vendors?.[0]?.name ?? '—'
+    return vendorNameOf(inv)
   }
 
   const fyChoices = useMemo(() => nearbyFiscalYears(undefined, 2, 1), [])
@@ -229,17 +235,24 @@ export default function ReportsPage() {
   const filterColumns = useMemo<FilterColumnDef[]>(() => {
     const vendors = new Set<string>()
     const elements = new Set<string>()
+    const types = new Set<string>()
+    const services = new Set<string>()
+    const details = new Set<string>()
     for (const inv of invoices) {
-      const rel = inv.contracts
-      const cn = Array.isArray(rel) ? rel[0] : rel
-      const name = cn?.vendors?.[0]?.name
+      const name = vendorNameOf(inv, '')
       if (name) vendors.add(name)
       if (inv.cost_element) elements.add(inv.cost_element)
+      if (inv.t1) types.add(inv.t1)
+      if (inv.t2) services.add(inv.t2)
+      if (inv.t3) details.add(inv.t3)
     }
     return [
       { key: 'vendor', label: 'Vendor', type: 'select', options: [...vendors].sort().map((v) => ({ value: v, label: v })) },
       { key: 'contract_id', label: 'Contract', type: 'select', options: contracts.map((cn) => ({ value: cn.id, label: cn.contract_no })) },
       { key: 'cost_element', label: 'Cost element', type: 'select', options: [...elements].sort().map((v) => ({ value: v, label: v })) },
+      { key: 't1', label: 'Type', type: 'select', options: [...types].sort().map((v) => ({ value: v, label: v })) },
+      { key: 't2', label: 'Service', type: 'select', options: [...services].sort().map((v) => ({ value: v, label: v })) },
+      { key: 't3', label: 'Detail', type: 'select', options: [...details].sort().map((v) => ({ value: v, label: v })) },
       { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'Approved', 'Rejected', 'Draft', 'Void', 'Paid'].map((s) => ({ value: s, label: s })) },
       { key: 'quarter', label: 'Quarter', type: 'select', options: QUARTERS.map((q) => ({ value: q, label: q })) },
       { key: 'invoice_date', label: 'Invoice date', type: 'date' },
@@ -388,6 +401,35 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spendScoped, fySet, fyLabel, metric])
 
+  const toDrillRow = (inv: Invoice): DrillRow => ({
+    id: inv.id,
+    invoice_no: inv.invoice_no ?? '',
+    invoice_date: inv.invoice_date,
+    vendor: vendorNameOf(inv, 'Unknown'),
+    contract_no: contractNoOf(inv, ''),
+    amount: Number(inv.amount ?? 0),
+    status: inv.status,
+  })
+
+  const invoicesForSpendMonth = (idx: number) =>
+    spendScoped.filter((inv) => {
+      const date = invoiceBudgetDate(inv)
+      const fi = invoiceBudgetInfo(inv)
+      if (!date || !fi || !fySet.has(fi.fy)) return false
+      return fyMonthIndex(new Date(date)) === idx
+    })
+
+  const openSpendMonth = (idx: number) => {
+    const m = monthly.data[idx]
+    if (!m) return
+    const rows = invoicesForSpendMonth(idx).map(toDrillRow)
+    setDrill({
+      title: `${m.label} · ${monthly.fy}`,
+      subtitle: `${rows.length} invoice${rows.length === 1 ? '' : 's'} · ${fmtMetric(m.value)}`,
+      rows,
+    })
+  }
+
   const paymentMonthly = useMemo(() => {
     const approved = new Map<number, number>()
     const generated = new Map<number, number>()
@@ -433,7 +475,7 @@ export default function ReportsPage() {
     const others = sorted.slice(5).reduce((sum, [, n]) => sum + n, 0)
     const rows = others > 0 ? [...top, { vendor: 'Others', released: others }] : top
     const total = rows.reduce((sum, row) => sum + row.released, 0)
-    return { rows, total, vendorCount: sorted.length }
+    return { rows, total }
   }, [scopedPos, invoiceById])
 
   const categoryMix = useMemo(() => {
@@ -470,6 +512,38 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spendScoped, metric])
 
+  const byType = useMemo(() => {
+    const map = new Map<string, { count: number; total: number }>()
+    for (const inv of spendScoped) {
+      const t = (inv.t1 ?? '').trim() || 'Uncoded'
+      const bucket = map.get(t) ?? { count: 0, total: 0 }
+      bucket.count += 1
+      bucket.total += metricValue(inv)
+      map.set(t, bucket)
+    }
+    return [...map.entries()]
+      .map(([type, v]) => ({ type, ...v }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spendScoped, metric])
+
+  const byService = useMemo(() => {
+    const map = new Map<string, { count: number; total: number }>()
+    for (const inv of spendScoped) {
+      const t = (inv.t2 ?? '').trim() || 'Uncoded'
+      const bucket = map.get(t) ?? { count: 0, total: 0 }
+      bucket.count += 1
+      bucket.total += metricValue(inv)
+      map.set(t, bucket)
+    }
+    return [...map.entries()]
+      .map(([service, v]) => ({ service, ...v }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spendScoped, metric])
+
   const budgetRows = useMemo(() => {
     const releasedByContract = new Map<string, number>()
     for (const p of scopedPos) {
@@ -485,7 +559,7 @@ export default function ReportsPage() {
         return {
           id: cn.id,
           contract_no: cn.contract_no,
-          vendor: cn.vendors?.[0]?.name ?? '—',
+          vendor: vendorNameOf(cn),
           budget,
           actual,
           remaining: budget - actual,
@@ -678,6 +752,8 @@ export default function ReportsPage() {
   })
   const reportCostBreak = costElementBreakup(reportFy, invoices, paymentOrders, yearBudgets)
   const maxVendor = Math.max(1, ...byVendor.map((v) => v.total))
+  const maxType = Math.max(1, ...byType.map((v) => v.total))
+  const maxService = Math.max(1, ...byService.map((v) => v.total))
   const mixSegments: Array<{ key: keyof typeof categoryMix; label: string; color: string }> = [
     { key: 'OPEX', label: 'OPEX', color: c.accent },
     { key: 'CAPEX', label: 'CAPEX outlook', color: c.warn },
@@ -802,24 +878,56 @@ export default function ReportsPage() {
               <b className="text-lg text-[var(--warn)]">Rs {formatMoney(kpi.pending)}</b>
             </div>
           </div>
-          <div className="spend-wave mt-6" title={`${monthly.fy} monthly spend`}>
+          <div
+            className="spend-wave mt-6"
+            onMouseLeave={() => setSpendHover(null)}
+          >
             {(() => {
               const max = Math.max(1, ...monthly.data.map((row) => row.value))
-              return monthly.data.map((m, i) => (
-                <span
-                  key={m.label}
-                  style={{
-                    height: `${Math.max(6, (m.value / max) * 100)}%`,
-                    background: c.accent,
-                    ['--i' as string]: String(i),
-                  }}
-                />
-              ))
+              return monthly.data.map((m, i) => {
+                const count = invoicesForSpendMonth(i).length
+                return (
+                  <button
+                    key={m.label}
+                    type="button"
+                    className={`spend-wave-col${spendHover === i ? ' is-on' : ''}`}
+                    style={{ ['--i' as string]: String(i) }}
+                    aria-label={`${m.label} ${monthly.fy}: ${fmtMetric(m.value)}, ${count} invoice${count === 1 ? '' : 's'}`}
+                    onMouseEnter={() => setSpendHover(i)}
+                    onFocus={() => setSpendHover(i)}
+                    onClick={() => openSpendMonth(i)}
+                  >
+                    <span className="spend-wave-tip">
+                      <b>{m.label}</b>
+                      <span>{fmtMetric(m.value)}</span>
+                      <em>{count} inv</em>
+                    </span>
+                    <span className="spend-wave-track">
+                      <span
+                        className="spend-wave-bar"
+                        style={{
+                          height: `${Math.max(8, (m.value / max) * 100)}%`,
+                          background: c.accent,
+                        }}
+                      />
+                    </span>
+                    <span className="spend-wave-lab">{m.label}</span>
+                  </button>
+                )
+              })
             })()}
           </div>
-          <div className="mt-1.5 flex justify-between text-[0.6rem] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
-            <span>{monthly.fy} · Jul</span>
-            <span>Jun</span>
+          <div className="mt-2 min-h-[1.15rem] text-xs text-[var(--text-dim)]">
+            {spendHover != null && monthly.data[spendHover] ? (
+              <>
+                <b className="text-[var(--text)]">{monthly.data[spendHover].label} · {monthly.fy}</b>
+                {' · '}
+                {fmtMetric(monthly.data[spendHover].value)}
+                {' · click for invoices'}
+              </>
+            ) : (
+              'Hover a month for amount · click to open invoices'
+            )}
           </div>
         </div>
 
@@ -1333,7 +1441,9 @@ export default function ReportsPage() {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: lineMotion(),
-                plugins: { legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 12 } } },
+                plugins: {
+                  legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 12 } },
+                },
                 scales: {
                   x: { grid: { display: false }, ticks: { color: c.ticks } },
                   y: { beginAtZero: true, grace: '8%', grid: { color: c.grid }, ticks: { color: c.ticks } },
@@ -1344,12 +1454,10 @@ export default function ReportsPage() {
         </div>
         <div className="report-card glass p-6 rise-in" style={{ animationDelay: '380ms' }}>
           <span className="reports-kicker">
-            <Landmark size={13} className="text-[var(--accent)]" /> Released by vendor
+            <Landmark size={13} className="text-[var(--accent)]" /> Payment Released
           </span>
           <p className="mt-1 text-xs text-[var(--text-dim)]">
-            {vendorReleasedRank.vendorCount > 0
-              ? `Released cash · ${vendorReleasedRank.vendorCount} vendor${vendorReleasedRank.vendorCount === 1 ? '' : 's'}`
-              : 'Released cash by vendor'}
+            Vendor segmented
           </p>
           {vendorReleasedRank.rows.length > 0 ? (
             <ol className="vendor-rank">
@@ -1450,6 +1558,71 @@ export default function ReportsPage() {
               ))
             ) : (
               <EmptyState title="No vendor data" description="Adjust the filters to see rankings." />
+            )}
+          </div>
+        </div>
+      </div>
+      )}
+
+      {view === 'spend' && (
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="report-card glass p-6 rise-in" style={{ animationDelay: '500ms' }}>
+          <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            <Sparkles size={13} className="text-[var(--accent)]" /> Type leaderboard
+          </span>
+          <div className="mt-4 space-y-3.5">
+            {byType.length > 0 ? (
+              byType.map((row, i) => (
+                <div key={row.type}>
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-semibold">{row.type}</span>
+                    <b className="shrink-0">{fmtMetric(row.total)}</b>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-hover)]">
+                    <div
+                      className="report-fill h-full rounded-full"
+                      style={{
+                        width: `${(row.total / maxType) * 100}%`,
+                        background: i === 0 ? 'var(--gradient-primary)' : 'var(--accent)',
+                        opacity: i === 0 ? 1 : 0.55,
+                        animationDelay: `${i * 90}ms`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="No type data" description="Invoices need Type (t1) to rank here." />
+            )}
+          </div>
+        </div>
+        <div className="report-card glass p-6 rise-in" style={{ animationDelay: '560ms' }}>
+          <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            <Building2 size={13} className="text-[var(--accent)]" /> Service leaderboard
+          </span>
+          <div className="mt-4 space-y-3.5">
+            {byService.length > 0 ? (
+              byService.map((row, i) => (
+                <div key={row.service}>
+                  <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-semibold">{row.service}</span>
+                    <b className="shrink-0">{fmtMetric(row.total)}</b>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--surface-hover)]">
+                    <div
+                      className="report-fill h-full rounded-full"
+                      style={{
+                        width: `${(row.total / maxService) * 100}%`,
+                        background: i === 0 ? 'var(--gradient-primary)' : 'var(--accent)',
+                        opacity: i === 0 ? 1 : 0.55,
+                        animationDelay: `${i * 90}ms`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState title="No service data" description="Invoices need Service (t2) to rank here." />
             )}
           </div>
         </div>
@@ -1629,6 +1802,13 @@ export default function ReportsPage() {
         initialFy={fyScope}
         initialTemplate={view === 'spend' || view === 'budget' || view === 'accrual' || view === 'aging' || view === 'outlook' ? view : 'overview'}
         onGenerated={(hint) => toast.success('Report generated', hint)}
+      />
+      <ChartDrillDown
+        open={!!drill}
+        title={drill?.title ?? ''}
+        subtitle={drill?.subtitle ?? ''}
+        rows={drill?.rows ?? []}
+        onClose={() => setDrill(null)}
       />
     </div>
   )

@@ -72,18 +72,31 @@ function AuthPanel() {
       toast.error('Sign-in failed', error.message)
       return
     }
-    await refresh()
-    toast.success('Welcome back')
-    navigate('/control-tower', { replace: true })
+    try {
+      const me = await refresh()
+      if (!me) {
+        toast.error('Sign-in failed', 'This account cannot access the application')
+        return
+      }
+      toast.success('Welcome back')
+      navigate('/control-tower', { replace: true })
+    } catch (err) {
+      toast.error('Sign-in failed', (err as Error).message)
+    }
   }
 
   const onEnterDemo = async () => {
     setDemoBusy(true)
     enterDemo()
-    await refresh()
-    setDemoBusy(false)
-    toast.success('Demo session started', 'Simulated data plus a local Delta Analyst — your files stay in this browser')
-    navigate('/control-tower', { replace: true })
+    try {
+      await refresh()
+      toast.success('Demo session started', 'Simulated data plus a local Delta Analyst — your files stay in this browser')
+      navigate('/control-tower', { replace: true })
+    } catch (err) {
+      toast.error('Demo failed', (err as Error).message)
+    } finally {
+      setDemoBusy(false)
+    }
   }
 
   return (

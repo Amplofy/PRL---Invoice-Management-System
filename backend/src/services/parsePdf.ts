@@ -1,120 +1,199 @@
-import * as pdfParse from 'pdf-parse'
-
-type PdfTextResult = {
-  text: string
-  pages: { text: string }[]
-  total: number
-}
-
-const KNOWN_HEADERS = [
-  'invoice',
-  'invoiceno',
-  'invoice_no',
-  'amount',
-  'date',
-  'contract',
-  'contractno',
-  'vendor',
-  'tanker',
-  'trips',
-  'quantity',
-  'qty',
-  'product',
-  'item',
-  'value',
-  'serial',
-  'remarks',
-  'name',
-]
-
-function normalizeHeader(h: string): string {
-  return h.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
-}
-
-async function extractPages(buffer: Buffer): Promise<{ text: string; pages: string[] }> {
-  const parser = new pdfParse.PDFParse({ data: buffer })
-  await (parser as unknown as { load(): Promise<void> }).load()
-  const result = (await parser.getText()) as PdfTextResult
-  parser.destroy()
-  return {
-    text: result?.text || '',
-    pages: (result?.pages || []).map((p) => p?.text || ''),
-  }
-}
-
-function linesToRows(lines: string[]): Record<string, unknown>[] {
-  const rows: Record<string, unknown>[] = []
-  let headers: string[] | null = null
-
-  for (const line of lines) {
-    // pdf text extraction collapses whitespace; first try wide gaps then single spaces
-    let cells = line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean)
-    if (!headers) {
-      const single = line.split(/\s+/).map((c) => c.trim()).filter(Boolean)
-      if (single.length >= 2 && single.length > cells.length) cells = single
-    } else if (cells.length < headers.length && !line.startsWith('--')) {
-      const single = line.split(/\s+/).map((c) => c.trim()).filter(Boolean)
-      if (single.length >= headers.length) cells = single
-    }
-    if (!cells.length) continue
-
-    if (!headers) {
-      const norm = cells.map(normalizeHeader)
-      const hitCount = norm.filter((h) => KNOWN_HEADERS.includes(h)).length
-      if (hitCount >= 2 && cells.length >= 2) {
-        headers = cells
-        continue
-      }
-    }
-
-    if (headers) {
-      const obj: Record<string, unknown> = {}
-      headers.forEach((h, i) => {
-        obj[h] = cells[i] ?? ''
-      })
-      rows.push(obj)
-    }
-  }
-
-  return rows
-}
-
-/**
- * Extracts tabular rows from a text-based PDF using a whitespace-delimited
- * column heuristic. First line that matches known headers becomes the header
- * row; subsequent lines are parsed as data rows aligned to the same columns.
- */
-export async function parsePdf(buffer: Buffer): Promise<Record<string, unknown>[]> {
-  const { text } = await extractPages(buffer)
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  const rows = linesToRows(lines)
-  if (rows.length > 0) return rows
-  // Fallback: no headers detected — return raw one-column rows
-  return lines.map((l) => ({ line: l }))
-}
+import { spawn } from 'node:child_process'
+import { writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { PDFParse } from 'pdf-parse'
+import { matrixToRecords, pickBestGroup, textToMatrix, uniqueGroupName } from './parseTable.js'
 
 export interface ParsedPage {
   name: string
   rows: Record<string, unknown>[]
+  warnings?: string[]
+}
+
+const SCAN_TEXT_MIN = 40
+const OCR_PAGE_CAP = 12
+
+let tesseractAvailable: boolean | null = null
+
+async function hasTesseract(): Promise<boolean> {
+  if (tesseractAvailable !== null) return tesseractAvailable
+  const ok = await new Promise<boolean>((resolve) => {
+    const p = spawn('tesseract', ['--version'])
+    p.on('error', () => resolve(false))
+    p.on('close', (code) => resolve(code === 0))
+  })
+  tesseractAvailable = ok
+  return ok
+}
+
+async function ocrPng(png: Uint8Array): Promise<string> {
+  const file = path.join(tmpdir(), `prl-ocr-${Date.now()}-${Math.random().toString(16).slice(2)}.png`)
+  await writeFile(file, Buffer.from(png))
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    const errChunks: Buffer[] = []
+    const p = spawn('tesseract', [file, 'stdout', '--psm', '1', '-l', 'eng'])
+    const timer = setTimeout(() => {
+      p.kill()
+      reject(new Error('OCR timed out'))
+    }, 45000)
+    p.stdout.on('data', (d: Buffer) => chunks.push(d))
+    p.stderr.on('data', (d: Buffer) => errChunks.push(d))
+    p.on('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    p.on('close', (code) => {
+      clearTimeout(timer)
+      if (code === 0) resolve(Buffer.concat(chunks).toString('utf8'))
+      else reject(new Error(Buffer.concat(errChunks).toString('utf8').trim() || `tesseract exit ${code}`))
+    })
+  })
+}
+
+function recordsFromText(text: string): Record<string, unknown>[] {
+  const matrix = textToMatrix(text)
+  const rows = matrixToRecords(matrix)
+  if (rows.length > 0) return rows
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  return lines.map((l) => ({ line: l }))
+}
+
+function looksScanned(text: string): boolean {
+  return text.replace(/\s+/g, ' ').trim().length < SCAN_TEXT_MIN
 }
 
 /**
- * Parses each PDF page independently so the user can pick which pages hold
- * the tables to compare. Pages without a detected header row are skipped;
- * if none match, the whole document comes back as a single raw group.
+ * Extracts tabular rows from a PDF. Prefers drawn tables, then tab-separated
+ * text (handles uneven columns). Falls back to one-column lines.
+ */
+export async function parsePdf(buffer: Buffer): Promise<Record<string, unknown>[]> {
+  const groups = await parsePdfGroups(buffer)
+  const best = pickBestGroup(groups.filter((g) => g.rows.length > 0))
+  if (best) return best.rows
+  return groups.flatMap((g) => g.rows)
+}
+
+/**
+ * One group per page (and extra groups when a page has several tables) so the
+ * user can pick exactly which pages to compare. Empty / image-only pages stay
+ * in the list with a warning instead of disappearing.
  */
 export async function parsePdfGroups(buffer: Buffer): Promise<ParsedPage[]> {
-  const { text, pages } = await extractPages(buffer)
-  const pageTexts = pages.length > 0 ? pages : [text]
-  const groups: ParsedPage[] = []
-  pageTexts.forEach((pageText, i) => {
-    const lines = pageText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    const rows = linesToRows(lines)
-    if (rows.length > 0) groups.push({ name: `Page ${i + 1}`, rows })
-  })
-  if (groups.length === 0) {
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    if (lines.length > 0) groups.push({ name: 'Full document', rows: lines.map((l) => ({ line: l })) })
+  const parser = new PDFParse({ data: buffer })
+  try {
+    let total = 0
+    try {
+      const info = await parser.getInfo()
+      total = info.total || 0
+    } catch {
+      /* some truncated PDFs still yield text */
+    }
+
+    let tablePages: Array<{ num: number; tables: string[][][] }> = []
+    try {
+      const tableRes = await parser.getTable()
+      tablePages = tableRes.pages ?? []
+      if (!total) total = tableRes.total || tablePages.length
+    } catch {
+      tablePages = []
+    }
+
+    let textPages: Array<{ num: number; text: string }> = []
+    let fullText = ''
+    try {
+      const textRes = await parser.getText({
+        cellSeparator: '\t',
+        cellThreshold: 9,
+        lineEnforce: true,
+        lineThreshold: 5.2,
+        pageJoiner: '',
+      })
+      textPages = textRes.pages ?? []
+      fullText = textRes.text || ''
+      if (!total) total = textRes.total || textPages.length
+    } catch {
+      textPages = []
+    }
+
+    if (!total) total = Math.max(tablePages.length, textPages.length, fullText ? 1 : 0)
+    if (total < 1) return []
+
+    const textByPage = new Map<number, string>()
+    textPages.forEach((p) => textByPage.set(p.num, p.text || ''))
+    if (textByPage.size === 0 && fullText) textByPage.set(1, fullText)
+
+    const tablesByPage = new Map<number, string[][][]>()
+    tablePages.forEach((p) => {
+      if (p.tables?.length) tablesByPage.set(p.num, p.tables)
+    })
+
+    const scanNums: number[] = []
+    for (let n = 1; n <= total; n++) {
+      const hasTable = (tablesByPage.get(n) ?? []).some((t) => t.length > 1)
+      if (!hasTable && looksScanned(textByPage.get(n) ?? '')) scanNums.push(n)
+    }
+
+    const ocrByPage = new Map<number, string>()
+    if (scanNums.length > 0 && (await hasTesseract())) {
+      try {
+        const shots = await parser.getScreenshot({
+          partial: scanNums.slice(0, OCR_PAGE_CAP),
+          imageBuffer: true,
+          imageDataUrl: false,
+          scale: 2,
+        })
+        for (const shot of shots.pages ?? []) {
+          try {
+            ocrByPage.set(shot.pageNumber, await ocrPng(shot.data))
+          } catch {
+            /* keep the empty text layer */
+          }
+        }
+      } catch {
+        /* canvas/screenshot unavailable */
+      }
+    }
+
+    const used = new Map<string, number>()
+    const groups: ParsedPage[] = []
+
+    for (let n = 1; n <= total; n++) {
+      const warnings: string[] = []
+      const tables = tablesByPage.get(n) ?? []
+      const usableTables = tables.filter((t) => t.length > 0 && t.some((r) => r.some((c) => String(c ?? '').trim())))
+
+      if (usableTables.length > 0) {
+        usableTables.forEach((table, ti) => {
+          const rows = matrixToRecords(table)
+          const name =
+            usableTables.length > 1
+              ? uniqueGroupName(`Page ${n} · table ${ti + 1}`, used)
+              : uniqueGroupName(`Page ${n}`, used)
+          groups.push({ name, rows, warnings: warnings.length ? [...warnings] : undefined })
+        })
+        continue
+      }
+
+      const ocrText = ocrByPage.get(n)?.trim() ?? ''
+      const layerText = (textByPage.get(n) ?? '').trim()
+      const sourceText = ocrText || layerText
+      if (ocrText) warnings.push('Read with OCR (image/scan). Check columns if the scan is blurry.')
+      else if (looksScanned(layerText)) {
+        warnings.push('Little or no selectable text — this page may be a scan, photo, or colour photocopy.')
+      }
+
+      const rows = sourceText ? recordsFromText(sourceText) : []
+      groups.push({
+        name: uniqueGroupName(`Page ${n}`, used),
+        rows,
+        warnings: warnings.length ? warnings : undefined,
+      })
+    }
+
+    return groups
+  } finally {
+    await parser.destroy()
   }
-  return groups
 }

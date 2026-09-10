@@ -10,6 +10,7 @@ import {
   type ReportExportData,
   type ReportTemplate,
 } from '../lib/reportWorkbook'
+import { vendorNameOf } from '../lib/relations'
 
 interface Props {
   open: boolean
@@ -61,9 +62,7 @@ export default function GenerateReportDialog({
   const vendorOptions = useMemo(() => {
     const names = new Set<string>()
     for (const inv of data.invoices) {
-      const rel = inv.contracts
-      const cn = Array.isArray(rel) ? rel[0] : rel
-      const name = cn?.vendors?.[0]?.name
+      const name = vendorNameOf(inv, '')
       if (name) names.add(name)
     }
     return [...names].sort()

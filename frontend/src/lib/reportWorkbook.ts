@@ -18,6 +18,7 @@ import { invoiceApprovedAmount, poReleasedAmount } from './paymentOrder'
 import { isSignedOff } from './invoice'
 import { yearlyBudgetFigures } from './fyAnalysis'
 import { downloadXlsx } from './export'
+import { vendorNameOf } from './relations'
 
 export const REPORT_TEMPLATES = [
   { id: 'overview', label: 'Overview pack' },
@@ -43,6 +44,9 @@ export interface ReportInvoice {
   amount: number
   approved_amount?: number | null
   status: string
+  t1?: string | null
+  t2?: string | null
+  t3?: string | null
   contracts?: { contract_no: string | null; vendors: Array<{ name: string | null }> | null } | null
 }
 
@@ -121,9 +125,7 @@ function money(n: number) {
 }
 
 function vendorOf(inv: ReportInvoice) {
-  const rel = inv.contracts
-  const cn = Array.isArray(rel) ? rel[0] : rel
-  return cn?.vendors?.[0]?.name ?? '—'
+  return vendorNameOf(inv)
 }
 
 function contractNoOf(inv: ReportInvoice, contracts: ReportContract[]) {
@@ -192,6 +194,9 @@ function ledgerSheet(rows: ReportInvoice[], contracts: ReportContract[]): Sheet 
         Quarter: fi?.quarter ?? '',
         Vendor: vendorOf(inv),
         Contract: contractNoOf(inv, contracts),
+        Type: inv.t1 ?? '',
+        Service: inv.t2 ?? '',
+        Detail: inv.t3 ?? '',
         'Cost element': inv.cost_element ?? '',
         Status: inv.status,
         'Amount (Rs)': money(Number(inv.amount ?? 0)),
@@ -279,6 +284,23 @@ function vendorSheet(rows: ReportInvoice[], filters: ReportExportFilters): Sheet
   }
 }
 
+function typeSheet(rows: ReportInvoice[], filters: ReportExportFilters, field: 't1' | 't2' | 't3', name: string, label: string): Sheet {
+  const map = new Map<string, { count: number; total: number }>()
+  for (const inv of rows) {
+    const key = (inv[field] ?? '').trim() || 'Uncoded'
+    const bucket = map.get(key) ?? { count: 0, total: 0 }
+    bucket.count += 1
+    bucket.total += metricValue(inv, filters.metric)
+    map.set(key, bucket)
+  }
+  return {
+    name,
+    rows: [...map.entries()]
+      .map(([value, v]) => ({ [label]: value, Invoices: v.count, 'Amount (Rs)': money(v.total) }))
+      .sort((a, b) => Number(b['Amount (Rs)']) - Number(a['Amount (Rs)'])),
+  }
+}
+
 function budgetSheet(
   rows: ReportInvoice[],
   pos: ReportPo[],
@@ -322,7 +344,7 @@ function contractSheet(contracts: ReportContract[], pos: ReportPo[], invoices: R
       const actual = releasedByContract.get(cn.id) ?? 0
       return {
         Contract: cn.contract_no,
-        Vendor: cn.vendors?.[0]?.name ?? '—',
+        Vendor: vendorNameOf(cn),
         'Budget (Rs)': money(budget),
         'Released (Rs)': money(actual),
         'Remaining (Rs)': money(budget - actual),
@@ -445,6 +467,9 @@ export function downloadGeneratedReport(data: ReportExportData, filters: ReportE
     sheets.push(monthlySheet(rows, filters))
     sheets.push(quarterlySheet(rows, filters))
     sheets.push(vendorSheet(rows, filters))
+    sheets.push(typeSheet(rows, filters, 't1', 'Types', 'Type'))
+    sheets.push(typeSheet(rows, filters, 't2', 'Services', 'Service'))
+    sheets.push(typeSheet(rows, filters, 't3', 'Details', 'Detail'))
   }
   if (want('overview')) sheets.push(mixSheet(rows, data.yearBudgets, fySet))
   if (want('budget')) {

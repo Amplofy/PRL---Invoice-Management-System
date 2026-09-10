@@ -34,11 +34,12 @@ import { Field } from '../components/ui/Field'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useFyLock } from '../lib/FyLockProvider'
 import { useMasterAccess } from '../lib/masterAccess'
-import { currentFiscalYear, invoiceBudgetFy, isClosedFiscalYear } from '../lib/fiscal'
+import { currentFiscalYear, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear } from '../lib/fiscal'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { invoiceApprovedAmount, poGeneratedAmount, poReleasedAmount, poStatusLabel, poStatusTone } from '../lib/paymentOrder'
 import { emitCrossModule, useLiveDomain } from '../lib/store'
 import { isUnpaidPriorYearInvoice } from '../lib/accrual'
+import { vendorNameOf } from '../lib/relations'
 
 interface ContractFull {
   id: string
@@ -110,7 +111,7 @@ function toContractLite(c: ContractFull): ContractLite {
     value: Number(c.value ?? 0),
     start_date: c.start_date,
     end_date: c.end_date,
-    vendor: c.vendors?.[0]?.name ?? null,
+    vendor: vendorNameOf(c, '') || null,
     service: c.service ?? null,
     status: c.status ?? null,
     services: c.services,
@@ -286,7 +287,7 @@ export default function InvoiceWorkspacePage() {
       toast.error(`Resolve ${issues.length} validation issue${issues.length > 1 ? 's' : ''} first`)
       return
     }
-    if (!masterOn && !(await guardWrite(invoice.invoice_date, form.invoice_date, form.service_to))) return
+    if (!masterOn && !(await guardWrite(invoiceBudgetDate(invoice), invoiceBudgetDate(form)))) return
     setSaving(true)
     try {
       await apiPut(`/api/invoices/${invoice.id}`, {
@@ -321,7 +322,7 @@ export default function InvoiceWorkspacePage() {
 
   const approve = async () => {
     if (!invoice) return
-    if (!(await guardWrite(invoice.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(invoice)))) return
     try {
       const res = await apiPost<{ po?: { id: string } | null }>(`/api/invoices/${invoice.id}/approve`, {})
       toast.success('Invoice approved', res.po ? 'Payment order generated automatically' : undefined)
@@ -344,7 +345,7 @@ export default function InvoiceWorkspacePage() {
       toast.error('A rejection reason is required')
       return
     }
-    if (!(await guardWrite(invoice.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(invoice)))) return
     try {
       await apiPost(`/api/invoices/${invoice.id}/reject`, { reason: rejectReason.trim() })
       toast.success('Invoice rejected')
@@ -360,7 +361,7 @@ export default function InvoiceWorkspacePage() {
 
   const generatePo = async () => {
     if (!invoice) return
-    if (!isUnpaidPriorYearInvoice(invoice) && !(await guardWrite(invoice.invoice_date))) return
+    if (!isUnpaidPriorYearInvoice(invoice) && !(await guardWrite(invoiceBudgetDate(invoice)))) return
     try {
       await apiPost(`/api/invoices/${invoice.id}/po`, {})
       toast.success('Payment order generated')
@@ -374,7 +375,7 @@ export default function InvoiceWorkspacePage() {
 
   const doDelete = async () => {
     if (!invoice) return
-    if (!(await guardWrite(invoice.invoice_date))) return
+    if (!(await guardWrite(invoiceBudgetDate(invoice)))) return
     try {
       await apiDelete(`/api/invoices/${invoice.id}`)
       toast.success('Invoice deleted')
@@ -561,7 +562,7 @@ export default function InvoiceWorkspacePage() {
                   </select>
                 </Field>
                 <Field label="Vendor">
-                  <input className="input" value={selectedContract?.vendors?.[0]?.name ?? '—'} readOnly disabled />
+                  <input className="input" value={vendorNameOf(selectedContract)} readOnly disabled />
                 </Field>
                 <Field label="Item No">
                   <input className="input" value={form.item_no} onChange={set('item_no')} />

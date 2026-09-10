@@ -50,19 +50,21 @@ export function fiscalOf(dateStr: string | null | undefined): FiscalInfo | null 
   return { fy: fiscalYearLabel(d), quarter: quarterOfDate(d) }
 }
 
-/** Date that owns budget and accrual: service end, else invoice date. */
+/** Date that owns budget and accrual: service start, else invoice date. */
 export function invoiceBudgetDate(inv: {
+  service_from?: string | null
   service_to?: string | null
   invoice_date?: string | null
 }): string | null {
-  const end = String(inv.service_to ?? '').trim()
-  if (end) return end
+  const start = String(inv.service_from ?? '').trim()
+  if (start) return start
   const billed = String(inv.invoice_date ?? '').trim()
   return billed || null
 }
 
 /** FY + quarter for the year whose budget this invoice consumes. */
 export function invoiceBudgetInfo(inv: {
+  service_from?: string | null
   service_to?: string | null
   invoice_date?: string | null
 }): FiscalInfo | null {
@@ -70,6 +72,7 @@ export function invoiceBudgetInfo(inv: {
 }
 
 export function invoiceBudgetFy(inv: {
+  service_from?: string | null
   service_to?: string | null
   invoice_date?: string | null
 }): string | null {
@@ -166,6 +169,7 @@ export function isMiscCostElement(code: string | null | undefined): boolean {
 
 /** Unpaid invoices of a closed FY sit on the accrual ledger, not year spend. */
 export function isAccrualOpenInvoice(inv: {
+  service_from?: string | null
   service_to?: string | null
   invoice_date?: string | null
   status?: string | null

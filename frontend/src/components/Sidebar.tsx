@@ -17,13 +17,14 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import BrandLogo from './BrandLogo'
-import { useAuth, isAdmin } from '../lib/auth'
+import { useAuth, isAdmin, hasAnyPermission } from '../lib/auth'
 
 interface NavEntry {
   to: string
   label: string
   icon: LucideIcon
   adminOnly?: boolean
+  anyPermission?: string[]
 }
 
 interface NavGroup {
@@ -61,7 +62,7 @@ export const NAV_GROUPS: NavGroup[] = [
     entries: [
       { to: '/import', label: 'Data Import', icon: Upload },
       { to: '/admin', label: 'Administration', icon: Settings, adminOnly: true },
-      { to: '/users', label: 'Users & Roles', icon: Users, adminOnly: true },
+      { to: '/users', label: 'Users & Roles', icon: Users, anyPermission: ['users.manage', 'roles.manage'] },
     ],
   },
 ]
@@ -73,7 +74,11 @@ export function SidebarNav() {
   return (
     <nav className="scroll-y flex-1 space-y-5 px-3 pb-4">
       {NAV_GROUPS.map((group) => {
-        const visible = group.entries.filter((e) => !e.adminOnly || admin)
+        const visible = group.entries.filter((e) => {
+          if (e.adminOnly && !admin) return false
+          if (e.anyPermission && !hasAnyPermission(user, e.anyPermission)) return false
+          return true
+        })
         if (visible.length === 0) return null
         return (
           <div key={group.title}>

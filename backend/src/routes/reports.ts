@@ -3,6 +3,7 @@ import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { invoiceApprovedAmount, PO_STATUS, poGeneratedAmount, poReleasedAmount } from '../services/poFinance.js'
 import { invoiceBudgetDate, invoiceBudgetFy } from '../services/fyLock.js'
+import { vendorNameOf } from '../services/embed.js'
 
 export const reportsRouter = Router()
 
@@ -19,7 +20,7 @@ reportsRouter.get('/reports/dashboard', authRequired, async (req, res, next) => 
   try {
     const supabase = getSupabase()
     const { data: invoices } = await supabase.from('invoices').select(
-      'id, amount, approved_amount, status, invoice_date, service_to, contract_id'
+      'id, amount, approved_amount, status, invoice_date, service_from, service_to, contract_id'
     )
     const { data: contracts } = await supabase
       .from('contracts')
@@ -149,7 +150,7 @@ reportsRouter.get('/reports/summary', authRequired, async (_req, res, next) => {
         | { contract_no: string; service: string; vendors: { name: string }[] | null }
         | null
       const contract = Array.isArray(rel) ? rel[0] : rel
-      const vendorName = contract?.vendors?.[0]?.name ?? 'Unknown'
+      const vendorName = vendorNameOf(contract)
       const service = contract?.service ?? 'Unknown'
       byVendor[vendorName] ??= { vendor: vendorName, total: 0, count: 0, approved: 0 }
       byVendor[vendorName].total += toMoney(i.amount)

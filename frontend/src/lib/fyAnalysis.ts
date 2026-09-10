@@ -8,6 +8,7 @@ export interface FyAnalysisInvoice {
   amount?: unknown
   approved_amount?: unknown
   invoice_date?: string | null
+  service_from?: string | null
   service_to?: string | null
   cost_element?: string | null
   contract_id?: string | null
@@ -20,6 +21,7 @@ export interface FyAnalysisPo {
   invoice_id?: string | null
   invoices?: {
     invoice_date?: string | null
+    service_from?: string | null
     service_to?: string | null
     cost_element?: string | null
     status?: string | null

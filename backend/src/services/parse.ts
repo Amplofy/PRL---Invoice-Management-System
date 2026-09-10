@@ -12,6 +12,7 @@ export type ParsedFile = {
 export type ParsedGroup = {
   name: string
   rows: Record<string, unknown>[]
+  warnings?: string[]
 }
 
 export type ParsedFileGroups = {

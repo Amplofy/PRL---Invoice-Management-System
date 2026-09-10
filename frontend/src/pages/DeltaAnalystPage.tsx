@@ -35,6 +35,7 @@ interface ParsedGroup {
   rowCount: number
   rows: Record<string, unknown>[]
   columns: string[]
+  warnings?: string[]
 }
 
 interface Slot {
@@ -42,6 +43,7 @@ interface Slot {
   format: string
   groups: ParsedGroup[]
   selectedGroup: string
+  selectedGroups: string[]
   rows: Record<string, unknown>[]
   columns: string[]
 }
@@ -105,6 +107,50 @@ function statusTone(status: VerifyOutcome['rows'][number]['status']): 'err' | 'w
   return 'ok'
 }
 
+function inferSlotColumns(rows: Record<string, unknown>[]): string[] {
+  const keys = new Set<string>()
+  for (const row of rows.slice(0, 40)) {
+    for (const k of Object.keys(row)) keys.add(k)
+  }
+  return [...keys]
+}
+
+function scoreSlotGroup(g: ParsedGroup): number {
+  const cols = g.columns.length ? g.columns : inferSlotColumns(g.rows)
+  if (g.rows.length === 0) return -1
+  const lineOnly = cols.length === 1 && cols[0] === 'line'
+  const hits = cols.filter((c) => /invoice|amount|date|qty|quantity|vendor|contract|rate|total|price|desc/i.test(c)).length
+  return cols.length * 8 + Math.min(g.rowCount || g.rows.length, 200) + hits * 12 - (lineOnly ? 80 : 0)
+}
+
+function pickBestSlotGroup(groups: ParsedGroup[]): ParsedGroup | null {
+  const usable = groups.filter((g) => g.rows.length > 0)
+  if (usable.length === 0) return null
+  return usable.reduce((a, b) => (scoreSlotGroup(b) > scoreSlotGroup(a) ? b : a))
+}
+
+function mergeSlotGroups(groups: ParsedGroup[]): { rows: Record<string, unknown>[]; columns: string[] } {
+  const columns: string[] = []
+  const seen = new Set<string>()
+  for (const g of groups) {
+    const cols = g.columns.length ? g.columns : inferSlotColumns(g.rows)
+    for (const c of cols) {
+      if (!seen.has(c)) {
+        seen.add(c)
+        columns.push(c)
+      }
+    }
+  }
+  const rows = groups.flatMap((g) => g.rows)
+  return { rows, columns: columns.length ? columns : inferSlotColumns(rows) }
+}
+
+function unitNoun(format: string, n: number): string {
+  if (format === 'pdf') return n === 1 ? 'page' : 'pages'
+  if (format === 'xlsx' || format === 'xls') return n === 1 ? 'sheet' : 'sheets'
+  return n === 1 ? 'table' : 'tables'
+}
+
 export default function DeltaAnalystPage() {
   const [fileA, setFileA] = useState<Slot | null>(null)
   const [fileB, setFileB] = useState<Slot | null>(null)
@@ -158,20 +204,28 @@ export default function DeltaAnalystPage() {
           const uploaded = await apiUpload<{ fileName: string }>('/api/uploads', form)
           storedName = uploaded.fileName || parsed.fileName
         }
-        const groups = parsed.groups.filter((g) => g.rows.length > 0)
-        if (groups.length === 0) throw new Error('No readable rows found in the file')
-        const best = groups.reduce((a, b) => (b.rowCount > a.rowCount ? b : a))
+        const groups = (parsed.groups ?? []).map((g) => ({
+          ...g,
+          rows: g.rows ?? [],
+          columns: g.columns?.length ? g.columns : inferSlotColumns(g.rows ?? []),
+          rowCount: g.rowCount ?? (g.rows ?? []).length,
+        }))
+        const best = pickBestSlotGroup(groups)
+        if (!best) throw new Error('No readable rows found in the file')
+        const merged = mergeSlotGroups([best])
         const slot: Slot = {
           fileName: storedName,
           format: parsed.format,
           groups,
           selectedGroup: best.name,
-          rows: best.rows,
-          columns: best.columns,
+          selectedGroups: [best.name],
+          rows: merged.rows,
+          columns: merged.columns,
         }
         if (target === 'A') setFileA(slot)
         else setFileB(slot)
-        toast.success(`File ${target} loaded`, `${best.rowCount} rows · ${best.columns.length} columns`)
+        const extra = groups.length > 1 ? ` · ${groups.length} ${unitNoun(parsed.format, groups.length)} detected` : ''
+        toast.success(`File ${target} loaded`, `${best.rowCount} rows · ${best.columns.length} columns${extra}`)
       } catch (e) {
         toast.error(`Could not read file ${target}`, (e as Error).message)
       } finally {
@@ -210,8 +264,21 @@ export default function DeltaAnalystPage() {
     const file = which === 'A' ? fileA : fileB
     if (!file) return
     const g = file.groups.find((x) => x.name === name)
-    if (!g) return
-    const updated: Slot = { ...file, selectedGroup: name, rows: g.rows, columns: g.columns }
+    if (!g || g.rows.length === 0) return
+    const current = file.selectedGroups ?? [file.selectedGroup]
+    const selected = current.includes(name)
+      ? current.filter((n) => n !== name)
+      : [...current, name]
+    if (selected.length === 0) return
+    const picked = file.groups.filter((x) => selected.includes(x.name))
+    const merged = mergeSlotGroups(picked)
+    const updated: Slot = {
+      ...file,
+      selectedGroup: selected.join(', '),
+      selectedGroups: selected,
+      rows: merged.rows,
+      columns: merged.columns,
+    }
     if (which === 'A') setFileA(updated)
     else setFileB(updated)
   }
@@ -896,14 +963,6 @@ function FileSlot({
           <div className="flex flex-wrap items-center gap-3 px-4 py-3 text-xs text-[var(--text-muted)]">
             <FileSpreadsheet size={13} aria-hidden />
             <span>{file.rows.length} rows · {file.columns.length} columns</span>
-            {file.groups.length > 1 && (
-              <label className="ml-auto flex items-center gap-1.5 font-semibold">
-                {file.format === 'pdf' ? 'Page' : 'Sheet'}
-                <select className="input py-1! text-xs!" value={file.selectedGroup} onChange={(e) => onSelectGroup(e.target.value)}>
-                  {file.groups.map((g) => <option key={g.name} value={g.name}>{g.name} ({g.rowCount})</option>)}
-                </select>
-              </label>
-            )}
             <Button variant="ghost" size="sm" onClick={() => inputRef.current?.click()} disabled={busy}>
               {busy ? 'Reading…' : 'Replace'}
             </Button>
@@ -920,6 +979,45 @@ function FileSlot({
             <span className="text-sm font-bold">{busy ? 'Reading…' : `Drop file ${side}`}</span>
             <span className="text-xs text-[var(--text-muted)]">{formatHint()}</span>
           </button>
+        )}
+        {file && file.groups.length > 0 && (
+          <div className="border-t border-[var(--border)] px-4 py-3">
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
+              {file.groups.length} {unitNoun(file.format, file.groups.length)} detected
+              {(file.selectedGroups ?? []).length > 1 ? ` · ${file.selectedGroups.length} combined` : ''}
+            </div>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label={`Choose ${unitNoun(file.format, 2)} to compare`}>
+              {file.groups.map((g) => {
+                const on = (file.selectedGroups ?? [file.selectedGroup]).includes(g.name)
+                const empty = g.rows.length === 0
+                return (
+                  <button
+                    key={g.name}
+                    type="button"
+                    disabled={empty}
+                    aria-pressed={on}
+                    title={g.warnings?.join(' ') || `${g.rowCount} rows`}
+                    onClick={() => onSelectGroup(g.name)}
+                    className={`rounded-lg border px-2.5 py-1 text-left text-[11px] font-semibold transition ${
+                      empty
+                        ? 'cursor-not-allowed border-[var(--border)] text-[var(--text-muted)] opacity-50'
+                        : on
+                          ? 'border-[var(--accent)] bg-[rgba(14,116,144,0.12)] text-[var(--text)]'
+                          : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text-dim)] hover:border-[var(--accent)]'
+                    }`}
+                  >
+                    {g.name}
+                    <span className="ml-1 font-normal text-[var(--text-muted)]">{empty ? 'empty' : `${g.rowCount}`}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {file.groups.some((g) => g.warnings?.length) && (
+              <p className="mt-2 text-[11px] text-[var(--warn)]">
+                {file.groups.filter((g) => g.warnings?.length).map((g) => `${g.name}: ${g.warnings!.join(' ')}`).join(' · ')}
+              </p>
+            )}
+          </div>
         )}
       </GlassCard>
     </div>
