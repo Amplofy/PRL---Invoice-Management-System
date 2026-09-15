@@ -1385,7 +1385,6 @@ function PoTemplatePanel({ settings, setSettings }: { settings: Setting[]; setSe
           <PoSlot label="Order Number value" value={config.orderNumberField} onChange={(v) => patch({ orderNumberField: v })} />
           <PoSlot label="Cost Center value" value={config.costCenterField} onChange={(v) => patch({ costCenterField: v })} />
           <PoSlot label="Cost Element value" value={config.costElementField} onChange={(v) => patch({ costElementField: v })} />
-          <PoSlot label="Cheque No. value" value={config.chequeNoField} onChange={(v) => patch({ chequeNoField: v })} />
           <PoSlot label="Amount value" value={config.amountField} onChange={(v) => patch({ amountField: v })} />
         </div>
       </GlassCard>

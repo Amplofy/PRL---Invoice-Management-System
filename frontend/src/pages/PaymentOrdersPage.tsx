@@ -587,7 +587,7 @@ export default function PaymentOrdersPage() {
                 {col.show('released_via') && <SortableTh label="Released Via" columnKey="released_via" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('release_reference') && <HeaderTh columnKey="release_reference">Reference</HeaderTh>}
                 {col.show('status') && <SortableTh label="Status" columnKey="status" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
-                <HeaderTh columnKey="action">Action</HeaderTh>
+                <HeaderTh columnKey="action" align="center">Action</HeaderTh>
               </tr>
             </thead>
             <tbody>
@@ -624,8 +624,8 @@ export default function PaymentOrdersPage() {
                         </div>
                       </td>
                     )}
-                    <td>
-                      <div className="flex items-center gap-1">
+                    <td className="action-cell">
+                      <div className="flex items-center justify-center gap-1">
                         {finance && isAwaitingFinance(o.status) && (
                           <>
                             <Button variant="success" size="sm" className="btn-icon" title="Approve & Release" aria-label="Approve & Release" onClick={() => openClear(o)}>

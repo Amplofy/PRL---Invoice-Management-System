@@ -943,13 +943,14 @@ select.input {
   padding: 1.15rem 1.2rem 0.95rem;
 }
 .insight-ico {
-  display: flex;
-  height: 2.15rem;
-  width: 2.15rem;
+  display: inline-flex;
+  height: 2.5rem;
+  width: 2.5rem;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 0.55rem;
+  border-radius: 0.75rem;
+  color: #fff;
 }
 .insight-head {
   display: flex;
@@ -1299,7 +1300,7 @@ table.data-table {
 .data-table thead { position: sticky; top: 0; z-index: 1; }
 .data-table th {
   text-align: left;
-  padding: 0.62rem 0.8rem;
+  padding: 0.62rem 0.62rem;
   background: var(--table-head-bg);
   color: var(--text-dim);
   font-size: 0.7rem;
@@ -1348,13 +1349,20 @@ body.is-col-resizing {
   text-overflow: ellipsis;
 }
 .data-table td {
-  padding: 0.6rem 0.8rem;
+  padding: 0.6rem 0.62rem;
   border-bottom: 1px solid color-mix(in srgb, var(--table-border) 62%, transparent);
   color: var(--text);
   white-space: nowrap;
 }
 .data-table td.cell-wrap { white-space: normal; }
 .data-table td.max-w-md { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; }
+.data-table th[data-col="action"],
+.data-table td.action-cell {
+  width: 1%;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  white-space: nowrap;
+}
 .data-table tbody tr { transition: background 0.18s ease, transform 0.18s ease; }
 .data-table tbody tr:hover { background: var(--table-row-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
@@ -2588,8 +2596,8 @@ body.qa-lift .qa-root {
   transform: none;
 }
 
-.hud-ring { position: relative; }
-.hud-ring-svg { width: 100%; height: 210px; display: block; }
+.hud-ring { position: relative; --hud-size: 260px; }
+.hud-ring-svg { width: 100%; max-width: var(--hud-size); height: var(--hud-size); display: block; margin-inline: auto; }
 .hud-ring-well {
   fill: none;
   stroke: color-mix(in srgb, var(--text-muted) 18%, transparent);
@@ -2610,7 +2618,7 @@ body.qa-lift .qa-root {
   left: 50%;
   top: 0;
   display: flex;
-  height: 210px;
+  height: var(--hud-size);
   width: 100%;
   transform: translateX(-50%);
   align-items: center;

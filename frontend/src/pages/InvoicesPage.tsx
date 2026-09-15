@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Languages, Banknote, Clock, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
-import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
+import { formatMoney, formatDate, formatAmountWords, formatServicePeriod } from '../lib/format'
 import { catalogLocations, contractUtilization, contractStatusLabel, isSelectableContract, isSignedOff, matrixForContract, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -764,11 +764,7 @@ export default function InvoicesPage() {
                   {col.show('cost_element') && <td className="text-xs">{inv.cost_element ?? '—'}</td>}
                   {col.show('budget_fy') && <td className="text-xs">{invoiceBudgetFy(inv) ?? '—'}</td>}
                   {col.show('service_period') && (
-                    <td className="text-xs">
-                      {inv.service_from || inv.service_to
-                        ? `${formatDate(inv.service_from)} – ${formatDate(inv.service_to)}`
-                        : '—'}
-                    </td>
+                    <td className="text-xs">{formatServicePeriod(inv.service_from, inv.service_to) ?? '—'}</td>
                   )}
                   {col.show('amount') && <td className="text-right font-semibold">{formatMoney(inv.amount)}</td>}
                   {col.show('status') && (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Download, TrendingUp, TrendingDown, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, Clock, Banknote, FileSpreadsheet, Lock, CalendarRange, Building2 } from 'lucide-react'
 import {
   Chart as ChartJS,
@@ -136,6 +136,33 @@ const TONE_ACCENT: Record<Tone, string> = {
   purple: '#8b5cf6',
 }
 
+const INSIGHT_GLYPH: Record<string, ReactNode> = {
+  util: (
+    <>
+      <path d="M12 2a10 10 0 1 0 10 10H12V2z" opacity=".45" />
+      <path d="M12 2a10 10 0 0 1 10 10H12V2z" />
+    </>
+  ),
+  pending: (
+    <>
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z" opacity=".45" />
+      <path d="M12.9 6.6h-1.9v6.3l5 3 .9-1.5-4-2.4z" />
+    </>
+  ),
+  vendor: (
+    <>
+      <path d="M4 19.2h16V21H4z" opacity=".45" />
+      <path d="M3 16l2.2-8.4 4.6 3.6L12 4.4l2.2 6.8 4.6-3.6L21 16H3z" />
+    </>
+  ),
+  accrual: (
+    <>
+      <path d="M12 2l8 3.2V11c0 5.1-3.3 9.2-8 11-4.7-1.8-8-5.9-8-11V5.2L12 2z" opacity=".45" />
+      <path d="M11.2 14.9l-2.4-2.4-1.5 1.5 3.9 3.9 6.5-6.5-1.5-1.5-5 5z" />
+    </>
+  ),
+}
+
 interface Insight {
   tone: Tone
   id: string
@@ -143,7 +170,6 @@ interface Insight {
   main: string
   left: string
   right: string
-  energy: 'pulse' | 'sweep' | 'spark' | 'breath'
 }
 
 export default function ReportsPage() {
@@ -601,7 +627,6 @@ export default function ReportsPage() {
         left: `Released Rs ${formatMoney(kpi.yearReleased)}`,
         right: `Yearly Rs ${formatMoney(kpi.budget)}`,
         tone: kpi.utilization > 90 ? 'err' : kpi.utilization > 70 ? 'warn' : 'ok',
-        energy: 'pulse',
       },
       {
         id: 'pending',
@@ -610,7 +635,6 @@ export default function ReportsPage() {
         left: `Pending Rs ${formatMoney(kpi.pending)}`,
         right: `Approved Rs ${formatMoney(kpi.approved)}`,
         tone: pendingPct > 40 ? 'warn' : 'primary',
-        energy: 'sweep',
       },
       {
         id: 'vendor',
@@ -619,7 +643,6 @@ export default function ReportsPage() {
         left: lead ? `Rs ${formatMoney(lead.total)}` : 'No vendor spend',
         right: lead ? `${leadShare.toFixed(0)}% of scoped` : METRIC_LABELS[metric],
         tone: 'purple',
-        energy: 'spark',
       },
       {
         id: 'accrual',
@@ -628,7 +651,6 @@ export default function ReportsPage() {
         left: `Prior Rs ${formatMoney(accrualCover.prior)}`,
         right: `Keep Rs ${formatMoney(accrualCover.keep)}`,
         tone: 'ok',
-        energy: 'breath',
       },
     ]
   }, [kpi, byVendor, metric, accrualCover])
@@ -1205,7 +1227,6 @@ export default function ReportsPage() {
       {view === 'overview' && (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
           {insightCards.map((ins, i) => {
-            const Icon = ins.id === 'util' ? Gauge : ins.id === 'pending' ? Clock : ins.id === 'vendor' ? Building2 : Wallet
             return (
             <div
               key={ins.id}
@@ -1215,11 +1236,16 @@ export default function ReportsPage() {
               <div className="insight-head">
                 <span
                   className="insight-ico"
-                  style={{ background: `color-mix(in srgb, ${TONE_ACCENT[ins.tone]} 15%, transparent)`, color: TONE_ACCENT[ins.tone] }}
+                  style={{
+                    background: `linear-gradient(135deg, ${TONE_ACCENT[ins.tone]}, color-mix(in srgb, ${TONE_ACCENT[ins.tone]} 58%, #08122b))`,
+                    boxShadow: `0 7px 16px color-mix(in srgb, ${TONE_ACCENT[ins.tone]} 38%, transparent)`,
+                  }}
                 >
-                  <Icon size={14} />
+                  <svg viewBox="0 0 24 24" width={20} height={20} fill="#fff" aria-hidden="true">
+                    {INSIGHT_GLYPH[ins.id]}
+                  </svg>
                 </span>
-                <span className="insight-kicker">{ins.title}</span>
+                <span className="insight-kicker" style={{ color: TONE_ACCENT[ins.tone] }}>{ins.title}</span>
               </div>
               <div className="insight-body">
                 <div className="insight-main">{ins.main}</div>
@@ -1470,7 +1496,7 @@ export default function ReportsPage() {
             <Banknote size={13} className="text-[var(--accent-3)]" /> Monthly cash pipeline · {reportFy}
           </span>
           <p className="mt-1 text-xs text-[var(--text-dim)]">Approved invoices vs pay orders generated vs amount released</p>
-          <ChartStage className="mt-5 h-56" color={c.accent3} values={paymentMonthly.map((m) => m.released)}>
+          <ChartStage className="mt-5 h-72" color={c.accent3} values={paymentMonthly.map((m) => m.released)}>
             <Line
               data={{
                 labels: paymentMonthly.map((m) => m.label),

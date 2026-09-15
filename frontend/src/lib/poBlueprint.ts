@@ -1,4 +1,4 @@
-import { formatAmountWords, formatDate, formatMoney } from './format'
+import { formatAmountWords, formatDate, formatMoney, formatServicePeriod } from './format'
 import { releasedViaLabel } from './accrual'
 
 export interface PoPrintInvoice {
@@ -107,7 +107,6 @@ export interface PoTemplateConfig {
   orderNumberField: string
   costCenterField: string
   costElementField: string
-  chequeNoField: string
   amountField: string
   rows: PoTemplateRow[]
   signatories: string[]
@@ -135,8 +134,8 @@ export const DEFAULT_PO_CONFIG: PoTemplateConfig = {
   notePlaceholder: 'chequeNo',
   toLabel: 'To',
   vendorPlaceholder: 'vendorName',
-  dateLabel: 'Date :',
-  datePlaceholder: 'processingDateShort',
+  dateLabel: 'Date',
+  datePlaceholder: 'processingDate',
   sumLabel: 'The sum of Rupees',
   sumPlaceholder: 'amountWords',
   columns: {
@@ -148,10 +147,9 @@ export const DEFAULT_PO_CONFIG: PoTemplateConfig = {
     chequeNo: 'Cheque No.',
     amount: 'Amount',
   },
-  orderNumberField: 'poNo',
+  orderNumberField: '',
   costCenterField: 'costCenter',
   costElementField: 'costElement',
-  chequeNoField: 'chequeNo',
   amountField: 'amount',
   rows: [
     { caption: 'Invoice No. & Date', placeholder: 'invoiceLine', enabled: true },
@@ -241,12 +239,7 @@ function vesselLine(inv: PoPrintInvoice | null): string {
 
 function servicePeriod(inv: PoPrintInvoice | null): string {
   if (!inv) return ''
-  const fromText = formattedDay(inv.service_from)
-  const toText = formattedDay(inv.service_to)
-  if (fromText && toText) return `${fromText} – ${toText}`
-  if (fromText) return `From ${fromText}`
-  if (toText) return `To ${toText}`
-  return ''
+  return formatServicePeriod(inv.service_from, inv.service_to) ?? ''
 }
 
 function processingDate(order: PoPrintOrder): string {
@@ -302,7 +295,7 @@ function buildContext(order: PoPrintOrder, extras: PoPrintExtras): Record<string
     servicePeriod: esc(servicePeriod(inv)),
     remarks: esc(clean(inv?.remarks)),
     logoUrl: esc(extras.logoUrl),
-    payCashChecked: byCheque || otherMode ? '' : 'X',
+    payCashChecked: !byCheque && clean(order.released_via) ? 'X' : '',
     payChequeChecked: byCheque ? 'X' : '',
   }
 }
@@ -329,7 +322,7 @@ export function parsePoTemplate(raw: string | null | undefined): PoTemplateConfi
 function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): string {
   const value = (key: string): string => (key && ctx[key] ? ctx[key] : '')
 
-  const rows = config.rows.filter((row) => row.enabled !== false)
+  const rows = config.rows.filter((row) => row.enabled !== false && value(row.placeholder))
   const rowsHtml =
     rows
       .map((row, index) => {
@@ -339,18 +332,22 @@ function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): st
             ? `<td class="code">${value(config.orderNumberField) || '&nbsp;'}</td>
           <td class="code">${value(config.costCenterField) || '&nbsp;'}</td>
           <td class="code">${value(config.costElementField) || '&nbsp;'}</td>
-          <td class="code">${value(config.chequeNoField) || '&nbsp;'}</td>
           <td class="num">${value(config.amountField) || '&nbsp;'}</td>`
-            : '<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>'
+            : '<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>'
         return `<tr>
-          <td class="lead"><span class="cap">${esc(row.caption)}</span>${content ? `<span class="val">${content}</span>` : ''}</td>
+          <td class="lead"><span class="cap">${esc(row.caption)}</span><span class="val">${content}</span></td>
           ${codes}
         </tr>`
       })
-      .join('\n        ') || '<tr><td class="lead">&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
+      .join('\n        ')
 
-  const signatories = config.signatories.slice(0, 4)
-  const heads = signatories.map((label) => `<th class="foot-head">${esc(label)}</th>`).join('\n          ')
+  const signatories = config.signatories.filter((label) => clean(label)).slice(0, 4)
+  const sigHtml = signatories
+    .map(
+      (label) =>
+        `<div class="sig"><div class="sig-role">${esc(label)}</div><div class="sig-space"></div><div class="sig-line">Signature &amp; Date</div></div>`,
+    )
+    .join('\n        ')
 
   const rowHeight = Number(config.rowHeight)
   const fontSize = Number(config.fontSize)
@@ -366,243 +363,312 @@ function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): st
 <head>
   <meta charset="utf-8" />
   <title>${esc(config.title)} ${value('poNo')}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
+    :root {
+      --ink: #1f2937;
+      --ink-strong: #111827;
+      --soft: #4b5563;
+      --muted: #64748b;
+      --faint: #94a3b8;
+      --line: #cbd5e1;
+      --line-soft: #e2e8f0;
+      --brand: #1e3a8a;
+      --brand-ink: #16295f;
+      --brand-tint: #eef2fb;
+      --brand-tint-2: #dfe6f5;
+      --brand-line: #b8c6e3;
+    }
     @page { size: A4 portrait; margin: 14mm 12mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body {
       margin: 0;
-      color: #0f172a;
+      color: var(--ink);
       background: #fff;
-      font-family: Arial, Helvetica, sans-serif;
+      font-family: 'Inter', 'Helvetica Neue', Arial, Helvetica, sans-serif;
       font-size: 11px;
-      line-height: 1.35;
+      line-height: 1.45;
       font-variant-numeric: tabular-nums;
+      -webkit-font-smoothing: antialiased;
     }
     .sheet { width: 186mm; max-width: 100%; margin: 0 auto; }
-    .rule { border-bottom: 1px solid #0f172a; }
     .cap {
       font-size: 8px;
-      font-weight: 700;
-      letter-spacing: 0.11em;
+      font-weight: 600;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: #475569;
+      color: var(--brand);
     }
-    .title {
-      margin: 0 0 14px;
-      text-align: center;
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
-    .mast {
+
+    /* masthead */
+    .masthead {
       display: flex;
-      align-items: flex-start;
+      align-items: flex-end;
       justify-content: space-between;
       gap: 20px;
-      padding-bottom: 11px;
-      border-bottom: 1.5px solid #0f172a;
+      padding-bottom: 10px;
+      border-bottom: 2px solid var(--brand);
     }
-    .brand { display: flex; align-items: center; gap: 10px; }
-    .brand img { height: 34px; width: auto; }
-    .brand h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: 0.05em; }
-    .doc { display: grid; grid-template-columns: auto 42mm; gap: 7px 10px; align-items: end; }
-    .doc .rule { height: 15px; }
-    .doc .rule.strong { font-weight: 700; }
-    .strip {
-      display: grid;
-      grid-template-columns: 26mm 1fr 38mm;
-      align-items: end;
-      gap: 18px;
-      margin: 15px 0 4px;
-    }
-    .pay-modes { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-    .pay-modes .cap { margin-bottom: 1px; }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand img { height: 36px; width: auto; }
+    .brand .company { font-size: 15px; font-weight: 600; letter-spacing: 0.03em; color: var(--brand-ink); }
+    .doc { text-align: right; }
+    .doc .title { font-size: 18px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: var(--brand); }
+    .doc .fd { margin-top: 3px; font-size: 8px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+
+    /* references */
+    .refs { display: flex; justify-content: space-between; gap: 18px; padding: 10px 0 11px; }
+    .ref { display: flex; flex-direction: column; gap: 3px; min-width: 46mm; text-align: left; }
+    .ref.right { align-items: flex-end; text-align: right; }
+    .ref .cap { color: var(--muted); }
+    .ref .val { min-height: 14px; font-weight: 600; }
+    .ref .val.write { min-width: 46mm; padding-bottom: 2px; border-bottom: 1px solid var(--brand-line); }
+    .ref .val.strong { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--brand-ink); }
+
+    /* summary block */
+    .summary { border: 1px solid var(--brand-line); border-radius: 6px; overflow: hidden; }
+    .sum-top { display: grid; grid-template-columns: auto 1fr 42mm; align-items: stretch; }
+    .sum-top .cell { padding: 7px 12px 8px; }
+    .sum-top .cell + .cell { border-left: 1px solid var(--line-soft); }
+    .sum-top .cap { display: block; margin-bottom: 4px; }
+    .modes { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 16px; }
     .opt { display: inline-flex; align-items: center; gap: 6px; }
     .box {
-      width: 11px;
-      height: 11px;
+      width: 12px;
+      height: 12px;
       flex: 0 0 auto;
-      border: 1px solid #0f172a;
+      border: 1px solid var(--brand);
+      border-radius: 2px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 8px;
-      font-weight: 700;
+      font-size: 9px;
+      font-weight: 600;
       line-height: 1;
+      color: var(--brand);
     }
-    .mode-note { font-size: 8.5px; color: #475569; letter-spacing: 0.04em; }
-    .field { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: end; }
-    .field .rule { min-height: 17px; font-weight: 600; padding: 0 3px 1px; }
-    .sum {
-      display: grid;
-      grid-template-columns: 30mm 1fr;
-      gap: 8px;
-      align-items: end;
-      margin: 9px 0 14px;
+    .box:not(:empty) { background: var(--brand); color: #fff; }
+    .mode-note { font-size: 9px; color: var(--muted); }
+    .val { font-size: 11.5px; font-weight: 600; }
+    .val.strong { font-size: 11.5px; font-weight: 600; }
+    .sum-words {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 8px 12px;
+      border-top: 1px solid var(--brand-line);
+      background: var(--brand-tint);
     }
-    .sum .rule { min-height: 18px; font-weight: 700; padding: 0 3px 1px; }
+    .sum-words .cap { flex: 0 0 auto; }
+    .sum-words .val { font-size: 11.5px; font-weight: 600; color: var(--brand-ink); }
+
+    /* particulars grid */
     table.grid {
       width: 100%;
+      margin-top: 12px;
       border-collapse: collapse;
       table-layout: fixed;
+      border: 1px solid var(--brand-line);
     }
     table.grid th,
     table.grid td {
-      border: 1px solid #0f172a;
-      padding: 6px 7px;
+      padding: 6px 9px;
       vertical-align: middle;
+      border: 1px solid var(--line);
     }
     table.grid thead th {
+      background: var(--brand);
       text-align: center;
       font-size: 8px;
-      font-weight: 700;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      line-height: 1.25;
-      padding: 7px 5px;
-    }
-    .lead { text-align: left; }
-    .lead .cap { display: block; margin-bottom: 2px; }
-    .lead .val { font-weight: 600; }
-    .code { text-align: center; }
-    .num { text-align: right; font-weight: 700; }
-    .foot-gap { margin-top: -1px; }
-    .foot-head {
-      text-align: center;
-      vertical-align: top;
-      font-size: 8px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
+      font-weight: 600;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
       line-height: 1.3;
+      color: #fff;
     }
-    .foot-total { text-align: center; vertical-align: middle; font-size: 9px; }
-    .foot-value { text-align: right; vertical-align: middle; font-size: 12px; font-weight: 700; }
-    .sig-cell { height: 96px; }
-    .recv-cell { font-size: 9.5px; line-height: 1.4; vertical-align: top; }
-    .payee-cell { text-align: center; vertical-align: bottom; height: 42px; }
-    .payee {
-      display: block;
-      padding-top: 3px;
-      border-top: 1px solid #0f172a;
-      font-size: 9px;
-      letter-spacing: 0.03em;
+    .lead { text-align: left; }
+    .lead .cap { display: block; margin-bottom: 3px; }
+    .lead .val { font-weight: 600; font-size: 11.5px; }
+    .code { text-align: center; color: var(--soft); font-size: 11.5px; }
+    .num { text-align: right; font-weight: 600; font-size: 11.5px; }
+    .total-row td { background: var(--brand-tint-2); border-top: 1.5px solid var(--brand); }
+    .total-label {
+      text-align: right;
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--brand-ink);
     }
+    .total-amt { font-size: 11.5px; font-weight: 600; color: var(--brand-ink); }
+
+    /* authorisation */
+    .signatures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+    .sig {
+      display: flex;
+      flex-direction: column;
+      min-height: 32mm;
+      border: 1px solid var(--brand-line);
+      border-top: 2px solid var(--brand);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .sig-role {
+      padding: 9px 11px 0;
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--brand-ink);
+      line-height: 1.4;
+    }
+    .sig-space { flex: 1 1 auto; }
+    .sig-line {
+      margin: 0 11px;
+      padding: 4px 0 7px;
+      border-top: 1px solid var(--line);
+      font-size: 7.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+      text-align: center;
+    }
+
+    /* receipt */
+    .receipt {
+      display: grid;
+      grid-template-columns: 1fr 62mm;
+      gap: 22px;
+      align-items: end;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line-soft);
+    }
+    .receipt .cap { display: block; margin-bottom: 5px; }
+    .recv { font-size: 10.5px; line-height: 1.5; color: var(--soft); }
+    .payee-block { text-align: center; }
+    .payee-block .cap { color: var(--muted); }
+    .payee-rule { height: 68px; border-bottom: 1px solid var(--brand); margin-bottom: 5px; }
+
+    /* remarks */
     .remarks {
-      margin-top: 13px;
-      padding-top: 8px;
-      border-top: 1px solid #0f172a;
+      margin-top: 12px;
+      padding: 9px 12px;
+      border: 1px solid var(--line-soft);
+      border-left: 3px solid var(--brand);
+      border-radius: 4px;
+      background: var(--brand-tint);
       font-size: 9.5px;
-      line-height: 1.5;
-      color: #334155;
+      line-height: 1.55;
+      color: var(--muted);
     }
-    .remarks .cap { display: block; margin-bottom: 3px; color: #0f172a; letter-spacing: 0.12em; }
-    .remarks .note { margin-top: 5px; color: #0f172a; font-weight: 600; }
-    .fd { margin-top: 11px; font-size: 9px; letter-spacing: 0.08em; color: #475569; }
+    .remarks .cap { display: block; margin-bottom: 3px; color: var(--brand-ink); }
+    .remarks .note { margin-top: 4px; color: var(--ink-strong); font-weight: 600; }
+    .fd { margin-top: 10px; font-size: 8px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
     @media print { .sheet { width: auto; } }
     ${spacing}
   </style>
 </head>
 <body>
   <div class="sheet">
-    <div class="title">${esc(config.title)}</div>
-
-    <div class="mast">
+    <header class="masthead">
       <div class="brand">
-        <img src="${value('logoUrl')}" alt="logo" />
-        <h1>${esc(config.company)}</h1>
+        ${value('logoUrl') ? `<img src="${value('logoUrl')}" alt="" />` : ''}
+        <div class="company">${esc(config.company)}</div>
       </div>
       <div class="doc">
-        <span class="cap">${esc(config.docLabel)}</span>
-        <div class="rule">${value(config.docPlaceholder)}</div>
-        <span class="cap">${esc(config.poLabel)}</span>
-        <div class="rule strong">${value(config.poPlaceholder)}</div>
+        <div class="title">${esc(config.title)}</div>
+        <div class="fd">${esc(config.fdLabel)}</div>
       </div>
-    </div>
+    </header>
 
-    <div class="strip">
-      <div class="pay-modes">
-        <span class="cap">${esc(config.payLabel)}</span>
-        <span class="opt"><span class="box">${value('payCashChecked')}</span> ${esc(config.cashLabel)}</span>
-        <span class="opt"><span class="box">${value('payChequeChecked')}</span> ${esc(config.chequeLabel)}</span>
-        ${value(config.notePlaceholder) ? `<span class="mode-note">${value(config.notePlaceholder)}</span>` : ''}
-      </div>
-      <div class="field">
-        <span class="cap">${esc(config.toLabel)}</span>
-        <div class="rule">${value(config.vendorPlaceholder)}</div>
-      </div>
-      <div class="field">
-        <span class="cap">${esc(config.dateLabel)}</span>
-        <div class="rule">${value(config.datePlaceholder)}</div>
-      </div>
-    </div>
+    <section class="refs">
+      <div class="ref"><span class="cap">${esc(config.docLabel)}</span><span class="val write">${value(config.docPlaceholder)}</span></div>
+      <div class="ref right"><span class="cap">${esc(config.poLabel)}</span><span class="val strong">${value(config.poPlaceholder)}</span></div>
+    </section>
 
-    <div class="sum">
-      <span class="cap">${esc(config.sumLabel)}</span>
-      <div class="rule">${value(config.sumPlaceholder)}</div>
-    </div>
+    <section class="summary">
+      <div class="sum-top">
+        <div class="cell">
+          <span class="cap">${esc(config.payLabel)}</span>
+          <div class="modes">
+            <span class="opt"><span class="box">${value('payCashChecked')}</span>${esc(config.cashLabel)}</span>
+            <span class="opt"><span class="box">${value('payChequeChecked')}</span>${esc(config.chequeLabel)}</span>
+            ${value(config.notePlaceholder) ? `<span class="mode-note">${value(config.notePlaceholder)}</span>` : ''}
+          </div>
+        </div>
+        <div class="cell">
+          <span class="cap">${esc(config.toLabel)}</span>
+          <span class="val strong">${value(config.vendorPlaceholder)}</span>
+        </div>
+        <div class="cell">
+          <span class="cap">${esc(config.dateLabel)}</span>
+          <span class="val">${value(config.datePlaceholder)}</span>
+        </div>
+      </div>
+      <div class="sum-words">
+        <span class="cap">${esc(config.sumLabel)}</span>
+        <span class="val">${value(config.sumPlaceholder)}</span>
+      </div>
+    </section>
 
     <table class="grid">
       <colgroup>
-        <col style="width:39%" />
-        <col style="width:17%" />
-        <col style="width:11%" />
-        <col style="width:11.5%" />
-        <col style="width:10%" />
-        <col style="width:11.5%" />
+        <col style="width:42%" />
+        <col style="width:15%" />
+        <col style="width:15%" />
+        <col style="width:14%" />
+        <col style="width:14%" />
       </colgroup>
       <thead>
         <tr>
           <th rowspan="2" class="lead">${esc(config.columns.lead)}</th>
           <th rowspan="2">${esc(config.columns.orderNumber)}</th>
           <th colspan="2">${esc(config.columns.vendorNo)}</th>
-          <th rowspan="2">${esc(config.columns.chequeNo)}</th>
-          <th rowspan="2">${esc(config.columns.amount)}</th>
+          <th>${esc(config.columns.chequeNo)}</th>
         </tr>
         <tr>
           <th>${esc(config.columns.costCenter)}</th>
           <th>${esc(config.columns.costElement)}</th>
+          <th>${esc(config.columns.amount)}</th>
         </tr>
       </thead>
       <tbody>
         ${rowsHtml}
+        <tr class="total-row">
+          <td class="total-label" colspan="4">${esc(config.totalLabel)}</td>
+          <td class="num total-amt">${value(config.totalPlaceholder)}</td>
+        </tr>
       </tbody>
     </table>
 
-    <table class="grid foot-gap">
-      <colgroup>
-        <col style="width:39%" />
-        <col style="width:17%" />
-        <col style="width:11%" />
-        <col style="width:11.5%" />
-        <col style="width:10%" />
-        <col style="width:11.5%" />
-      </colgroup>
-      <tbody>
-        <tr>
-          ${heads}
-          <th class="foot-total">${esc(config.totalLabel)}</th>
-          <th class="foot-value">${value(config.totalPlaceholder)}</th>
-        </tr>
-        <tr>
-          <td class="sig-cell" colspan="4" rowspan="2"></td>
-          <td class="recv-cell" colspan="2">${esc(config.receivedText)}</td>
-        </tr>
-        <tr>
-          <td class="payee-cell" colspan="2"><span class="payee">${esc(config.payeeLabel)}</span></td>
-        </tr>
-      </tbody>
-    </table>
+    <section class="signatures">
+      ${sigHtml}
+    </section>
+
+    <section class="receipt">
+      <div class="recv">${esc(config.receivedText)}</div>
+      <div class="payee-block">
+        <div class="payee-rule"></div>
+        <span class="cap">${esc(config.payeeLabel)}</span>
+      </div>
+    </section>
 
     <div class="remarks">
       <span class="cap">${esc(config.remarksLabel)}</span>
       ${esc(config.remarksText)}
       ${value('remarks') ? `<div class="note">${value('remarks')}</div>` : ''}
     </div>
-    <div class="fd">${esc(config.fdLabel)}</div>
   </div>
-  <script>window.print()</script>
+  <script>
+    (function () {
+      var go = function () { window.print(); };
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(go);
+      else go();
+    })();
+  </script>
 </body>
 </html>`
 }

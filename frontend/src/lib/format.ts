@@ -37,6 +37,33 @@ export function formatDate(value: string | Date | null | undefined): string {
   return `${String(p.d).padStart(2, '0')}-${months[p.m - 1]}-${p.y}`
 }
 
+/** Inclusive day count between two civil dates. */
+export function serviceDayCount(from: string | null | undefined, to: string | null | undefined): number | null {
+  const a = from ? parseCalendarYmd(from) : null
+  const b = to ? parseCalendarYmd(to) : null
+  if (!a || !b) return null
+  const diff = Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / 86400000)
+  return diff >= 0 ? diff + 1 : null
+}
+
+/**
+ * Service period text. A single date prints once, a span prints as a range;
+ * the inclusive day count is appended whenever both dates are present.
+ */
+export function formatServicePeriod(from: string | null | undefined, to: string | null | undefined): string | null {
+  const hasFrom = Boolean(from && parseCalendarYmd(from))
+  const hasTo = Boolean(to && parseCalendarYmd(to))
+  if (!hasFrom && !hasTo) return null
+  const days = serviceDayCount(from, to)
+  const dayText = days ? ` (${days} day${days === 1 ? '' : 's'})` : ''
+  if (hasFrom && hasTo) {
+    const fromText = formatDate(from)
+    const toText = formatDate(to)
+    return fromText === toText ? `${fromText}${dayText}` : `${fromText} – ${toText}${dayText}`
+  }
+  return hasFrom ? `From ${formatDate(from)}` : `To ${formatDate(to)}`
+}
+
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return '—'
   const d = typeof value === 'string' ? new Date(value) : value
