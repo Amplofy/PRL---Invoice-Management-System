@@ -21,7 +21,7 @@ import { normalizeInvoiceEmbed } from '../services/embed.js'
 export const paymentOrdersRouter = Router()
 
 const PO_SELECT =
-  '*, invoices(id, invoice_no, invoice_date, service_from, service_to, amount, approved_amount, status, cost_element, t1, t2, t3, contracts(contract_no, vendor_id, vendors(name, email)))'
+  '*, invoices(id, invoice_no, invoice_date, processing_date, service_from, service_to, amount, approved_amount, status, cost_element, t1, t2, t3, location, tanker_name, trips, item_no, remarks, contracts(contract_no, vendor_id, vendors(name, email)))'
 
 function actorKey(req: { user?: AuthUser }): string {
   return req.user?.id || req.user?.email || 'anon'

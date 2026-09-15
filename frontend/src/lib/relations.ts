@@ -34,3 +34,29 @@ export function vendorNameOf(source: unknown, empty = '—'): string {
 export function contractNoOf(source: unknown, empty = '—'): string {
   return walkName(source, 'contract_no') || empty
 }
+
+/** Vendor email from invoice/contract/PO embeds. */
+export function vendorEmailOf(source: unknown, empty = ''): string {
+  const walk = (src: unknown, depth: number): string => {
+    if (src == null || depth > 5) return ''
+    if (Array.isArray(src)) return walk(src[0], depth + 1)
+    if (typeof src !== 'object') return ''
+    const o = src as Record<string, unknown>
+    if (o.vendors != null) {
+      const nested = walk(o.vendors, depth + 1)
+      if (nested) return nested
+    }
+    const email = String(o.email ?? '').trim()
+    if (email.includes('@')) return email
+    if (o.contracts != null) {
+      const nested = walk(o.contracts, depth + 1)
+      if (nested) return nested
+    }
+    if (o.invoices != null) {
+      const nested = walk(o.invoices, depth + 1)
+      if (nested) return nested
+    }
+    return ''
+  }
+  return walk(source, 0) || empty
+}

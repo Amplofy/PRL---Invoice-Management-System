@@ -24,6 +24,25 @@ function actorKey(req: { user?: AuthUser }): string {
 type EmailInput = string | { email?: unknown; label?: unknown; is_primary?: unknown }
 type ServiceInput = { t1?: unknown; t2?: unknown; t3?: unknown; service_matrix_id?: unknown }
 
+function normalizeLocations(raw: unknown): string[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,;\n]/)
+      : []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of list) {
+    const s = String(item ?? '').trim()
+    if (!s) continue
+    const key = s.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(s)
+  }
+  return out
+}
+
 function normalizeVendorEmails(body: { email?: unknown; emails?: unknown }): Array<{ email: string; label: string; is_primary: boolean }> {
   const raw: EmailInput[] = Array.isArray(body.emails)
     ? (body.emails as EmailInput[])
@@ -386,6 +405,7 @@ masterRouter.post('/service-matrix', authRequired, requireRole('admin'), async (
         cost_element: body.cost_element,
         tanker_required: body.tanker_required ?? false,
         trips: body.trips ?? false,
+        locations: normalizeLocations(body.locations),
       })
       .select()
       .single()
@@ -412,6 +432,7 @@ masterRouter.put('/service-matrix/:id', authRequired, requireRole('admin'), asyn
         cost_element: body.cost_element,
         tanker_required: body.tanker_required ?? false,
         trips: body.trips ?? false,
+        locations: normalizeLocations(body.locations),
       })
       .eq('id', req.params.id)
       .select()

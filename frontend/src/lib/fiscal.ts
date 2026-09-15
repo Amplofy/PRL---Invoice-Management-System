@@ -1,6 +1,8 @@
 // Pakistan fiscal year helpers: FY runs 1 July – 30 June, labelled by the
 // calendar year in which it STARTS (e.g. Jul 2026 – Jun 2027 = FY26).
 
+import { calendarDateAtNoon } from './calendarDate'
+
 export type FiscalQuarter = 'Q1' | 'Q2' | 'Q3' | 'Q4'
 
 export interface FiscalInfo {
@@ -45,7 +47,7 @@ export function quarterOfDate(d: Date): FiscalQuarter {
 /** Fiscal year + quarter for an ISO date string; null when absent/invalid. */
 export function fiscalOf(dateStr: string | null | undefined): FiscalInfo | null {
   if (!dateStr) return null
-  const d = new Date(dateStr)
+  const d = calendarDateAtNoon(String(dateStr)) ?? new Date(dateStr)
   if (Number.isNaN(d.getTime())) return null
   return { fy: fiscalYearLabel(d), quarter: quarterOfDate(d) }
 }

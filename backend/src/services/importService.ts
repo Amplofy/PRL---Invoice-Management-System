@@ -22,9 +22,20 @@ function asNumber(v: unknown): number {
 }
 
 function asDate(v: unknown): string | null {
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    const utcMidnight =
+      v.getUTCHours() === 0 &&
+      v.getUTCMinutes() === 0 &&
+      v.getUTCSeconds() === 0 &&
+      v.getUTCMilliseconds() === 0
+    const y = utcMidnight ? v.getUTCFullYear() : v.getFullYear()
+    const mo = (utcMidnight ? v.getUTCMonth() : v.getMonth()) + 1
+    const d = utcMidnight ? v.getUTCDate() : v.getDate()
+    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  }
   const s = asString(v)
   if (!s) return null
-  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
   if (m) return `${m[1]}-${m[2]}-${m[3]}`
   m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s)
   if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
@@ -284,23 +295,24 @@ export async function applyImportRows(
     const approvedDate = str(row, 'approved_date')
     const payload = {
       serial_no: str(row, 'serial_no'),
-      processing_date: str(row, 'processing_date') ?? invoiceDate,
+      processing_date: asDate(str(row, 'processing_date')) ?? asDate(invoiceDate) ?? invoiceDate,
       contract_id: contract.id,
       invoice_no: invoiceNo,
-      invoice_date: invoiceDate,
+      invoice_date: asDate(invoiceDate) ?? invoiceDate,
       t1: str(row, 't1'),
       t2: str(row, 't2'),
       t3: str(row, 't3'),
+      location: str(row, 'location'),
       tanker_name: str(row, 'tanker_name'),
       trips: num(row, 'trips') === null ? null : Math.trunc(num(row, 'trips')!),
       item_no: str(row, 'item_no'),
       cost_element: str(row, 'cost_element'),
-      service_from: str(row, 'service_from'),
-      service_to: str(row, 'service_to'),
+      service_from: asDate(row.service_from),
+      service_to: asDate(row.service_to),
       amount,
       status: statusOf(row, INVOICE_STATUSES, 'Pending'),
       approved_by: str(row, 'approved_by'),
-      approved_date: approvedDate,
+      approved_date: asDate(approvedDate),
       approved_amount: num(row, 'approved_amount'),
       remarks: str(row, 'remarks'),
       updated_at: new Date().toISOString(),

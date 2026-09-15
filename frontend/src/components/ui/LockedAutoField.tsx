@@ -12,6 +12,9 @@ interface LockedAutoFieldProps {
   hint?: string
   type?: 'text' | 'date'
   placeholder?: string
+  compact?: boolean
+  /** Shown in the control; `value` is still what the override editor starts from. */
+  display?: string
 }
 
 export default function LockedAutoField({
@@ -21,6 +24,8 @@ export default function LockedAutoField({
   hint,
   type = 'text',
   placeholder = '—',
+  compact = false,
+  display,
 }: LockedAutoFieldProps) {
   const { unlocked } = useMasterAccess()
   const [open, setOpen] = useState(false)
@@ -30,6 +35,69 @@ export default function LockedAutoField({
     if (!unlocked) return
     setDraft(value)
     setOpen(true)
+  }
+
+  const shown = display || value || placeholder
+  const empty = !(display || value)
+
+  const editor = (
+    <Modal
+      open={open}
+      onClose={() => setOpen(false)}
+      title={`Override ${label}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              onCommit(draft.trim())
+              setOpen(false)
+            }}
+          >
+            Update value
+          </Button>
+        </>
+      }
+    >
+      <Field label={`New ${label}`}>
+        <input
+          className="input"
+          type={type}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              onCommit(draft.trim())
+              setOpen(false)
+            }
+          }}
+        />
+      </Field>
+    </Modal>
+  )
+
+  if (compact) {
+    return (
+      <span className="inline-flex">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1"
+          style={{ cursor: unlocked ? 'pointer' : 'default' }}
+          title={unlocked ? 'Master access: click to override' : hint || 'Auto-generated'}
+          onClick={click}
+        >
+          <span className="text-[0.58rem] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            {label}
+          </span>
+          <span className={`font-mono text-xs font-bold tracking-wide ${empty ? 'text-[var(--text-muted)]' : ''}`}>
+            {shown}
+          </span>
+          <Lock size={9} className="shrink-0 text-[var(--text-muted)]" />
+        </button>
+        {editor}
+      </span>
+    )
   }
 
   return (
@@ -53,43 +121,10 @@ export default function LockedAutoField({
         title={unlocked ? 'Master access: click to override' : hint || 'Auto-generated'}
         onClick={click}
       >
-        <span className={value ? '' : 'text-[var(--text-muted)]'}>{value || placeholder}</span>
+        <span className={empty ? 'text-[var(--text-muted)]' : ''}>{shown}</span>
         <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
       </button>
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={`Override ${label}`}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                onCommit(draft.trim())
-                setOpen(false)
-              }}
-            >
-              Update value
-            </Button>
-          </>
-        }
-      >
-        <Field label={`New ${label}`}>
-          <input
-            className="input"
-            type={type}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onCommit(draft.trim())
-                setOpen(false)
-              }
-            }}
-          />
-        </Field>
-      </Modal>
+      {editor}
     </div>
   )
 }

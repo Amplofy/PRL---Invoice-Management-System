@@ -4,6 +4,7 @@ import Modal from './ui/Modal'
 import Button from './ui/Button'
 import { QUARTERS, currentFiscalYear } from '../lib/fiscal'
 import {
+  REPORT_GROUP_BY,
   REPORT_STATUSES,
   REPORT_TEMPLATES,
   downloadGeneratedReport,
@@ -44,6 +45,7 @@ export default function GenerateReportDialog({
   const [statuses, setStatuses] = useState<string[]>([])
   const [includeAccruals, setIncludeAccruals] = useState(false)
   const [metric, setMetric] = useState<'spend' | 'invoices' | 'approved'>('spend')
+  const [groupBy, setGroupBy] = useState('Vendor')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -57,6 +59,7 @@ export default function GenerateReportDialog({
     setStatuses([])
     setIncludeAccruals(false)
     setMetric('spend')
+    setGroupBy('Vendor')
   }, [open, initialTemplate, initialFy, fyChoices])
 
   const vendorOptions = useMemo(() => {
@@ -73,11 +76,11 @@ export default function GenerateReportDialog({
     [data.invoices],
   )
 
-  const generate = () => {
+  const generate = async () => {
     setBusy(true)
     try {
       const selectedFys = fys.length ? fys : [...fyChoices]
-      downloadGeneratedReport(data, {
+      await downloadGeneratedReport(data, {
         template,
         fys: selectedFys,
         quarter,
@@ -87,6 +90,7 @@ export default function GenerateReportDialog({
         statuses,
         includeAccruals,
         metric,
+        groupBy,
       })
       onGenerated?.(`${template} · ${selectedFys.join(', ')}`)
       onClose()
@@ -166,6 +170,16 @@ export default function GenerateReportDialog({
               <option value="spend">Spend</option>
               <option value="invoices">Volume</option>
               <option value="approved">Approved</option>
+            </select>
+          </label>
+          <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+            Ledger subtotals
+            <select className="input mt-2" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+              {REPORT_GROUP_BY.map((g) => (
+                <option key={g.id || 'none'} value={g.id}>
+                  {g.label}
+                </option>
+              ))}
             </select>
           </label>
         </div>

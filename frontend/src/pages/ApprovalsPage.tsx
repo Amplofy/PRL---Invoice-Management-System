@@ -14,10 +14,11 @@ import Button from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
 import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
-import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useFyLock } from '../lib/FyLockProvider'
-import { invoiceBudgetDate } from '../lib/fiscal'
-import { contractNoOf, vendorNameOf } from '../lib/relations'
+import { invoiceBudgetDate, invoiceBudgetInfo } from '../lib/fiscal'
+import { contractNoOf, vendorEmailOf, vendorNameOf } from '../lib/relations'
 
 interface ApprovalInvoice {
   id: string
@@ -29,6 +30,7 @@ interface ApprovalInvoice {
   t1: string | null
   t2: string | null
   t3: string | null
+  location?: string | null
   tanker_name: string | null
   contracts: { contract_no: string | null; service: string | null; vendors: Array<{ name: string | null; email: string | null }> | null } | null
 }
@@ -98,7 +100,7 @@ export default function ApprovalsPage() {
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
     return pending.filter((i) =>
-      `${i.invoice_no ?? ''} ${vendorOf(i)} ${contractOf(i)} ${serviceOf(i)} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''}`.toLowerCase().includes(q),
+      `${i.invoice_no ?? ''} ${vendorOf(i)} ${contractOf(i)} ${serviceOf(i)} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''} ${i.location ?? ''}`.toLowerCase().includes(q),
     )
   }, [pending, search])
 
@@ -122,22 +124,56 @@ export default function ApprovalsPage() {
     [filtered, sortBy, sortDir],
   )
 
-  const exportCSV = () =>
-    downloadCSV(
-      `pending-approvals-${new Date().toISOString().slice(0, 10)}.csv`,
-      sorted.map((i) => ({
-        invoice_no: i.invoice_no ?? '',
-        invoice_date: i.invoice_date ?? '',
-        vendor: vendorOf(i),
-        contract: contractOf(i),
-        service: serviceOf(i),
-        type: i.t1 ?? '',
-        service_type: i.t2 ?? '',
-        detail: i.t3 ?? '',
-        amount: i.amount,
-        remarks: i.remarks ?? '',
-      })),
-    )
+  const exportExcel = async () => {
+    try {
+      await downloadTableWorkbook({
+        filename: `pending-approvals-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        title: 'Pending approvals',
+        subtitle: 'Full-column queue with grand total',
+        groupBy: 'Vendor',
+        filters: [{ label: 'Rows', value: String(sorted.length) }],
+        columns: [
+          { key: 'Invoice no', header: 'Invoice no', width: 16 },
+          { key: 'Invoice date', header: 'Invoice date', kind: 'date', width: 14 },
+          { key: 'Service from', header: 'Service from', kind: 'date', width: 14 },
+          { key: 'Budget FY', header: 'Budget FY', width: 12 },
+          { key: 'Vendor', header: 'Vendor', width: 28 },
+          { key: 'Vendor email', header: 'Vendor email', width: 28 },
+          { key: 'Contract', header: 'Contract', width: 16 },
+          { key: 'Contract service', header: 'Contract service', width: 22 },
+          { key: 'Type', header: 'Type', width: 16 },
+          { key: 'Service', header: 'Service', width: 18 },
+          { key: 'Detail', header: 'Detail', width: 18 },
+          { key: 'Location', header: 'Location', width: 16 },
+          { key: 'Tanker', header: 'Tanker', width: 14 },
+          { key: 'Amount (Rs)', header: 'Amount (Rs)', kind: 'money', width: 16 },
+          { key: 'Remarks', header: 'Remarks', width: 32 },
+        ],
+        rows: sorted.map((i) => {
+          const fi = invoiceBudgetInfo(i)
+          return {
+            'Invoice no': i.invoice_no ?? '',
+            'Invoice date': i.invoice_date ?? '',
+            'Service from': i.service_from ?? '',
+            'Budget FY': fi?.fy ?? '',
+            Vendor: vendorOf(i),
+            'Vendor email': vendorEmailOf(i),
+            Contract: contractOf(i),
+            'Contract service': serviceOf(i),
+            Type: i.t1 ?? '',
+            Service: i.t2 ?? '',
+            Detail: i.t3 ?? '',
+            Location: i.location ?? '',
+            Tanker: i.tanker_name ?? '',
+            'Amount (Rs)': Number(i.amount ?? 0),
+            Remarks: i.remarks ?? '',
+          }
+        }),
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
   const submitReject = async () => {
     if (!rejecting) return
@@ -187,7 +223,8 @@ export default function ApprovalsPage() {
             onValueChange: setSortBy,
             onDirectionChange: setSortDir,
           }}
-          onExport={exportCSV}
+          onExport={() => { void exportExcel() }}
+          exportLabel="Export Excel"
           resultsCount={sorted.length}
         />
         {pending.map((inv) => (
@@ -214,6 +251,7 @@ export default function ApprovalsPage() {
                   {inv.t1 && <span>Type: <b className="text-[var(--text)]">{inv.t1}</b></span>}
                   {inv.t2 && <span>Service: <b className="text-[var(--text)]">{inv.t2}</b></span>}
                   {inv.t3 && <span>Detail: <b className="text-[var(--text)]">{inv.t3}</b></span>}
+                  {inv.location && <span>Location: <b className="text-[var(--text)]">{inv.location}</b></span>}
                   {inv.tanker_name && <span>Tanker: {inv.tanker_name}</span>}
                 </div>
                 {inv.remarks && <div className="mt-2 text-sm text-[var(--text-dim)]">Note: {inv.remarks}</div>}

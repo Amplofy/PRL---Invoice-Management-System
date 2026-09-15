@@ -6,7 +6,7 @@ import {
   Search, Bookmark, BookmarkPlus, Trash2, Columns3,
 } from 'lucide-react'
 import { apiUpload, apiGet, apiPost } from '../lib/api'
-import { downloadCSV } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import {
   profileFile, keyCandidates, suggestPairs, verify, narrate, customCandidate,
   type FileProfile, type MatchStrategy, type ValueKind, type KeyCandidate,
@@ -547,19 +547,38 @@ export default function DeltaAnalystPage() {
     return rows
   }, [outcome, view, query])
 
-  const exportVisible = () => {
+  const exportVisible = async () => {
     if (!outcome) return
-    downloadCSV('delta-report.csv', visibleRows.flatMap((r) =>
-      r.cells.length === 0
-        ? [{ key: r.key, result: statusLabel(r.status), column: '', fileA: '', fileB: '' }]
-        : r.cells.map((c) => ({
-            key: r.key,
-            result: statusLabel(r.status),
-            column: c.column,
-            fileA: c.baseValue,
-            fileB: c.compareValue,
-          })),
-    ))
+    try {
+      await downloadTableWorkbook({
+        filename: 'delta-report.xlsx',
+        title: 'Delta analyst',
+        subtitle: 'Visible comparison rows',
+        grandTotal: false,
+        groupBy: 'Result',
+        filters: [{ label: 'Rows', value: String(visibleRows.length) }],
+        columns: [
+          { key: 'Key', header: 'Key', width: 28 },
+          { key: 'Result', header: 'Result', width: 18 },
+          { key: 'Column', header: 'Column', width: 18 },
+          { key: 'File A', header: 'File A', width: 28 },
+          { key: 'File B', header: 'File B', width: 28 },
+        ],
+        rows: visibleRows.flatMap((r) =>
+          r.cells.length === 0
+            ? [{ Key: r.key, Result: statusLabel(r.status), Column: '', 'File A': '', 'File B': '' }]
+            : r.cells.map((c) => ({
+                Key: r.key,
+                Result: statusLabel(r.status),
+                Column: c.column,
+                'File A': c.baseValue,
+                'File B': c.compareValue,
+              })),
+        ),
+      })
+    } catch {
+      // keep the compare view usable if workbook generation fails
+    }
   }
 
   const bothLoaded = fileA !== null && fileB !== null
@@ -759,7 +778,7 @@ export default function DeltaAnalystPage() {
                 <div className="text-xs text-[var(--text-muted)] tabular-nums">
                   {visibleRows.length} row{visibleRows.length === 1 ? '' : 's'}
                 </div>
-                <Button variant="ghost" size="sm" onClick={exportVisible}>Export CSV</Button>
+                <Button variant="ghost" size="sm" onClick={() => { void exportVisible() }}>Export Excel</Button>
               </div>
               <ResultTable
                 rows={visibleRows}

@@ -16,7 +16,8 @@ import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
-import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
@@ -25,7 +26,7 @@ import { useFyLock } from '../lib/FyLockProvider'
 import { isClosedDate } from '../lib/fiscal'
 import SortableTh from '../components/ui/SortableTh'
 import { ColumnResizeProvider, HeaderTh } from '../components/ui/ResizableTh'
-import { vendorNameOf } from '../lib/relations'
+import { vendorEmailOf, vendorNameOf } from '../lib/relations'
 import { t1Options, t2Options, t3Options, type ServiceMatrixRow } from '../lib/invoice'
 
 interface Vendor {
@@ -279,22 +280,57 @@ export default function ContractsPage() {
 
   const visibleColCount = CONTRACT_COLUMN_DEFS.filter((c) => col.show(c.key)).length + (admin ? 1 : 0)
 
-  const exportCSV = () =>
-    downloadCSV(
-      `contracts-${new Date().toISOString().slice(0, 10)}.csv`,
-      sorted.map((c) => ({
-        ...(col.show('contract_no') ? { contract_no: c.contract_no } : {}),
-        ...(col.show('vendor') ? { vendor: vendorName(c) } : {}),
-        ...(col.show('t1') ? { type: uniqueServiceField(c, 't1') } : {}),
-        ...(col.show('t2') ? { service: uniqueServiceField(c, 't2') } : {}),
-        ...(col.show('t3') ? { detail: uniqueServiceField(c, 't3') } : {}),
-        ...(col.show('start_date') ? { start_date: c.start_date ?? '' } : {}),
-        ...(col.show('end_date') ? { end_date: c.end_date ?? '' } : {}),
-        ...(col.show('period_days') ? { period_days: contractPeriodDays(c) ?? '' } : {}),
-        ...(col.show('value') ? { value: c.value ?? 0 } : {}),
-        ...(col.show('status') ? { status: c.status ?? '' } : {}),
-      })),
-    )
+  const exportExcel = async () => {
+    const groupMap: Record<string, string> = {
+      vendor: 'Vendor',
+      t1: 'Type',
+      t2: 'Service',
+      t3: 'Detail',
+      status: 'Status',
+    }
+    try {
+      await downloadTableWorkbook({
+        filename: `contracts-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        title: 'Contract register',
+        subtitle: 'All contract columns with group subtotals and grand total',
+        groupBy: groupKey ? groupMap[groupKey] ?? null : null,
+        filters: [
+          { label: 'Rows', value: String(sorted.length) },
+          { label: 'Grouping', value: groupKey ? groupMap[groupKey] ?? groupKey : 'None' },
+        ],
+        columns: [
+          { key: 'Contract no', header: 'Contract no', width: 16 },
+          { key: 'Vendor', header: 'Vendor', width: 28 },
+          { key: 'Vendor email', header: 'Vendor email', width: 28 },
+          { key: 'Type', header: 'Type', width: 16 },
+          { key: 'Service', header: 'Service', width: 18 },
+          { key: 'Detail', header: 'Detail', width: 18 },
+          { key: 'Services', header: 'Services', width: 32 },
+          { key: 'Start', header: 'Start', kind: 'date', width: 14 },
+          { key: 'End', header: 'End', kind: 'date', width: 14 },
+          { key: 'Period (days)', header: 'Period (days)', kind: 'int', width: 14 },
+          { key: 'Value (Rs)', header: 'Value (Rs)', kind: 'money', width: 16 },
+          { key: 'Status', header: 'Status', width: 12 },
+        ],
+        rows: sorted.map((c) => ({
+          'Contract no': c.contract_no,
+          Vendor: vendorName(c),
+          'Vendor email': vendorEmailOf(c),
+          Type: uniqueServiceField(c, 't1'),
+          Service: uniqueServiceField(c, 't2'),
+          Detail: uniqueServiceField(c, 't3'),
+          Services: contractServicesLabel(c),
+          Start: c.start_date ?? '',
+          End: c.end_date ?? '',
+          'Period (days)': contractPeriodDays(c) ?? 0,
+          'Value (Rs)': Number(c.value ?? 0),
+          Status: c.status ?? '',
+        })),
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -359,8 +395,8 @@ export default function ContractsPage() {
           onValueChange: setSortBy,
           onDirectionChange: setSortDir,
         }}
-        onExport={exportCSV}
-        exportLabel="Export CSV"
+        onExport={() => { void exportExcel() }}
+        exportLabel="Export Excel"
         resultsCount={sorted.length}
       >
         <ColumnsButton

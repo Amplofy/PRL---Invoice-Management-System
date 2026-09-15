@@ -27,7 +27,10 @@ export function fyStartYear(fy: string): number | null {
 
 export function fiscalYearOfDate(dateStr: string | null | undefined): string | null {
   if (!dateStr) return null
-  const d = new Date(dateStr)
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr).trim())
+  const d = m
+    ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0)
+    : new Date(dateStr)
   if (Number.isNaN(d.getTime())) return null
   return `FY${String(fiscalStartYear(d)).slice(2)}`
 }

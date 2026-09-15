@@ -1,3 +1,5 @@
+import { dateToCalendarYmd, parseCalendarYmd } from './calendarDate'
+
 const numberFmt = new Intl.NumberFormat('en-PK', {
   maximumFractionDigits: 0,
 })
@@ -21,9 +23,18 @@ const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 export function formatDate(value: string | Date | null | undefined): string {
   if (!value) return '—'
+  if (typeof value === 'string') {
+    const p = parseCalendarYmd(value)
+    if (p) {
+      const month = months[p.m - 1]
+      if (month) return `${String(p.d).padStart(2, '0')}-${month}-${p.y}`
+    }
+  }
   const d = typeof value === 'string' ? new Date(value) : value
   if (Number.isNaN(d.getTime())) return '—'
-  return `${String(d.getDate()).padStart(2, '0')}-${months[d.getMonth()]}-${d.getFullYear()}`
+  const p = parseCalendarYmd(dateToCalendarYmd(d))
+  if (!p) return '—'
+  return `${String(p.d).padStart(2, '0')}-${months[p.m - 1]}-${p.y}`
 }
 
 export function formatDateTime(value: string | Date | null | undefined): string {

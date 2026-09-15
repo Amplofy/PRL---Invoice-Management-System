@@ -94,7 +94,7 @@ export default function DataToolbar({ leading, search, filters, sort, onExport, 
 
           {onExport && (
             <button type="button" className="btn btn-ghost btn-sm shrink-0 whitespace-nowrap" onClick={onExport}>
-              <Download size={15} /> {exportLabel ?? 'Export CSV'}
+              <Download size={15} /> {exportLabel ?? 'Export Excel'}
             </button>
           )}
 

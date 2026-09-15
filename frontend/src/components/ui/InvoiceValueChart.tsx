@@ -200,7 +200,7 @@ export function InvoiceValueChart({
           const isPeak = i === peak && values[i] > 0
           const isLast = i === lastLive
           return (
-            <g key={i} className="ivc-dot" style={{ animationDelay: `${0.55 + i * 0.04}s` }}>
+            <g key={i} className="ivc-dot" style={{ animationDelay: `${0.72 + i * 0.045}s` }}>
               {isLast && (
                 <circle cx={pt.x} cy={pt.y} r="6" className="ivc-pulse" style={{ stroke: color }} fill="none" />
               )}

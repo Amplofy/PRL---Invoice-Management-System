@@ -3,6 +3,7 @@ import {
   t3Options,
   matrixRowFor,
   resolveCostElement,
+  catalogLocations,
   type ServiceMatrixRow,
 } from '../../lib/invoice'
 import LockedAutoField from './LockedAutoField'
@@ -11,6 +12,7 @@ export interface ServiceSelectsValue {
   t1: string
   t2: string
   t3: string
+  location?: string
   tanker_name: string
   trips: string
   cost_element: string
@@ -27,7 +29,7 @@ interface ServiceSelectsProps {
   /** When true (default), Type 1 stays locked until a contract is selected. */
   contractId?: string
   requireContract?: boolean
-  /** Invoice shows tanker/dates/cost; catalog is T1/T2/T3 only. */
+  /** Invoice shows tanker/dates/location/cost; catalog is T1/T2/T3 only. */
   mode?: 'invoice' | 'catalog'
 }
 
@@ -46,8 +48,24 @@ export default function ServiceSelects({
   const showTrips = Boolean(row?.trips)
   const costElement = value.cost_element || resolveCostElement(matrix, value.t1, value.t2, value.t3) || ''
   const catalog = mode === 'catalog'
+  const locations = catalog ? [] : catalogLocations(row)
+
+  // Each level unlocks only once its parent is chosen.
   const t1Locked = disabled || (requireContract && !contractId)
+  const t2Locked = disabled || !value.t1
+  const t3Locked = disabled || !value.t2
+  const locationLocked = disabled || !value.t3
   const t1Placeholder = t1Locked ? 'Select a contract first' : 'Select…'
+
+  // Choosing a level clears everything downstream of it.
+  const pickType = (t1: string) =>
+    onChange({ t1, t2: '', t3: '', location: '', tanker_name: '', trips: '', cost_element: '' })
+  const pickService = (t2: string) =>
+    onChange({ t2, t3: '', location: '', tanker_name: '', trips: '', cost_element: '' })
+  const pickDetail = (t3: string) => {
+    const locs = catalogLocations(matrixRowFor(matrix, value.t1, value.t2, t3))
+    onChange({ t3, location: locs.length === 1 ? locs[0] : '', tanker_name: '', trips: '', cost_element: '' })
+  }
 
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
@@ -59,7 +77,7 @@ export default function ServiceSelects({
           className={`input ${issues.t1 ? 'invalid' : ''}`}
           value={value.t1}
           disabled={t1Locked}
-          onChange={(e) => onChange({ t1: e.target.value, t2: '', t3: '', tanker_name: '', trips: '', cost_element: '' })}
+          onChange={(e) => pickType(e.target.value)}
         >
           <option value="">{t1Placeholder}</option>
           {Array.from(new Set(matrix.map((m) => m.t1))).sort().map((o) => (
@@ -76,10 +94,10 @@ export default function ServiceSelects({
         <select
           className={`input ${issues.t2 ? 'invalid' : ''}`}
           value={value.t2}
-          disabled={disabled || !value.t1}
-          onChange={(e) => onChange({ t2: e.target.value, t3: '', tanker_name: '', trips: '', cost_element: '' })}
+          disabled={t2Locked}
+          onChange={(e) => pickService(e.target.value)}
         >
-          <option value="">Select…</option>
+          <option value="">{t2Locked ? 'Select type 1 first' : 'Select…'}</option>
           {t2Options(matrix, value.t1).map((o) => (
             <option key={o} value={o}>{o}</option>
           ))}
@@ -94,16 +112,36 @@ export default function ServiceSelects({
         <select
           className={`input ${issues.t3 ? 'invalid' : ''}`}
           value={value.t3}
-          disabled={disabled || !value.t2}
-          onChange={(e) => onChange({ t3: e.target.value, tanker_name: '', trips: '', cost_element: '' })}
+          disabled={t3Locked}
+          onChange={(e) => pickDetail(e.target.value)}
         >
-          <option value="">{value.t2 ? 'Select…' : 'Select type 2 first'}</option>
+          <option value="">{t3Locked ? 'Select type 2 first' : 'Select…'}</option>
           {t3Options(matrix, value.t1, value.t2).map((o) => (
             <option key={o} value={o}>{o}</option>
           ))}
         </select>
         {issues.t3 && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.t3}</span>}
       </label>
+
+      {!catalog && locations.length > 0 && (
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
+            Location<span className="ml-0.5 text-[var(--danger)]">*</span>
+          </span>
+          <select
+            className={`input ${issues.location ? 'invalid' : ''}`}
+            value={value.location ?? ''}
+            disabled={locationLocked}
+            onChange={(e) => onChange({ location: e.target.value })}
+          >
+            <option value="">{locationLocked ? 'Select type 3 first' : 'Select…'}</option>
+            {locations.map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
+          {issues.location && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.location}</span>}
+        </label>
+      )}
 
       {!catalog && showTanker && (
         <label className="block">

@@ -13,10 +13,11 @@ import {
   Receipt,
   Landmark,
   Lock,
+  Printer,
 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatMoney, formatDateTime, formatAmountWords, timeAgo } from '../lib/format'
-import { contractUtilization, contractStatusLabel, isSelectableContract, matrixForContract, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice } from '../lib/invoice'
+import { catalogLocations, contractUtilization, contractStatusLabel, isSelectableContract, matrixForContract, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice } from '../lib/invoice'
 import { emitAppEvent } from '../lib/notify'
 import { useToast } from '../components/ui/Toast'
 import GlassCard from '../components/ui/GlassCard'
@@ -31,6 +32,7 @@ import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
 import ValidationSummary from '../components/ui/ValidationSummary'
 import AmountWords from '../components/ui/AmountWords'
 import { Field } from '../components/ui/Field'
+import InvoiceVendorField from '../components/ui/InvoiceVendorField'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useFyLock } from '../lib/FyLockProvider'
 import { useMasterAccess } from '../lib/masterAccess'
@@ -40,6 +42,7 @@ import { invoiceApprovedAmount, poGeneratedAmount, poReleasedAmount, poStatusLab
 import { emitCrossModule, useLiveDomain } from '../lib/store'
 import { isUnpaidPriorYearInvoice } from '../lib/accrual'
 import { vendorNameOf } from '../lib/relations'
+import { openPaymentOrderPrint } from '../lib/poBlueprint'
 
 interface ContractFull {
   id: string
@@ -51,6 +54,7 @@ interface ContractFull {
   status?: string | null
   services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }>
   vendors: Array<{ name: string | null; email?: string | null }> | null
+  vendor_id?: string | null
 }
 
 interface WorkspaceInvoice {
@@ -63,6 +67,7 @@ interface WorkspaceInvoice {
   t1: string | null
   t2: string | null
   t3: string | null
+  location?: string | null
   tanker_name: string | null
   trips: number | null
   item_no: string | null
@@ -92,6 +97,8 @@ interface PoVersionRow {
   finance_approved_by?: string | null
   finance_approved_at?: string | null
   finance_remarks?: string | null
+  released_via?: string | null
+  release_reference?: string | null
 }
 
 interface AuditEntry {
@@ -140,11 +147,14 @@ export default function InvoiceWorkspacePage() {
   const [matrix, setMatrix] = useState<ServiceMatrixRow[]>([])
   const [allInvoices, setAllInvoices] = useState<UtilizationInvoice[]>([])
   const [contracts, setContracts] = useState<ContractFull[]>([])
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([])
   const [poVersions, setPoVersions] = useState<PoVersionRow[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [duplicateCheck, setDuplicateCheck] = useState(true)
   const [maxInvoiceAmount, setMaxInvoiceAmount] = useState<number | undefined>()
   const [futureDateAllowed, setFutureDateAllowed] = useState(false)
+  const [poTemplate, setPoTemplate] = useState('')
+  const [costCenterText, setCostCenterText] = useState('')
   const [tab, setTab] = useState('details')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -170,6 +180,7 @@ export default function InvoiceWorkspacePage() {
         t1: inv.t1 ?? '',
         t2: inv.t2 ?? '',
         t3: inv.t3 ?? '',
+        location: inv.location ?? '',
         tanker_name: inv.tanker_name ?? '',
         trips: inv.trips?.toString() ?? '',
         item_no: inv.item_no ?? '',
@@ -178,8 +189,9 @@ export default function InvoiceWorkspacePage() {
         service_to: (inv.service_to ?? '').slice(0, 10),
         amount: inv.amount?.toString() ?? '',
         remarks: inv.remarks ?? '',
+        vendor_id: '',
       })
-      const [po, auditRes, matrixRes, invList, contractRes, settingsRes] = await Promise.all([
+      const [po, auditRes, matrixRes, invList, contractRes, settingsRes, vendorRes] = await Promise.all([
         apiGet<{ poVersions: PoVersionRow[] }>(`/api/invoices/${id}/po`),
         apiGet<{ auditLog: AuditEntry[] }>('/api/audit-log'),
         apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
@@ -188,16 +200,22 @@ export default function InvoiceWorkspacePage() {
         ),
         apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
         apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
+        apiGet<{ vendors: Array<{ id: string; name: string }> }>('/api/vendors'),
       ])
       setPoVersions(po.poVersions)
       setAudit(auditRes.auditLog)
       setMatrix(matrixRes.serviceMatrix)
       setAllInvoices(invList.invoices)
       setContracts(contractRes.contracts)
+      setVendors(vendorRes.vendors)
+      const contractVendorId = contractRes.contracts.find((c) => c.id === inv.contract_id)?.vendor_id ?? ''
+      setForm((f) => ({ ...f, vendor_id: f.vendor_id || contractVendorId }))
       for (const { key, value } of settingsRes.settings) {
         if (key === 'duplicate_check') setDuplicateCheck(value === 'true')
         if (key === 'maximum_invoice_amount') setMaxInvoiceAmount(Number(value) || undefined)
         if (key === 'future_date_allowed') setFutureDateAllowed(value === 'true')
+        if (key === 'po_template') setPoTemplate(value)
+        if (key === 'cost_center') setCostCenterText(value)
       }
       setNotFound(false)
     } catch (e) {
@@ -269,6 +287,7 @@ export default function InvoiceWorkspacePage() {
       t1: invoice.t1 ?? '',
       t2: invoice.t2 ?? '',
       t3: invoice.t3 ?? '',
+      location: invoice.location ?? '',
       tanker_name: invoice.tanker_name ?? '',
       trips: invoice.trips?.toString() ?? '',
       item_no: invoice.item_no ?? '',
@@ -277,6 +296,7 @@ export default function InvoiceWorkspacePage() {
       service_to: (invoice.service_to ?? '').slice(0, 10),
       amount: invoice.amount?.toString() ?? '',
       remarks: invoice.remarks ?? '',
+      vendor_id: contracts.find((c) => c.id === invoice.contract_id)?.vendor_id ?? '',
     })
     toast.info('Form reset to saved values')
   }
@@ -290,6 +310,8 @@ export default function InvoiceWorkspacePage() {
     if (!masterOn && !(await guardWrite(invoiceBudgetDate(invoice), invoiceBudgetDate(form)))) return
     setSaving(true)
     try {
+      const vendorChanged =
+        masterOn && Boolean(form.vendor_id) && form.vendor_id !== (selectedContract?.vendor_id ?? '')
       await apiPut(`/api/invoices/${invoice.id}`, {
         serial_no: form.serial_no || null,
         processing_date: form.processing_date || null,
@@ -299,6 +321,7 @@ export default function InvoiceWorkspacePage() {
         t1: form.t1 || null,
         t2: form.t2 || null,
         t3: form.t3 || null,
+        location: form.location || null,
         tanker_name: form.tanker_name || null,
         trips: form.trips ? Number(form.trips) : null,
         item_no: form.item_no || null,
@@ -308,10 +331,12 @@ export default function InvoiceWorkspacePage() {
         amount: Number(form.amount) || 0,
         remarks: form.remarks || null,
         ...(masterOn ? { masterAccess: true } : {}),
+        ...(vendorChanged ? { vendor_id: form.vendor_id } : {}),
       })
       toast.success('Invoice saved')
       emitAppEvent('info', 'Invoice updated', `${form.invoice_no} was saved`, `/invoices/${invoice.id}`)
       emitCrossModule('invoice', 'update', invoice.id)
+      if (vendorChanged) emitCrossModule('contract', 'update', form.contract_id)
       loadAll()
     } catch (e) {
       toast.error('Save failed', (e as Error).message)
@@ -418,6 +443,7 @@ export default function InvoiceWorkspacePage() {
     t1: form.t1 ?? '',
     t2: form.t2 ?? '',
     t3: form.t3 ?? '',
+    location: form.location ?? '',
     tanker_name: form.tanker_name ?? '',
     trips: form.trips ?? '',
     cost_element: form.cost_element ?? '',
@@ -431,6 +457,10 @@ export default function InvoiceWorkspacePage() {
         (m) => m.t1 === next.t1 && (m.t2 ?? '') === next.t2 && (m.t3 ?? '') === next.t3,
       )
       if (row) next.cost_element = row.cost_element ?? ''
+      const locs = catalogLocations(row)
+      if (!locs.some((l) => l.toLowerCase() === (next.location ?? '').trim().toLowerCase())) {
+        next.location = locs.length === 1 ? locs[0]! : ''
+      }
       return next
     })
 
@@ -524,7 +554,7 @@ export default function InvoiceWorkspacePage() {
           <div className="space-y-4 lg:col-span-2">
             <GlassCard className="p-5">
               <div className="section-title">Invoice Information</div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Invoice No" required error={issueMap.invoice_no}>
                   <input className={`input ${issueMap.invoice_no ? 'invalid' : ''}`} value={form.invoice_no} onChange={set('invoice_no')} />
                 </Field>
@@ -550,10 +580,22 @@ export default function InvoiceWorkspacePage() {
                     value={form.contract_id}
                     onChange={(e) => {
                       const contract_id = e.target.value
-                      setForm((f) => ({ ...f, contract_id, t1: '', t2: '', t3: '', tanker_name: '', trips: '', cost_element: '' }))
+                      const next = contracts.find((c) => c.id === contract_id)
+                      setForm((f) => ({
+                        ...f,
+                        contract_id,
+                        t1: '',
+                        t2: '',
+                        t3: '',
+                        location: '',
+                        tanker_name: '',
+                        trips: '',
+                        cost_element: '',
+                        vendor_id: next?.vendor_id ?? '',
+                      }))
                     }}
                   >
-                    <option value="">Select contract…</option>
+                    <option value="">Choose contract</option>
                     {contracts.filter((c) => masterOn || isSelectableContract(c)).map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.contract_no}{contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}
@@ -561,9 +603,13 @@ export default function InvoiceWorkspacePage() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Vendor">
-                  <input className="input" value={vendorNameOf(selectedContract)} readOnly disabled />
-                </Field>
+                <InvoiceVendorField
+                  vendorId={form.vendor_id ?? ''}
+                  vendors={vendors}
+                  displayName={vendorNameOf(selectedContract, '')}
+                  masterOn={masterOn}
+                  onChange={(vendor_id) => setForm((f) => ({ ...f, vendor_id }))}
+                />
                 <Field label="Item No">
                   <input className="input" value={form.item_no} onChange={set('item_no')} />
                 </Field>
@@ -584,14 +630,11 @@ export default function InvoiceWorkspacePage() {
             <GlassCard className="p-5">
               <div className="section-title">Financial Information</div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Cost Element (auto)">
-                  <input className="input" value={form.cost_element || ''} readOnly disabled placeholder="Resolved from service matrix" />
-                </Field>
                 <Field label="Amount (Rs)" required error={issueMap.amount}>
                   <input type="number" min={0} className={`input ${issueMap.amount ? 'invalid' : ''}`} value={form.amount} onChange={set('amount')} />
                 </Field>
                 <Field label="Remarks">
-                  <input className="input" value={form.remarks} onChange={set('remarks')} placeholder={invoice.remarks ?? ''} />
+                  <input className="input" value={form.remarks} onChange={set('remarks')} placeholder="Optional notes for approvals and finance" />
                 </Field>
               </div>
             </GlassCard>
@@ -807,9 +850,36 @@ export default function InvoiceWorkspacePage() {
               {formatAmountWords(poReleasedAmount(viewPo) || poGeneratedAmount(viewPo, invoice))}
             </div>
             <div className="text-right">
-              <Link to="/payment-orders" className="btn btn-ghost">
-                Open Payment Orders
-              </Link>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    const relAmt = poReleasedAmount(viewPo)
+                    const poAmt = poGeneratedAmount(viewPo, invoice)
+                    openPaymentOrderPrint(
+                      {
+                        serial_no: viewPo.serial_no,
+                        generated_at: viewPo.generated_at,
+                        released_via: viewPo.released_via,
+                        release_reference: viewPo.release_reference,
+                        invoices: invoice,
+                      },
+                      {
+                        vendor: vendorNameOf(selectedContract ?? invoice, ''),
+                        amount: relAmt > 0 ? relAmt : poAmt,
+                        logoUrl: `${window.location.origin}/brand/prl-logo.png`,
+                        costCenter: costCenterText ? (Number.isNaN(Number(costCenterText)) ? costCenterText : formatMoney(Number(costCenterText))) : '',
+                      },
+                      poTemplate,
+                    )
+                  }}
+                >
+                  <Printer size={15} /> Print
+                </Button>
+                <Link to="/payment-orders" className="btn btn-ghost">
+                  Open Payment Orders
+                </Link>
+              </div>
             </div>
           </div>
         )}

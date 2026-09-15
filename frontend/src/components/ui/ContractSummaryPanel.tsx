@@ -6,6 +6,7 @@ interface ContractSummaryPanelProps {
   utilization: Utilization | null
   draftAmount?: number
   invoiceCountNote?: string
+  compact?: boolean
 }
 
 export default function ContractSummaryPanel({
@@ -13,7 +14,31 @@ export default function ContractSummaryPanel({
   utilization,
   draftAmount = 0,
   invoiceCountNote,
+  compact = false,
 }: ContractSummaryPanelProps) {
+  const stampedUsed = (utilization?.used ?? 0) + draftAmount
+  const stampedRemaining = (contract?.value ?? 0) - stampedUsed
+  const stampedPct = contract && contract.value > 0 ? (stampedUsed / contract.value) * 100 : 0
+  const tone = utilizationTone(stampedPct)
+
+  if (compact) {
+    if (!contract || !utilization) return null
+    return (
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className={`util-bar min-w-0 flex-1 ${tone}`}>
+          <span style={{ width: `${Math.min(100, stampedPct)}%` }} />
+        </div>
+        <span className="shrink-0 font-mono text-[0.68rem] font-bold tabular-nums">{stampedPct.toFixed(0)}%</span>
+        <span
+          className="shrink-0 text-[0.68rem] tabular-nums"
+          style={{ color: stampedRemaining < 0 ? 'var(--danger)' : 'var(--text-muted)' }}
+        >
+          Rs {formatMoney(stampedRemaining)} left
+        </span>
+      </div>
+    )
+  }
+
   if (!contract || !utilization) {
     return (
       <div className="glass p-5">
@@ -25,10 +50,6 @@ export default function ContractSummaryPanel({
     )
   }
 
-  const stampedUsed = utilization.used + draftAmount
-  const stampedRemaining = contract.value - stampedUsed
-  const stampedPct = contract.value > 0 ? (stampedUsed / contract.value) * 100 : 0
-  const tone = utilizationTone(stampedPct)
   const remainingTone = utilizationTone(utilization.pct)
 
   return (

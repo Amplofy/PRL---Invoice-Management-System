@@ -13,7 +13,8 @@ import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import GroupByPicker from '../components/ui/GroupByPicker'
 import SummaryCards from '../components/ui/SummaryCards'
-import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
@@ -156,19 +157,47 @@ export default function FollowupsPage() {
 
   const visibleColCount = FOLLOWUP_COLUMN_DEFS.filter((c) => col.show(c.key)).length + 1
 
-  const exportCSV = () =>
-    downloadCSV(
-      `followups-${new Date().toISOString().slice(0, 10)}.csv`,
-      sorted.map((p) => ({
-        ...(col.show('invoice') ? { invoice_no: p.invoiceNo } : {}),
-        ...(col.show('date') ? { invoice_date: p.invoiceDate ?? '' } : {}),
-        ...(col.show('days_pending') ? { days_pending: daysPending(p.invoiceDate) ?? '' } : {}),
-        ...(col.show('vendor') ? { vendor: p.vendorName } : {}),
-        ...(col.show('contract') ? { contract: p.contractNo } : {}),
-        ...(col.show('email') ? { email: p.email } : {}),
-        ...(col.show('amount') ? { amount: p.amount } : {}),
-      })),
-    )
+  const exportExcel = async () => {
+    const groupMap: Record<string, string> = {
+      vendorName: 'Vendor',
+      contractNo: 'Contract',
+      month: 'Month',
+    }
+    try {
+      await downloadTableWorkbook({
+        filename: `followups-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        title: 'Follow-up register',
+        subtitle: 'Pending vendor follow-ups with group subtotals and grand total',
+        groupBy: groupKey ? groupMap[groupKey] ?? null : null,
+        filters: [
+          { label: 'Rows', value: String(sorted.length) },
+          { label: 'Grouping', value: groupKey ? groupMap[groupKey] ?? groupKey : 'None' },
+        ],
+        columns: [
+          { key: 'Invoice no', header: 'Invoice no', width: 16 },
+          { key: 'Invoice date', header: 'Invoice date', kind: 'date', width: 14 },
+          { key: 'Month', header: 'Month', width: 12 },
+          { key: 'Days pending', header: 'Days pending', kind: 'int', width: 14 },
+          { key: 'Vendor', header: 'Vendor', width: 28 },
+          { key: 'Contract', header: 'Contract', width: 16 },
+          { key: 'Email', header: 'Email', width: 28 },
+          { key: 'Amount (Rs)', header: 'Amount (Rs)', kind: 'money', width: 16 },
+        ],
+        rows: sorted.map((p) => ({
+          'Invoice no': p.invoiceNo,
+          'Invoice date': p.invoiceDate ?? '',
+          Month: p.invoiceDate ? p.invoiceDate.slice(0, 7) : '',
+          'Days pending': daysPending(p.invoiceDate) ?? 0,
+          Vendor: p.vendorName,
+          Contract: p.contractNo,
+          Email: p.email,
+          'Amount (Rs)': Number(p.amount ?? 0),
+        })),
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -291,8 +320,8 @@ export default function FollowupsPage() {
           onValueChange: setSortBy,
           onDirectionChange: setSortDir,
         }}
-        onExport={exportCSV}
-        exportLabel="Export CSV"
+        onExport={() => { void exportExcel() }}
+        exportLabel="Export Excel"
         resultsCount={sorted.length}
       >
         <div className="text-sm text-[var(--text-dim)]">

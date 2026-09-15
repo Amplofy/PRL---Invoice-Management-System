@@ -4,7 +4,7 @@ import {
   Save, Plus, Trash2, Pencil, ShieldCheck, Building2, Mail,
   Users as UsersIcon, Layers, Hash, Wallet, AlertTriangle, Search,
   Bell, ShieldAlert, Workflow, CheckCircle2, CalendarRange,
-  Lock, KeyRound,
+  Lock, KeyRound, FileText, Eye, RotateCcw, ArrowUp, ArrowDown,
 } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
 import { formatDate, formatMoney } from '../lib/format'
@@ -24,6 +24,8 @@ import { useFyLock } from '../lib/FyLockProvider'
 import { poReleasedAmount } from '../lib/paymentOrder'
 import { useMasterAccess } from '../lib/masterAccess'
 import { isBudgetIncrease } from '../lib/accrual'
+import { normalizeLocations } from '../lib/invoice'
+import { DEFAULT_PO_CONFIG, PO_PLACEHOLDERS, parsePoTemplate, openPaymentOrderPrint, samplePoPrint, type PoTemplateConfig } from '../lib/poBlueprint'
 
 interface Setting { key: string; value: string }
 interface VendorEmail {
@@ -49,6 +51,7 @@ interface ServiceMatrix {
   cost_element: string | null
   tanker_required: boolean
   trips: boolean
+  locations?: string[] | null
 }
 interface CostElement { code: string; name: string | null }
 interface BudgetLine { id: string; fy: string; cost_element: string; amount: number; notes: string }
@@ -88,6 +91,7 @@ interface AccrualView {
 const COMPANY_KEYS = ['cost_center', 'maximum_invoice_amount', 'expiring_threshold_days'] as const
 const RULE_KEYS = ['duplicate_check', 'future_date_allowed', 'enable_audit'] as const
 const MAIL_KEYS = ['followup_template', 'discrepancy_template'] as const
+const PO_KEYS = ['po_template'] as const
 
 const SETTING_META: Record<string, { label: string; hint?: string; rows?: number }> = {
   cost_center: { label: 'Default cost center' },
@@ -117,11 +121,12 @@ const SETTING_DEFAULTS: Record<string, string> = {
   enable_audit: 'true',
   followup_template: '',
   discrepancy_template: '',
+  po_template: JSON.stringify(DEFAULT_PO_CONFIG),
 }
 
 function mergeSettings(loaded: Setting[]): Setting[] {
   const map = new Map(loaded.map((s) => [s.key, s.value]))
-  const known: string[] = [...COMPANY_KEYS, ...RULE_KEYS, ...MAIL_KEYS]
+  const known: string[] = [...COMPANY_KEYS, ...RULE_KEYS, ...MAIL_KEYS, ...PO_KEYS]
   const out: Setting[] = known.map((key) => ({ key, value: map.get(key) ?? SETTING_DEFAULTS[key] ?? '' }))
   for (const s of loaded) {
     if (s.key === 'yearly_budgets') continue
@@ -214,6 +219,7 @@ export default function AdminPage() {
            { id: 'alerts', label: 'Alerts & notifications' },
            { id: 'settings', label: 'Company rules' },
            { id: 'mail', label: 'Mail templates' },
+           { id: 'po', label: 'PO template' },
          ]}
          active={tab}
          onChange={setTab}
@@ -251,6 +257,7 @@ export default function AdminPage() {
         </>
       )}
       {tab === 'mail' && <SettingsPanel settings={settings} setSettings={setSettings} keys={[...MAIL_KEYS]} mail />}
+      {tab === 'po' && <PoTemplatePanel settings={settings} setSettings={setSettings} />}
     </div>
   )
 }
@@ -820,7 +827,7 @@ function CatalogPanel({ matrix, costs, onReload }: { matrix: ServiceMatrix[]; co
   const [editing, setEditing] = useState<ServiceMatrix | null>(null)
   const [creating, setCreating] = useState(false)
   const toast = useToast()
-  const filtered = matrix.filter((m) => `${m.t1} ${m.t2 ?? ''} ${m.t3 ?? ''} ${m.cost_element ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const filtered = matrix.filter((m) => `${m.t1} ${m.t2 ?? ''} ${m.t3 ?? ''} ${m.cost_element ?? ''} ${(m.locations ?? []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()))
 
   const remove = async (row: ServiceMatrix) => {
     if (!window.confirm('Delete this service catalog row?')) return
@@ -850,6 +857,7 @@ function CatalogPanel({ matrix, costs, onReload }: { matrix: ServiceMatrix[]; co
               <th>T2</th>
               <th>T3</th>
               <th>Cost element</th>
+              <th>Locations</th>
               <th>Tanker</th>
               <th>Trips</th>
               <th className="text-right">Actions</th>
@@ -862,6 +870,7 @@ function CatalogPanel({ matrix, costs, onReload }: { matrix: ServiceMatrix[]; co
                 <td>{m.t2 ?? '—'}</td>
                 <td>{m.t3 ?? '—'}</td>
                 <td className="text-xs">{m.cost_element ?? '—'}</td>
+                <td className="text-xs">{(m.locations ?? []).length ? (m.locations ?? []).join(', ') : '—'}</td>
                 <td>{m.tanker_required ? 'Yes' : 'No'}</td>
                 <td>{m.trips ? 'Yes' : 'No'}</td>
                 <td>
@@ -1149,7 +1158,7 @@ function SettingsPanel({
   const toast = useToast()
   const visible = mail ? settings.filter((s) => keys.includes(s.key)) : [
     ...settings.filter((s) => keys.includes(s.key)),
-    ...settings.filter((s) => !COMPANY_KEYS.includes(s.key as typeof COMPANY_KEYS[number]) && !RULE_KEYS.includes(s.key as typeof RULE_KEYS[number]) && !MAIL_KEYS.includes(s.key as typeof MAIL_KEYS[number]) && s.key !== 'yearly_budgets' && s.key !== 'financial_year' && s.key !== 'fy_accrual_overrides'),
+    ...settings.filter((s) => !COMPANY_KEYS.includes(s.key as typeof COMPANY_KEYS[number]) && !RULE_KEYS.includes(s.key as typeof RULE_KEYS[number]) && !MAIL_KEYS.includes(s.key as typeof MAIL_KEYS[number]) && !PO_KEYS.includes(s.key as typeof PO_KEYS[number]) && s.key !== 'yearly_budgets' && s.key !== 'financial_year' && s.key !== 'fy_accrual_overrides'),
   ]
 
   const setSetting = (key: string, value: string) =>
@@ -1202,6 +1211,233 @@ function SettingsPanel({
         </Button>
       </div>
     </GlassCard>
+  )
+}
+
+function PoTextInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <Field label={label}>
+      <input className="input" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+    </Field>
+  )
+}
+
+function PoSlot({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <Field label={label}>
+      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— none —</option>
+        {PO_PLACEHOLDERS.map((t) => (
+          <option key={t.token} value={t.token}>{`${t.description} — {{${t.token}}}`}</option>
+        ))}
+      </select>
+    </Field>
+  )
+}
+
+function PoTemplatePanel({ settings, setSettings }: { settings: Setting[]; setSettings: Dispatch<SetStateAction<Setting[]>> }) {
+  const toast = useToast()
+  const stored = settings.find((s) => s.key === 'po_template')?.value
+  const [config, setConfig] = useState<PoTemplateConfig>(() => parsePoTemplate(stored))
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setConfig(parsePoTemplate(stored))
+  }, [stored])
+
+  const patch = (p: Partial<PoTemplateConfig>) => setConfig((c) => ({ ...c, ...p }))
+  const patchColumns = (p: Partial<PoTemplateConfig['columns']>) => setConfig((c) => ({ ...c, columns: { ...c.columns, ...p } }))
+  const setRow = (i: number, p: Partial<PoTemplateConfig['rows'][number]>) =>
+    setConfig((c) => ({ ...c, rows: c.rows.map((row, idx) => (idx === i ? { ...row, ...p } : row)) }))
+  const addRow = () => setConfig((c) => ({ ...c, rows: [...c.rows, { caption: 'New line', placeholder: 'invoiceLine', enabled: true }] }))
+  const removeRow = (i: number) => setConfig((c) => ({ ...c, rows: c.rows.filter((_, idx) => idx !== i) }))
+  const moveRow = (i: number, dir: -1 | 1) =>
+    setConfig((c) => {
+      const j = i + dir
+      if (j < 0 || j >= c.rows.length) return c
+      const rows = [...c.rows]
+      ;[rows[i], rows[j]] = [rows[j], rows[i]]
+      return { ...c, rows }
+    })
+  const setSignatory = (i: number, v: string) =>
+    setConfig((c) => {
+      const signatories = [...c.signatories]
+      while (signatories.length < 4) signatories.push('')
+      signatories[i] = v
+      return { ...c, signatories }
+    })
+
+  const save = async () => {
+    setSaving(true)
+    const value = JSON.stringify(config)
+    try {
+      await apiPut('/api/settings', { settings: [{ key: 'po_template', value }] })
+      setSettings((prev) => {
+        const exists = prev.some((s) => s.key === 'po_template')
+        return exists
+          ? prev.map((s) => (s.key === 'po_template' ? { ...s, value } : s))
+          : [...prev, { key: 'po_template', value }]
+      })
+      toast.success('PO template saved')
+      emitCrossModule('setting', 'update')
+    } catch (e) {
+      toast.error('Save failed', (e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const preview = () => {
+    const { order, extras } = samplePoPrint()
+    openPaymentOrderPrint(order, extras, JSON.stringify(config))
+  }
+
+  const dirty = JSON.stringify(config) !== JSON.stringify(parsePoTemplate(stored))
+
+  return (
+    <div className="space-y-5">
+      <GlassCard className="p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <FileText size={16} className="text-[var(--accent)]" /> Payment order blueprint
+          </div>
+          {dirty && <span className="badge badge-warn">Unsaved changes</span>}
+        </div>
+        <p className="mb-5 text-xs text-[var(--text-muted)]">
+          One universal form is used for every payment order. Choose which value prints in each slot — no code required.
+        </p>
+
+        <div className="mb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-dim)]">Header</div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <PoTextInput label="Title" value={config.title} onChange={(v) => patch({ title: v })} />
+          <PoTextInput label="Company name" value={config.company} onChange={(v) => patch({ company: v })} />
+          <PoTextInput label="Doc. label" value={config.docLabel} onChange={(v) => patch({ docLabel: v })} />
+          <PoSlot label="Doc. value" value={config.docPlaceholder} onChange={(v) => patch({ docPlaceholder: v })} />
+          <PoTextInput label="PO label" value={config.poLabel} onChange={(v) => patch({ poLabel: v })} />
+          <PoSlot label="PO value" value={config.poPlaceholder} onChange={(v) => patch({ poPlaceholder: v })} />
+        </div>
+
+        <div className="mt-6 mb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-dim)]">Payment &amp; party</div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <PoTextInput label="Pay label" value={config.payLabel} onChange={(v) => patch({ payLabel: v })} />
+          <PoTextInput label="Cash label" value={config.cashLabel} onChange={(v) => patch({ cashLabel: v })} />
+          <PoTextInput label="Cheque label" value={config.chequeLabel} onChange={(v) => patch({ chequeLabel: v })} />
+          <PoSlot label="Payment note" value={config.notePlaceholder} onChange={(v) => patch({ notePlaceholder: v })} />
+          <PoTextInput label="To label" value={config.toLabel} onChange={(v) => patch({ toLabel: v })} />
+          <PoSlot label="Payee" value={config.vendorPlaceholder} onChange={(v) => patch({ vendorPlaceholder: v })} />
+          <PoTextInput label="Date label" value={config.dateLabel} onChange={(v) => patch({ dateLabel: v })} />
+          <PoSlot label="Date value" value={config.datePlaceholder} onChange={(v) => patch({ datePlaceholder: v })} />
+          <PoTextInput label="Sum label" value={config.sumLabel} onChange={(v) => patch({ sumLabel: v })} />
+          <PoSlot label="Sum value" value={config.sumPlaceholder} onChange={(v) => patch({ sumPlaceholder: v })} />
+        </div>
+      </GlassCard>
+
+      <GlassCard className="p-6">
+        <div className="mb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-dim)]">Description lines</div>
+        <p className="mb-3 text-xs text-[var(--text-muted)]">Each line prints a caption plus the chosen value, in order. Reorder with the arrows.</p>
+        <div className="space-y-2">
+          {config.rows.map((row, i) => (
+            <div key={i} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[auto_1fr_1fr_auto]">
+              <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                <input
+                  type="checkbox"
+                  className="cursor-pointer accent-[var(--accent)]"
+                  checked={row.enabled !== false}
+                  onChange={(e) => setRow(i, { enabled: e.target.checked })}
+                />
+                Show
+              </label>
+              <input className="input" value={row.caption} placeholder="Caption" onChange={(e) => setRow(i, { caption: e.target.value })} />
+              <select className="input" value={row.placeholder} onChange={(e) => setRow(i, { placeholder: e.target.value })}>
+                {PO_PLACEHOLDERS.map((t) => (
+                  <option key={t.token} value={t.token}>{t.description}</option>
+                ))}
+              </select>
+              <div className="flex justify-end gap-1">
+                <button type="button" className="btn btn-ghost btn-sm" disabled={i === 0} onClick={() => moveRow(i, -1)} aria-label="Move up">
+                  <ArrowUp size={14} />
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm" disabled={i === config.rows.length - 1} onClick={() => moveRow(i, 1)} aria-label="Move down">
+                  <ArrowDown size={14} />
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeRow(i)} aria-label="Remove line">
+                  <Trash2 size={14} className="text-[var(--danger)]" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Button size="sm" variant="ghost" className="mt-3" onClick={addRow}>
+          <Plus size={14} /> Add line
+        </Button>
+
+        <div className="mt-6 mb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-dim)]">Grid headings</div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <PoTextInput label="Description heading" value={config.columns.lead} onChange={(v) => patchColumns({ lead: v })} />
+          <PoTextInput label="Order Number heading" value={config.columns.orderNumber} onChange={(v) => patchColumns({ orderNumber: v })} />
+          <PoTextInput label="Vendor No. heading" value={config.columns.vendorNo} onChange={(v) => patchColumns({ vendorNo: v })} />
+          <PoTextInput label="Cost Center heading" value={config.columns.costCenter} onChange={(v) => patchColumns({ costCenter: v })} />
+          <PoTextInput label="Cost Element heading" value={config.columns.costElement} onChange={(v) => patchColumns({ costElement: v })} />
+          <PoTextInput label="Cheque No. heading" value={config.columns.chequeNo} onChange={(v) => patchColumns({ chequeNo: v })} />
+          <PoTextInput label="Amount heading" value={config.columns.amount} onChange={(v) => patchColumns({ amount: v })} />
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <PoSlot label="Order Number value" value={config.orderNumberField} onChange={(v) => patch({ orderNumberField: v })} />
+          <PoSlot label="Cost Center value" value={config.costCenterField} onChange={(v) => patch({ costCenterField: v })} />
+          <PoSlot label="Cost Element value" value={config.costElementField} onChange={(v) => patch({ costElementField: v })} />
+          <PoSlot label="Cheque No. value" value={config.chequeNoField} onChange={(v) => patch({ chequeNoField: v })} />
+          <PoSlot label="Amount value" value={config.amountField} onChange={(v) => patch({ amountField: v })} />
+        </div>
+      </GlassCard>
+
+      <GlassCard className="p-6">
+        <div className="mb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-dim)]">Footer &amp; remarks</div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <PoTextInput key={i} label={`Signatory ${i + 1}`} value={config.signatories[i] ?? ''} onChange={(v) => setSignatory(i, v)} />
+          ))}
+          <PoTextInput label="TOTAL label" value={config.totalLabel} onChange={(v) => patch({ totalLabel: v })} />
+          <PoSlot label="TOTAL value" value={config.totalPlaceholder} onChange={(v) => patch({ totalPlaceholder: v })} />
+          <PoTextInput label="Received text" value={config.receivedText} onChange={(v) => patch({ receivedText: v })} />
+          <PoTextInput label="Payee label" value={config.payeeLabel} onChange={(v) => patch({ payeeLabel: v })} />
+          <PoTextInput label="Remarks label" value={config.remarksLabel} onChange={(v) => patch({ remarksLabel: v })} />
+          <PoTextInput label="Form code" value={config.fdLabel} onChange={(v) => patch({ fdLabel: v })} />
+          <Field label="Row height (px, 0 = auto)">
+            <input
+              className="input"
+              inputMode="numeric"
+              value={config.rowHeight ? String(config.rowHeight) : ''}
+              onChange={(e) => patch({ rowHeight: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 })}
+            />
+          </Field>
+          <Field label="Font size (px, 0 = default)">
+            <input
+              className="input"
+              inputMode="numeric"
+              value={config.fontSize ? String(config.fontSize) : ''}
+              onChange={(e) => patch({ fontSize: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 })}
+            />
+          </Field>
+        </div>
+        <div className="mt-4">
+          <Field label="Remarks text">
+            <textarea className="input min-h-16 text-xs" value={config.remarksText} onChange={(e) => patch({ remarksText: e.target.value })} />
+          </Field>
+        </div>
+      </GlassCard>
+
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="ghost" onClick={() => setConfig(DEFAULT_PO_CONFIG)}>
+          <RotateCcw size={15} /> Restore default
+        </Button>
+        <Button variant="ghost" onClick={preview}>
+          <Eye size={15} /> Preview
+        </Button>
+        <Button variant="primary" onClick={save} disabled={saving}>
+          <Save size={15} /> {saving ? 'Saving…' : 'Save template'}
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -1432,7 +1668,9 @@ function ServiceForm({ initial, costs, onClose, onSaved }: { initial: ServiceMat
     cost_element: initial?.cost_element ?? '',
     tanker_required: initial?.tanker_required ?? false,
     trips: initial?.trips ?? false,
+    locations: normalizeLocations(initial?.locations),
   })
+  const [locationDraft, setLocationDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const toast = useToast()
 
@@ -1449,6 +1687,7 @@ function ServiceForm({ initial, costs, onClose, onSaved }: { initial: ServiceMat
       cost_element: form.cost_element || null,
       tanker_required: form.tanker_required,
       trips: form.trips,
+      locations: normalizeLocations([...form.locations, locationDraft]),
     }
     try {
       if (initial) await apiPut(`/api/service-matrix/${initial.id}`, payload)
@@ -1480,6 +1719,58 @@ function ServiceForm({ initial, costs, onClose, onSaved }: { initial: ServiceMat
               <option value="">None</option>
               {costs.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name ?? ''}</option>)}
             </select>
+          </Field>
+        </div>
+        <div className="sm:col-span-3">
+          <Field
+            label="Locations"
+            hint="Invoice entry shows these as a dropdown for this Type / Service / Detail combo. Leave empty if location is not used."
+          >
+            {form.locations.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {form.locations.map((loc) => (
+                  <span key={loc} className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-0.5 text-xs font-medium">
+                    {loc}
+                    <button
+                      type="button"
+                      className="text-[var(--text-muted)] hover:text-[var(--danger)]"
+                      aria-label={`Remove ${loc}`}
+                      onClick={() => setForm({ ...form, locations: form.locations.filter((x) => x !== loc) })}
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                className="input"
+                value={locationDraft}
+                placeholder="Add a location…"
+                onChange={(e) => setLocationDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault()
+                    const next = normalizeLocations([...form.locations, locationDraft])
+                    setForm({ ...form, locations: next })
+                    setLocationDraft('')
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const next = normalizeLocations([...form.locations, locationDraft])
+                  setForm({ ...form, locations: next })
+                  setLocationDraft('')
+                }}
+              >
+                Add
+              </Button>
+            </div>
           </Field>
         </div>
         <label className="col-span-3 flex items-center gap-6 text-sm text-[var(--text-dim)]">
