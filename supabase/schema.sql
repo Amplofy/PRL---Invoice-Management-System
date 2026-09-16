@@ -248,6 +248,30 @@ create table if not exists public.import_logs (
 );
 
 -- -------------------------------------------------------------
+-- Import batches (admin approval workflow)
+-- -------------------------------------------------------------
+create table if not exists public.import_batches (
+  id             uuid primary key default gen_random_uuid(),
+  import_type    text not null check (import_type in ('invoices','contracts','vendors')),
+  file_name      text not null default '',
+  total_rows     integer not null default 0,
+  duplicate_rows integer not null default 0,
+  status         text not null default 'pending' check (status in ('pending','approved','rejected')),
+  mode           text not null default 'append' check (mode in ('append','overwrite')),
+  rows           jsonb not null default '[]',
+  conflicts      jsonb not null default '[]',
+  submitted_by   text not null default '',
+  decided_by     text,
+  decided_at     timestamptz,
+  created_at     timestamptz not null default now()
+);
+
+create index if not exists import_batches_status_idx
+  on public.import_batches (status, created_at desc);
+
+grant all on public.import_batches to service_role;
+
+-- -------------------------------------------------------------
 -- Comparisons
 -- -------------------------------------------------------------
 create table if not exists public.comparisons (
