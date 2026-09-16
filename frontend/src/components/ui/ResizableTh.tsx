@@ -159,7 +159,7 @@ export function HeaderTh({
   columnKey: string
   children?: ReactNode
   className?: string
-  align?: 'left' | 'right'
+  align?: 'left' | 'center' | 'right'
   resizable?: boolean
 }) {
   const api = useContext(ColumnResizeContext)
@@ -168,7 +168,7 @@ export function HeaderTh({
   return (
     <th
       data-col={columnKey}
-      className={`${align === 'right' ? 'text-right' : ''} ${resized ? 'is-resized' : ''} ${className}`.trim()}
+      className={`${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : ''} ${resized ? 'is-resized' : ''} ${className}`.trim()}
       style={resized ? { width, minWidth: width, maxWidth: width } : undefined}
     >
       {children}

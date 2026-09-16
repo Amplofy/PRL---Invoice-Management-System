@@ -1,4 +1,5 @@
 import type { SourceColumn } from './importParser'
+import { dateToCalendarYmd, excelSerialToYmd } from './calendarDate'
 
 export type ImportType = 'invoices' | 'contracts' | 'vendors'
 export type FieldType = 'text' | 'number' | 'date' | 'status'
@@ -29,6 +30,7 @@ export const IMPORT_SCHEMAS: Record<ImportType, ElementDef[]> = {
     { key: 't1', label: 'Service Type 1', type: 'text', required: false, aliases: ['t1', 'type1', 'service type 1', 'service type', 'activity 1', 'operation'] },
     { key: 't2', label: 'Service Type 2', type: 'text', required: false, aliases: ['t2', 'type2', 'service type 2', 'activity 2', 'service'] },
     { key: 't3', label: 'Service Type 3', type: 'text', required: false, aliases: ['t3', 'type3', 'service type 3', 'activity 3', 'description'] },
+    { key: 'location', label: 'Location', type: 'text', required: false, aliases: ['location', 'site', 'place', 'terminal', 'port', 'where'] },
     { key: 'tanker_name', label: 'Tanker Name', type: 'text', required: false, aliases: ['tanker name', 'tanker', 'vehicle no', 'truck no', 'vehicle', 'truck'] },
     { key: 'trips', label: 'Trips', type: 'number', required: false, aliases: ['trips', 'trip', 'no of trips', 'number of trips', 'trip count'] },
     { key: 'item_no', label: 'Item No', type: 'text', required: false, aliases: ['item no', 'item', 'item number', 'line no', 'line item', 'line'] },
@@ -112,24 +114,15 @@ export function autoMap(columns: SourceColumn[], schema: ElementDef[]): MappingS
   return state
 }
 
-const EXCEL_EPOCH = Date.UTC(1899, 11, 30)
-
-function excelSerialToDate(n: number): Date {
-  return new Date(EXCEL_EPOCH + Math.floor(n) * 86400000)
-}
-
 function iso(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return dateToCalendarYmd(d)
 }
 
 export function normalizeDate(raw: unknown): { value: string | null; warning?: string } {
   if (raw === null || raw === undefined || raw === '') return { value: null }
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) return { value: iso(raw) }
   if (typeof raw === 'number' && raw > 20000 && raw < 80000) {
-    return { value: iso(excelSerialToDate(raw)) }
+    return { value: excelSerialToYmd(raw) }
   }
   const s = String(raw).trim()
   if (!s) return { value: null }

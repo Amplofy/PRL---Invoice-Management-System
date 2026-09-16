@@ -129,13 +129,13 @@ insert into public.cost_elements (code, name) values
   ('MISC', 'Miscellaneous')
 on conflict (code) do nothing;
 
-insert into public.service_matrix (id, t1, t2, t3, cost_element, tanker_required, trips) values
-  ('00000000-0000-0000-0000-000000000401', 'Inward', 'Surveying', 'Draft Survey', 'SUR', true, false),
-  ('00000000-0000-0000-0000-000000000402', 'Inward', 'Surveying', 'Quantity Survey', 'SUR', false, false),
-  ('00000000-0000-0000-0000-000000000403', 'Outward', 'Tanker Handling', 'Loading', 'THL', true, true),
-  ('00000000-0000-0000-0000-000000000404', 'Outward', 'Tanker Handling', 'Unloading', 'THL', true, true),
-  ('00000000-0000-0000-0000-000000000405', 'Storage', 'Stock Measurement', 'Tank Dipping', 'SM', false, false),
-  ('00000000-0000-0000-0000-000000000406', 'Storage', 'Stock Measurement', 'Line Survey', 'SM', false, false)
+insert into public.service_matrix (id, t1, t2, t3, cost_element, tanker_required, trips, locations) values
+  ('00000000-0000-0000-0000-000000000401', 'Inward', 'Surveying', 'Draft Survey', 'SUR', true, false, array['Keamari','Port Qasim']),
+  ('00000000-0000-0000-0000-000000000402', 'Inward', 'Surveying', 'Quantity Survey', 'SUR', false, false, '{}'::text[]),
+  ('00000000-0000-0000-0000-000000000403', 'Outward', 'Tanker Handling', 'Loading', 'THL', true, true, array['Keamari','Port Qasim']),
+  ('00000000-0000-0000-0000-000000000404', 'Outward', 'Tanker Handling', 'Unloading', 'THL', true, true, array['Keamari']),
+  ('00000000-0000-0000-0000-000000000405', 'Storage', 'Stock Measurement', 'Tank Dipping', 'SM', false, false, '{}'::text[]),
+  ('00000000-0000-0000-0000-000000000406', 'Storage', 'Stock Measurement', 'Line Survey', 'SM', false, false, '{}'::text[])
 on conflict (id) do nothing;
 
 -- -------------------------------------------------------------

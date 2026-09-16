@@ -40,6 +40,13 @@ export function colLetter(idx: number): string {
 
 export async function readWorkbook(file: File): Promise<ParsedWorkbook> {
   const buf = await file.arrayBuffer()
+  if (isCsvFile(file)) {
+    const text = decodeText(buf)
+    const matrix = parseCsvMatrix(text).filter((row) => row.some((c) => String(c).trim() !== ''))
+    return {
+      sheets: [{ name: 'Sheet1', rowCount: matrix.length, matrix, hiddenCols: [] }],
+    }
+  }
   const wb = XLSX.read(buf, { cellDates: true, dense: false })
   const sheets: ParsedSheet[] = []
   for (const name of wb.SheetNames) {
@@ -59,6 +66,72 @@ export async function readWorkbook(file: File): Promise<ParsedWorkbook> {
     sheets.push({ name, rowCount: matrix.length, matrix, hiddenCols: hidden })
   }
   return { sheets }
+}
+
+function isCsvFile(file: File): boolean {
+  const n = file.name.toLowerCase()
+  if (n.endsWith('.csv') || n.endsWith('.txt')) return true
+  return file.type === 'text/csv' || file.type === 'text/plain'
+}
+
+function decodeText(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buf)
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buf)
+  }
+  const text = new TextDecoder('utf-8').decode(buf)
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/** Keep CSV cells as original strings so dates are not coerced through timezone. */
+export function parseCsvMatrix(text: string): string[][] {
+  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+  const rows: string[][] = []
+  let row: string[] = []
+  let cur = ''
+  let inQuotes = false
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cur += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        cur += ch
+      }
+      continue
+    }
+    if (ch === '"') {
+      inQuotes = true
+      continue
+    }
+    if (ch === ',') {
+      row.push(cur)
+      cur = ''
+      continue
+    }
+    if (ch === '\n') {
+      row.push(cur)
+      rows.push(row)
+      row = []
+      cur = ''
+      continue
+    }
+    if (ch === '\r') continue
+    cur += ch
+  }
+  if (cur.length > 0 || row.length > 0) {
+    row.push(cur)
+    rows.push(row)
+  }
+  return rows
 }
 
 export function detectHeaderRow(matrix: unknown[][], aliasSet: Set<string>): number {

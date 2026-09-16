@@ -15,7 +15,8 @@ import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import SummaryCards from '../components/ui/SummaryCards'
-import { downloadCSV, sortRows, type SortDirection } from '../lib/export'
+import { sortRows, type SortDirection } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import SortableTh from '../components/ui/SortableTh'
@@ -219,19 +220,38 @@ export default function UsersPage() {
     [filteredUsers, sortBy, sortDir],
   )
 
-  const exportUsers = () =>
-    downloadCSV(
-      `users-${new Date().toISOString().slice(0, 10)}.csv`,
-      sortedUsers.map((u) => ({
-        ...(col.show('username') ? { username: u.username } : {}),
-        ...(col.show('full_name') ? { full_name: u.full_name ?? '' } : {}),
-        ...(col.show('email') ? { email: u.email ?? '' } : {}),
-        ...(col.show('role') ? { role: u.roles?.name ?? '' } : {}),
-        ...(col.show('status') ? { status: u.status ?? '' } : {}),
-        ...(col.show('login') ? { sign_in: u.can_sign_in || u.auth_id ? 'linked' : 'directory only' } : {}),
-        ...(col.show('last_login') ? { last_login: formatLastLogin(u.last_login) } : {}),
-      })),
-    )
+  const exportUsers = async () => {
+    try {
+      await downloadTableWorkbook({
+        filename: `users-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        title: 'User directory',
+        subtitle: 'All user columns in the current filter',
+        grandTotal: false,
+        groupBy: 'Role',
+        filters: [{ label: 'Rows', value: String(sortedUsers.length) }],
+        columns: [
+          { key: 'Username', header: 'Username', width: 16 },
+          { key: 'Full name', header: 'Full name', width: 22 },
+          { key: 'Email', header: 'Email', width: 28 },
+          { key: 'Role', header: 'Role', width: 16 },
+          { key: 'Status', header: 'Status', width: 12 },
+          { key: 'Sign-in', header: 'Sign-in', width: 16 },
+          { key: 'Last login', header: 'Last login', width: 22 },
+        ],
+        rows: sortedUsers.map((u) => ({
+          Username: u.username,
+          'Full name': u.full_name ?? '',
+          Email: u.email ?? '',
+          Role: u.roles?.name ?? '',
+          Status: u.status ?? '',
+          'Sign-in': u.can_sign_in || u.auth_id ? 'linked' : 'directory only',
+          'Last login': formatLastLogin(u.last_login),
+        })),
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -309,8 +329,8 @@ export default function UsersPage() {
               onValueChange: setSortBy,
               onDirectionChange: setSortDir,
             }}
-            onExport={exportUsers}
-            exportLabel="Export CSV"
+            onExport={() => { void exportUsers() }}
+            exportLabel="Export Excel"
             resultsCount={sortedUsers.length}
           >
             <ColumnsButton

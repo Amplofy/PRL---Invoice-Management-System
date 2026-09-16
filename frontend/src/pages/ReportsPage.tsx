@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Download, TrendingUp, TrendingDown, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, Clock, Banknote, FileSpreadsheet, Lock, CalendarRange, Building2 } from 'lucide-react'
 import {
   Chart as ChartJS,
@@ -22,7 +22,7 @@ import EmptyState from '../components/ui/EmptyState'
 import { useThemeColors } from '../lib/themeColors'
 import { fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, currentFiscalYear, shiftFiscalYear, elapsedInFiscalYear, nearbyFiscalYears, isClosedFiscalYear, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isAccrualOpenInvoice, isMiscCostElement, fyStartYear, type FiscalQuarter } from '../lib/fiscal'
 import { invoiceListPath } from '../lib/invoiceWindow'
-import { downloadCSV } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useCountUp } from '../lib/useCountUp'
 import PageHeader from '../components/PageHeader'
 import Button from '../components/ui/Button'
@@ -36,10 +36,10 @@ import { costElementBreakup, filterAccrualYears, yearlyBudgetFigures, type Accru
 import AccrualAnalysisPanel from './AccrualAnalysisPanel'
 import { ChartStage, MixWave } from '../components/ui/EnergyWave'
 import { contractNoOf, vendorNameOf } from '../lib/relations'
-import { barDataset, barMotion, doughnutMotion, doughnutSlice, lineMotion, waveLine } from '../lib/chartWave'
+import { barDataset, chartMotion, doughnutSlice, gradientBarFill, reportBarCrown, tooltipMotion, waveLine } from '../lib/chartWave'
 import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler, reportBarCrown)
 
 interface Invoice {
   id: string
@@ -136,6 +136,33 @@ const TONE_ACCENT: Record<Tone, string> = {
   purple: '#8b5cf6',
 }
 
+const INSIGHT_GLYPH: Record<string, ReactNode> = {
+  util: (
+    <>
+      <path d="M12 2a10 10 0 1 0 10 10H12V2z" opacity=".45" />
+      <path d="M12 2a10 10 0 0 1 10 10H12V2z" />
+    </>
+  ),
+  pending: (
+    <>
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z" opacity=".45" />
+      <path d="M12.9 6.6h-1.9v6.3l5 3 .9-1.5-4-2.4z" />
+    </>
+  ),
+  vendor: (
+    <>
+      <path d="M4 19.2h16V21H4z" opacity=".45" />
+      <path d="M3 16l2.2-8.4 4.6 3.6L12 4.4l2.2 6.8 4.6-3.6L21 16H3z" />
+    </>
+  ),
+  accrual: (
+    <>
+      <path d="M12 2l8 3.2V11c0 5.1-3.3 9.2-8 11-4.7-1.8-8-5.9-8-11V5.2L12 2z" opacity=".45" />
+      <path d="M11.2 14.9l-2.4-2.4-1.5 1.5 3.9 3.9 6.5-6.5-1.5-1.5-5 5z" />
+    </>
+  ),
+}
+
 interface Insight {
   tone: Tone
   id: string
@@ -143,7 +170,6 @@ interface Insight {
   main: string
   left: string
   right: string
-  energy: 'pulse' | 'sweep' | 'spark' | 'breath'
 }
 
 export default function ReportsPage() {
@@ -601,7 +627,6 @@ export default function ReportsPage() {
         left: `Released Rs ${formatMoney(kpi.yearReleased)}`,
         right: `Yearly Rs ${formatMoney(kpi.budget)}`,
         tone: kpi.utilization > 90 ? 'err' : kpi.utilization > 70 ? 'warn' : 'ok',
-        energy: 'pulse',
       },
       {
         id: 'pending',
@@ -610,7 +635,6 @@ export default function ReportsPage() {
         left: `Pending Rs ${formatMoney(kpi.pending)}`,
         right: `Approved Rs ${formatMoney(kpi.approved)}`,
         tone: pendingPct > 40 ? 'warn' : 'primary',
-        energy: 'sweep',
       },
       {
         id: 'vendor',
@@ -619,7 +643,6 @@ export default function ReportsPage() {
         left: lead ? `Rs ${formatMoney(lead.total)}` : 'No vendor spend',
         right: lead ? `${leadShare.toFixed(0)}% of scoped` : METRIC_LABELS[metric],
         tone: 'purple',
-        energy: 'spark',
       },
       {
         id: 'accrual',
@@ -628,14 +651,13 @@ export default function ReportsPage() {
         left: `Prior Rs ${formatMoney(accrualCover.prior)}`,
         right: `Keep Rs ${formatMoney(accrualCover.keep)}`,
         tone: 'ok',
-        energy: 'breath',
       },
     ]
   }, [kpi, byVendor, metric, accrualCover])
 
   const animatedTotal = useCountUp(kpi.total)
   const animatedOpexPct = useCountUp(categoryMix.total > 0 ? (categoryMix.OPEX / categoryMix.total) * 100 : 0, 900)
-  const animatedUtil = useCountUp(kpi.utilization, 1200)
+  const animatedUtil = useCountUp(kpi.utilization, 1100)
 
   // ---- Foresight: project the rest of the fiscal year ----------------------
   const forecast = useMemo(() => {
@@ -726,11 +748,62 @@ export default function ReportsPage() {
     return { prevFy, current, previous, delta }
   }, [invoices, reportFy])
 
-  const exportForecast = () =>
-    downloadCSV('report-forecast.csv', [{ fiscal_year: forecast.targetFy, ytd_spend: Math.round(forecast.monthsToDate), projected_year: Math.round(forecast.projected), budget: Math.round(forecast.budgetForFy), variance: Math.round(forecast.variance) }])
+  const exportForecast = async () => {
+    try {
+      await downloadTableWorkbook({
+        filename: `report-forecast-${forecast.targetFy}.xlsx`,
+        title: `${forecast.targetFy} foresight`,
+        subtitle: 'Year-to-date spend versus run-rate projection',
+        grandTotal: false,
+        filters: [{ label: 'Fiscal year', value: forecast.targetFy }],
+        columns: [
+          { key: 'Fiscal year', header: 'Fiscal year', width: 14 },
+          { key: 'YTD spend (Rs)', header: 'YTD spend (Rs)', kind: 'money', width: 16 },
+          { key: 'Projected year (Rs)', header: 'Projected year (Rs)', kind: 'money', width: 18 },
+          { key: 'Budget (Rs)', header: 'Budget (Rs)', kind: 'money', width: 16 },
+          { key: 'Variance (Rs)', header: 'Variance (Rs)', kind: 'money', width: 16 },
+        ],
+        rows: [
+          {
+            'Fiscal year': forecast.targetFy,
+            'YTD spend (Rs)': forecast.monthsToDate,
+            'Projected year (Rs)': forecast.projected,
+            'Budget (Rs)': forecast.budgetForFy,
+            'Variance (Rs)': forecast.variance,
+          },
+        ],
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
-  const exportBudgetVsActual = () =>
-    downloadCSV('report-budget-vs-actual.csv', budgetVsActual.map((r) => ({ cost_element: r.code, budget: Math.round(r.budget), actual: Math.round(r.actual), variance: Math.round(r.variance), utilization_pct: r.utilization.toFixed(1) })))
+  const exportBudgetVsActual = async () => {
+    try {
+      await downloadTableWorkbook({
+        filename: `report-budget-vs-actual-${reportFy}.xlsx`,
+        title: `${reportFy} budget vs actual`,
+        subtitle: 'Cost-element budget, actual and utilization',
+        filters: [{ label: 'Fiscal year', value: reportFy }],
+        columns: [
+          { key: 'Cost element', header: 'Cost element', width: 16 },
+          { key: 'Budget (Rs)', header: 'Budget (Rs)', kind: 'money', width: 16 },
+          { key: 'Actual (Rs)', header: 'Actual (Rs)', kind: 'money', width: 16 },
+          { key: 'Variance (Rs)', header: 'Variance (Rs)', kind: 'money', width: 16 },
+          { key: 'Utilization %', header: 'Utilization %', kind: 'pct', width: 14 },
+        ],
+        rows: budgetVsActual.map((r) => ({
+          'Cost element': r.code,
+          'Budget (Rs)': r.budget,
+          'Actual (Rs)': r.actual,
+          'Variance (Rs)': r.variance,
+          'Utilization %': r.utilization,
+        })),
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
   if (loading) {
     return <div className="py-24 text-center text-[var(--text-muted)]">Loading reports…</div>
@@ -978,7 +1051,7 @@ export default function ReportsPage() {
             <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               <Sparkles size={13} className="text-[var(--accent)]" /> Foresight · {forecast.targetFy} projection
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={exportForecast}><Download size={14} /> Forecast CSV</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { void exportForecast() }}><Download size={14} /> Forecast Excel</button>
           </div>
           <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
             <div>
@@ -1003,7 +1076,7 @@ export default function ReportsPage() {
               className="report-fill h-full rounded-full"
               style={{
                 width: `${forecast.budgetForFy > 0 ? Math.min(100, (forecast.projected / forecast.budgetForFy) * 100) : 0}%`,
-                background: forecast.variance > 0 ? 'var(--danger)' : 'var(--gradient-primary)',
+                ['--bar' as string]: forecast.variance > 0 ? 'var(--danger)' : 'var(--accent)',
               }}
             />
           </div>
@@ -1056,7 +1129,7 @@ export default function ReportsPage() {
       <div className="rise-in" style={{ animationDelay: '340ms' }}>
         <div className="flex items-center justify-between">
           <div className="section-title" style={{ marginBottom: 0 }}>Budget vs actual</div>
-          <button className="btn btn-ghost btn-sm" onClick={exportBudgetVsActual}><Download size={14} /> CSV</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { void exportBudgetVsActual() }}><Download size={14} /> Excel</button>
         </div>
         {isClosedFiscalYear(reportFy) && accrual && (
           <p className="mt-2 text-xs text-[var(--text-dim)]">
@@ -1089,7 +1162,10 @@ export default function ReportsPage() {
                   <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--surface-hover)]">
                     <div
                       className="report-fill h-full rounded-full"
-                      style={{ width: `${Math.min(100, r.utilization)}%`, background: over ? 'var(--danger)' : r.utilization > 90 ? 'var(--warn)' : 'var(--gradient-primary)' }}
+                      style={{
+                        width: `${Math.min(100, r.utilization)}%`,
+                        ['--bar' as string]: over ? 'var(--danger)' : r.utilization > 90 ? 'var(--warn)' : 'var(--accent)',
+                      }}
                     />
                   </div>
                   <div className="mt-2 flex items-center justify-between text-xs">
@@ -1151,7 +1227,6 @@ export default function ReportsPage() {
       {view === 'overview' && (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
           {insightCards.map((ins, i) => {
-            const Icon = ins.id === 'util' ? Gauge : ins.id === 'pending' ? Clock : ins.id === 'vendor' ? Building2 : Wallet
             return (
             <div
               key={ins.id}
@@ -1161,11 +1236,16 @@ export default function ReportsPage() {
               <div className="insight-head">
                 <span
                   className="insight-ico"
-                  style={{ background: `color-mix(in srgb, ${TONE_ACCENT[ins.tone]} 15%, transparent)`, color: TONE_ACCENT[ins.tone] }}
+                  style={{
+                    background: `linear-gradient(135deg, ${TONE_ACCENT[ins.tone]}, color-mix(in srgb, ${TONE_ACCENT[ins.tone]} 58%, #08122b))`,
+                    boxShadow: `0 7px 16px color-mix(in srgb, ${TONE_ACCENT[ins.tone]} 38%, transparent)`,
+                  }}
                 >
-                  <Icon size={14} />
+                  <svg viewBox="0 0 24 24" width={20} height={20} fill="#fff" aria-hidden="true">
+                    {INSIGHT_GLYPH[ins.id]}
+                  </svg>
                 </span>
-                <span className="insight-kicker">{ins.title}</span>
+                <span className="insight-kicker" style={{ color: TONE_ACCENT[ins.tone] }}>{ins.title}</span>
               </div>
               <div className="insight-body">
                 <div className="insight-main">{ins.main}</div>
@@ -1219,7 +1299,7 @@ export default function ReportsPage() {
                     return {
                       label: row.fy,
                       data: quarterOrder.map((x) => row.data[x.i]),
-                      backgroundColor: fyBarPalette[idx % fyBarPalette.length],
+                      backgroundColor: gradientBarFill(fyBarPalette[idx % fyBarPalette.length]),
                       ...barDataset(),
                       maxBarThickness: selectedFys.length > 1 ? 28 : 52,
                     }
@@ -1228,7 +1308,7 @@ export default function ReportsPage() {
                 options={{
                   responsive: true,
                   maintainAspectRatio: false,
-                  animation: barMotion(),
+                  ...chartMotion('bar'),
                   plugins: {
                     legend: {
                       display: selectedFys.length > 1,
@@ -1236,6 +1316,7 @@ export default function ReportsPage() {
                       labels: { color: c.ticks, boxWidth: 10, padding: 10 },
                     },
                     tooltip: {
+                      ...tooltipMotion(),
                       callbacks: {
                         label: (ctx) => `${ctx.dataset.label}: ${fmtMetric(Number(ctx.parsed.y ?? 0))}`,
                       },
@@ -1281,7 +1362,7 @@ export default function ReportsPage() {
                 responsive: true,
                 maintainAspectRatio: false,
                 cutout: '78%',
-                animation: doughnutMotion(),
+                ...chartMotion('doughnut'),
                 plugins: { legend: { display: false }, tooltip: { enabled: false } },
               }}
             />
@@ -1415,7 +1496,7 @@ export default function ReportsPage() {
             <Banknote size={13} className="text-[var(--accent-3)]" /> Monthly cash pipeline · {reportFy}
           </span>
           <p className="mt-1 text-xs text-[var(--text-dim)]">Approved invoices vs pay orders generated vs amount released</p>
-          <ChartStage className="mt-5 h-56" color={c.accent3} values={paymentMonthly.map((m) => m.released)}>
+          <ChartStage className="mt-5 h-72" color={c.accent3} values={paymentMonthly.map((m) => m.released)}>
             <Line
               data={{
                 labels: paymentMonthly.map((m) => m.label),
@@ -1440,9 +1521,10 @@ export default function ReportsPage() {
               options={{
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: lineMotion(),
+                ...chartMotion('line'),
                 plugins: {
                   legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 12 } },
+                  tooltip: { ...tooltipMotion() },
                 },
                 scales: {
                   x: { grid: { display: false }, ticks: { color: c.ticks } },
@@ -1512,8 +1594,8 @@ export default function ReportsPage() {
               options={{
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: lineMotion(),
-                plugins: { legend: { display: false } },
+                ...chartMotion('line'),
+                plugins: { legend: { display: false }, tooltip: { ...tooltipMotion() } },
                 scales: {
                   x: { grid: { display: false }, ticks: { color: c.ticks } },
                   y: { beginAtZero: true, grace: '8%', grid: { color: c.grid }, ticks: { color: c.ticks } },
@@ -1548,9 +1630,9 @@ export default function ReportsPage() {
                       className="report-fill h-full rounded-full"
                       style={{
                         width: `${(v.total / maxVendor) * 100}%`,
-                        background: i === 0 ? 'var(--gradient-primary)' : 'var(--accent)',
-                        opacity: i === 0 ? 1 : 0.55,
-                        animationDelay: `${i * 90}ms`,
+                        ['--bar' as string]: i === 0 ? 'var(--accent-2)' : 'var(--accent)',
+                        opacity: i === 0 ? 1 : 0.82,
+                        animationDelay: `${i * 48}ms`,
                       }}
                     />
                   </div>
@@ -1583,9 +1665,9 @@ export default function ReportsPage() {
                       className="report-fill h-full rounded-full"
                       style={{
                         width: `${(row.total / maxType) * 100}%`,
-                        background: i === 0 ? 'var(--gradient-primary)' : 'var(--accent)',
-                        opacity: i === 0 ? 1 : 0.55,
-                        animationDelay: `${i * 90}ms`,
+                        ['--bar' as string]: i === 0 ? 'var(--accent-2)' : 'var(--accent)',
+                        opacity: i === 0 ? 1 : 0.82,
+                        animationDelay: `${i * 48}ms`,
                       }}
                     />
                   </div>
@@ -1613,9 +1695,9 @@ export default function ReportsPage() {
                       className="report-fill h-full rounded-full"
                       style={{
                         width: `${(row.total / maxService) * 100}%`,
-                        background: i === 0 ? 'var(--gradient-primary)' : 'var(--accent)',
-                        opacity: i === 0 ? 1 : 0.55,
-                        animationDelay: `${i * 90}ms`,
+                        ['--bar' as string]: i === 0 ? 'var(--accent-2)' : 'var(--accent)',
+                        opacity: i === 0 ? 1 : 0.82,
+                        animationDelay: `${i * 48}ms`,
                       }}
                     />
                   </div>
@@ -1657,7 +1739,7 @@ export default function ReportsPage() {
                       className="report-fill h-full rounded-full"
                       style={{
                         width: `${Math.min(100, Math.max(0, b.utilization))}%`,
-                        background: over ? 'var(--danger)' : b.utilization > 90 ? 'var(--warn)' : 'var(--gradient-primary)',
+                        ['--bar' as string]: over ? 'var(--danger)' : b.utilization > 90 ? 'var(--warn)' : 'var(--accent)',
                         animationDelay: `${i * 60}ms`,
                       }}
                     />

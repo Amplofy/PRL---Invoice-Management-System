@@ -13,6 +13,41 @@ function actorKey(req: { user?: AuthUser }): string {
   return req.user?.id || req.user?.email || 'anon'
 }
 
+function isAdminRole(role: string | undefined): boolean {
+  return role === 'admin' || role === 'superadmin'
+}
+
+async function reassignContractVendor(
+  supabase: ReturnType<typeof getSupabase>,
+  contractId: string,
+  vendorId: string,
+): Promise<string | null> {
+  const { data: vendor } = await supabase.from('vendors').select('id').eq('id', vendorId).maybeSingle()
+  if (!vendor) return 'Vendor not found'
+  const { error } = await supabase
+    .from('contracts')
+    .update({ vendor_id: vendorId, updated_at: new Date().toISOString() })
+    .eq('id', contractId)
+  return error?.message ?? null
+}
+
+async function applyMasterVendorChange(
+  req: { user?: AuthUser; body?: Record<string, unknown> },
+  contractId: string | null | undefined,
+): Promise<{ error?: string; code?: string }> {
+  const body = req.body ?? {}
+  const vendorId = typeof body.vendor_id === 'string' ? body.vendor_id.trim() : ''
+  if (!vendorId) return {}
+  if (!body.masterAccess || !isAdminRole(req.user?.role)) {
+    return { error: 'Changing invoice vendor requires Master Access', code: 'MASTER_ACCESS_REQUIRED' }
+  }
+  if (!contractId) return { error: 'Select a contract before changing vendor' }
+  const err = await reassignContractVendor(getSupabase(), contractId, vendorId)
+  if (err) return { error: err }
+  await audit('Update', 'Contract', contractId, 'Vendor reassigned from invoice via Master Access')
+  return {}
+}
+
 invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
   try {
     const supabase = getSupabase()
@@ -90,6 +125,17 @@ invoicesRouter.post('/invoices', authRequired, async (req, res, next) => {
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return
     }
+    const vendorChange = await applyMasterVendorChange(
+      req as { user?: AuthUser; body?: Record<string, unknown> },
+      body.contract_id ?? null,
+    )
+    if (vendorChange.error) {
+      res.status(vendorChange.code === 'MASTER_ACCESS_REQUIRED' ? 403 : 400).json({
+        error: vendorChange.error,
+        code: vendorChange.code,
+      })
+      return
+    }
     const now = new Date().toISOString()
     const { data, error } = await supabase
       .from('invoices')
@@ -102,6 +148,7 @@ invoicesRouter.post('/invoices', authRequired, async (req, res, next) => {
         t1: body.t1 ?? null,
         t2: body.t2 ?? null,
         t3: body.t3 ?? null,
+        location: body.location ?? null,
         tanker_name: body.tanker_name ?? null,
         trips: body.trips ?? null,
         item_no: body.item_no ?? null,
@@ -134,7 +181,7 @@ invoicesRouter.put('/invoices/:id', authRequired, async (req, res, next) => {
     const user = (req as { user?: { email?: string } }).user
     const { data: existing } = await supabase
       .from('invoices')
-      .select('invoice_date, service_from, service_to')
+      .select('invoice_date, service_from, service_to, contract_id')
       .eq('id', req.params.id)
       .maybeSingle()
     if (!existing) {
@@ -150,7 +197,18 @@ invoicesRouter.put('/invoices/:id', authRequired, async (req, res, next) => {
       res.status(403).json({ error: LOCKED_FY_MESSAGE, fy: locked, code: 'FY_LOCKED' })
       return
     }
-    const { row_version, masterAccess: _masterAccess, ...updates } = body
+    const vendorChange = await applyMasterVendorChange(
+      req as { user?: AuthUser; body?: Record<string, unknown> },
+      (body.contract_id as string | null | undefined) ?? existing.contract_id,
+    )
+    if (vendorChange.error) {
+      res.status(vendorChange.code === 'MASTER_ACCESS_REQUIRED' ? 403 : 400).json({
+        error: vendorChange.error,
+        code: vendorChange.code,
+      })
+      return
+    }
+    const { row_version, masterAccess: _masterAccess, vendor_id: _vendorId, ...updates } = body
     const { data, error } = await supabase
       .from('invoices')
       .update({

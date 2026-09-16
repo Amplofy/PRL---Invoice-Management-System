@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Languages, Banknote, Clock, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
-import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
-import { contractUtilization, contractStatusLabel, isSelectableContract, isSignedOff, matrixForContract, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
+import { formatMoney, formatDate, formatAmountWords, formatServicePeriod } from '../lib/format'
+import { catalogLocations, contractUtilization, contractStatusLabel, isSelectableContract, isSignedOff, matrixForContract, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
@@ -16,9 +16,11 @@ import ColumnsButton from '../components/ui/ColumnsButton'
 import ServiceSelects from '../components/ui/ServiceSelects'
 import LockedAutoField from '../components/ui/LockedAutoField'
 import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
+import InvoiceVendorField from '../components/ui/InvoiceVendorField'
 import ValidationSummary from '../components/ui/ValidationSummary'
 import { emitAppEvent } from '../lib/notify'
-import { downloadCSV, sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useAuth, isAdmin } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
@@ -29,20 +31,23 @@ import SummaryCards from '../components/ui/SummaryCards'
 import SortableTh from '../components/ui/SortableTh'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ColumnResizeProvider, HeaderTh } from '../components/ui/ResizableTh'
-import { currentFiscalYear, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
+import { costCategory, currentFiscalYear, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
 import { useFyLock } from '../lib/FyLockProvider'
 import { useMasterAccess } from '../lib/masterAccess'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { emitCrossModule, useLiveDomain } from '../lib/store'
 import { isUnpaidPriorYearInvoice } from '../lib/accrual'
-import { contractNoOf as relContractNo, vendorNameOf } from '../lib/relations'
+import { contractNoOf as relContractNo, vendorEmailOf, vendorNameOf } from '../lib/relations'
+import { invoiceApprovedAmount } from '../lib/paymentOrder'
 
 interface VendorRef {
   name: string | null
+  email?: string | null
 }
 interface ContractRef {
   contract_no: string | null
   service: string | null
+  vendor_id?: string | null
   vendors: VendorRef[] | null
 }
 interface Invoice {
@@ -55,6 +60,7 @@ interface Invoice {
   t1: string | null
   t2: string | null
   t3: string | null
+  location?: string | null
   tanker_name: string | null
   trips: number | null
   item_no: string | null
@@ -62,6 +68,7 @@ interface Invoice {
   service_from: string | null
   service_to: string | null
   amount: number
+  approved_amount?: number | null
   status: string
   remarks: string | null
   approved_by: string | null
@@ -87,6 +94,7 @@ const INVOICE_COLUMN_DEFS = [
   { key: 't1', label: 'Type' },
   { key: 't2', label: 'Service' },
   { key: 't3', label: 'Detail' },
+  { key: 'location', label: 'Location' },
   { key: 'tanker', label: 'Tanker' },
   { key: 'trips', label: 'Trips' },
   { key: 'cost_element', label: 'Cost Element' },
@@ -97,13 +105,13 @@ const INVOICE_COLUMN_DEFS = [
   { key: 'remarks', label: 'Remarks' },
 ]
 
-const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 't1', 't2', 't3', 'budget_fy', 'amount', 'status']
+const INVOICE_DEFAULT_COLUMNS = ['invoice_no', 'serial', 'date', 'vendor', 'contract', 't1', 't2', 't3', 'location', 'amount', 'status']
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const col = useColumnVisibility(
-    'prl-eoms-cols-invoices-v2',
+    'prl-eoms-cols-invoices-v4',
     INVOICE_COLUMN_DEFS.map((c) => c.key),
     INVOICE_DEFAULT_COLUMNS,
   )
@@ -275,6 +283,7 @@ export default function InvoicesPage() {
       { key: 't1', label: 'Type', type: 'select', options: [...new Set(invoices.map((i) => i.t1).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
       { key: 't2', label: 'Service', type: 'select', options: [...new Set(invoices.map((i) => i.t2).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
       { key: 't3', label: 'Detail', type: 'select', options: [...new Set(invoices.map((i) => i.t3).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
+      { key: 'location', label: 'Location', type: 'select', options: [...new Set(invoices.map((i) => i.location).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
       { key: 'budget_fy', label: 'Budget FY', type: 'select', options: fyChoices.map((y) => ({ value: y, label: y })) },
       { key: 'amount', label: 'Amount', type: 'number' },
       { key: 'remarks', label: 'Remarks', type: 'text' },
@@ -299,7 +308,7 @@ export default function InvoicesPage() {
     const q = search.toLowerCase()
     const searched = q
       ? invoices.filter((i) =>
-          `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${vendorOf(i)} ${contractNoOf(i)} ${i.item_no ?? ''} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''}`
+          `${i.invoice_no ?? ''} ${i.serial_no ?? ''} ${vendorOf(i)} ${contractNoOf(i)} ${i.item_no ?? ''} ${i.t1 ?? ''} ${i.t2 ?? ''} ${i.t3 ?? ''} ${i.location ?? ''}`
             .toLowerCase()
             .includes(q),
         )
@@ -441,6 +450,7 @@ export default function InvoicesPage() {
     { key: 't1', label: 'Type' },
     { key: 't2', label: 'Service' },
     { key: 't3', label: 'Detail' },
+    { key: 'location', label: 'Location' },
     { key: 'item_no', label: 'Item' },
     { key: 'cost_element', label: 'Cost Element' },
     { key: 'budget_fy', label: 'Budget FY' },
@@ -470,25 +480,95 @@ export default function InvoicesPage() {
   )
   const rejectedCount = useMemo(() => filtered.filter((i) => i.status === 'Rejected').length, [filtered])
 
-  const exportCSV = () =>
-    downloadCSV(
-      `invoices-${new Date().toISOString().slice(0, 10)}.csv`,
-      sorted.map((i) => ({
-        ...(col.show('invoice_no') ? { invoice_no: i.invoice_no ?? '' } : {}),
-        ...(col.show('serial') ? { serial_no: i.serial_no ?? '' } : {}),
-        ...(col.show('date') ? { invoice_date: i.invoice_date ?? '' } : {}),
-        ...(col.show('vendor') ? { vendor: vendorOf(i) } : {}),
-        ...(col.show('contract') ? { contract: contractNoOf(i) } : {}),
-        ...(col.show('item') ? { item_no: i.item_no ?? '' } : {}),
-        ...(col.show('t1') ? { type: i.t1 ?? '' } : {}),
-        ...(col.show('t2') ? { service: i.t2 ?? '' } : {}),
-        ...(col.show('t3') ? { detail: i.t3 ?? '' } : {}),
-        ...(col.show('cost_element') ? { cost_element: i.cost_element ?? '' } : {}),
-        ...(col.show('amount') ? { amount: i.amount } : {}),
-        ...(col.show('status') ? { status: i.status } : {}),
-        ...(col.show('remarks') ? { remarks: i.remarks ?? '' } : {}),
-      })),
-    )
+  const exportExcel = async () => {
+    const groupMap: Record<string, string> = {
+      vendor: 'Vendor',
+      contract: 'Contract',
+      status: 'Status',
+      t1: 'Type',
+      t2: 'Service',
+      t3: 'Detail',
+      location: 'Location',
+      item_no: 'Item',
+      cost_element: 'Cost element',
+      budget_fy: 'Budget FY',
+      month: 'Month',
+    }
+    try {
+      await downloadTableWorkbook({
+        filename: `invoices-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        title: 'Invoice register',
+        subtitle: 'All invoice columns with group subtotals and grand total',
+        groupBy: groupKey ? groupMap[groupKey] ?? null : null,
+        filters: [
+          { label: 'Budget FY', value: fyScope === 'all' ? 'All years' : fyScope },
+          { label: 'Rows', value: String(sorted.length) },
+          { label: 'Grouping', value: groupKey ? groupMap[groupKey] ?? groupKey : 'None' },
+        ],
+        columns: [
+          { key: 'Serial', header: 'Serial', width: 14 },
+          { key: 'Invoice no', header: 'Invoice no', width: 16 },
+          { key: 'Invoice date', header: 'Invoice date', kind: 'date', width: 14 },
+          { key: 'Processing date', header: 'Processing date', kind: 'date', width: 16 },
+          { key: 'Service from', header: 'Service from', kind: 'date', width: 14 },
+          { key: 'Service to', header: 'Service to', kind: 'date', width: 14 },
+          { key: 'Month', header: 'Month', width: 12 },
+          { key: 'Budget FY', header: 'Budget FY', width: 12 },
+          { key: 'Quarter', header: 'Quarter', width: 10 },
+          { key: 'Vendor', header: 'Vendor', width: 28 },
+          { key: 'Vendor email', header: 'Vendor email', width: 28 },
+          { key: 'Contract', header: 'Contract', width: 16 },
+          { key: 'Type', header: 'Type', width: 16 },
+          { key: 'Service', header: 'Service', width: 18 },
+          { key: 'Detail', header: 'Detail', width: 18 },
+          { key: 'Location', header: 'Location', width: 16 },
+          { key: 'Item', header: 'Item', width: 12 },
+          { key: 'Tanker', header: 'Tanker', width: 14 },
+          { key: 'Trips', header: 'Trips', kind: 'int', width: 10 },
+          { key: 'Cost element', header: 'Cost element', width: 14 },
+          { key: 'Category', header: 'Category', width: 14 },
+          { key: 'Status', header: 'Status', width: 12 },
+          { key: 'Amount (Rs)', header: 'Amount (Rs)', kind: 'money', width: 16 },
+          { key: 'Approved (Rs)', header: 'Approved (Rs)', kind: 'money', width: 16 },
+          { key: 'Remarks', header: 'Remarks', width: 32 },
+          { key: 'Approved by', header: 'Approved by', width: 16 },
+        ],
+        rows: sorted.map((i) => {
+          const fi = invoiceBudgetInfo(i)
+          return {
+            Serial: i.serial_no ?? '',
+            'Invoice no': i.invoice_no ?? '',
+            'Invoice date': i.invoice_date ?? '',
+            'Processing date': i.processing_date ?? '',
+            'Service from': i.service_from ?? '',
+            'Service to': i.service_to ?? '',
+            Month: i.invoice_date ? i.invoice_date.slice(0, 7) : '',
+            'Budget FY': fi?.fy ?? '',
+            Quarter: fi?.quarter ?? '',
+            Vendor: vendorOf(i),
+            'Vendor email': vendorEmailOf(i),
+            Contract: contractNoOf(i),
+            Type: i.t1 ?? '',
+            Service: i.t2 ?? '',
+            Detail: i.t3 ?? '',
+            Location: i.location ?? '',
+            Item: i.item_no ?? '',
+            Tanker: i.tanker_name ?? '',
+            Trips: Number(i.trips ?? 0),
+            'Cost element': i.cost_element ?? '',
+            Category: costCategory(i.cost_element),
+            Status: i.status,
+            'Amount (Rs)': Number(i.amount ?? 0),
+            'Approved (Rs)': invoiceApprovedAmount(i),
+            Remarks: i.remarks ?? '',
+            'Approved by': i.approved_by ?? '',
+          }
+        }),
+      })
+    } catch (e) {
+      toast.error('Export failed', (e as Error).message)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -579,8 +659,8 @@ export default function InvoicesPage() {
           onValueChange: setSortBy,
           onDirectionChange: setSortDir,
         }}
-        onExport={exportCSV}
-        exportLabel="Export CSV"
+        onExport={() => { void exportExcel() }}
+        exportLabel="Export Excel"
         resultsCount={sorted.length}
       >
         <ColumnsButton
@@ -622,6 +702,7 @@ export default function InvoicesPage() {
                 {col.show('t1') && <SortableTh label="Type" columnKey="t1" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('t2') && <SortableTh label="Service" columnKey="t2" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('t3') && <SortableTh label="Detail" columnKey="t3" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
+                {col.show('location') && <SortableTh label="Location" columnKey="location" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('tanker') && <HeaderTh columnKey="tanker">Tanker</HeaderTh>}
                 {col.show('trips') && <SortableTh label="Trips" columnKey="trips" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc align="right" />}
                 {col.show('cost_element') && <SortableTh label="Cost Element" columnKey="cost_element" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
@@ -677,16 +758,13 @@ export default function InvoicesPage() {
                   {col.show('t1') && <td className="text-xs">{inv.t1 ?? '—'}</td>}
                   {col.show('t2') && <td className="text-xs">{inv.t2 ?? '—'}</td>}
                   {col.show('t3') && <td className="text-xs">{inv.t3 ?? '—'}</td>}
+                  {col.show('location') && <td className="text-xs">{inv.location ?? '—'}</td>}
                   {col.show('tanker') && <td className="text-xs">{inv.tanker_name ?? '—'}</td>}
                   {col.show('trips') && <td className="text-right text-xs">{inv.trips ?? '—'}</td>}
                   {col.show('cost_element') && <td className="text-xs">{inv.cost_element ?? '—'}</td>}
                   {col.show('budget_fy') && <td className="text-xs">{invoiceBudgetFy(inv) ?? '—'}</td>}
                   {col.show('service_period') && (
-                    <td className="text-xs">
-                      {inv.service_from || inv.service_to
-                        ? `${formatDate(inv.service_from)} – ${formatDate(inv.service_to)}`
-                        : '—'}
-                    </td>
+                    <td className="text-xs">{formatServicePeriod(inv.service_from, inv.service_to) ?? '—'}</td>
                   )}
                   {col.show('amount') && <td className="text-right font-semibold">{formatMoney(inv.amount)}</td>}
                   {col.show('status') && (
@@ -944,6 +1022,7 @@ interface ContractFull {
   status?: string | null
   services?: Array<{ id?: string; t1: string; t2: string | null; t3: string | null }>
   vendors: VendorRef[] | null
+  vendor_id?: string | null
 }
 
 function toContractLite(c: ContractFull): ContractLite {
@@ -961,7 +1040,25 @@ function toContractLite(c: ContractFull): ContractLite {
 }
 
 function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: InvoiceFormModalProps) {
-  const [form, setForm] = useState<Record<string, string>>({})
+  const [form, setForm] = useState<Record<string, string>>(() => ({
+    serial_no: '',
+    invoice_no: '',
+    invoice_date: '',
+    contract_id: '',
+    t1: '',
+    t2: '',
+    t3: '',
+    location: '',
+    tanker_name: '',
+    trips: '',
+    item_no: '',
+    cost_element: '',
+    service_from: '',
+    service_to: '',
+    amount: '',
+    remarks: '',
+    vendor_id: '',
+  }))
   const [saving, setSaving] = useState(false)
   const { guardWrite } = useFyLock()
   const { unlocked: masterOn } = useMasterAccess()
@@ -977,6 +1074,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
   const [maxInvoiceAmount, setMaxInvoiceAmount] = useState<number | undefined>()
   const [futureDateAllowed, setFutureDateAllowed] = useState(false)
   const toast = useToast()
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([])
 
   useEffect(() => {
     if (!open) return
@@ -991,6 +1089,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       t1: invoice?.t1 ?? '',
       t2: invoice?.t2 ?? '',
       t3: invoice?.t3 ?? '',
+      location: invoice?.location ?? '',
       tanker_name: invoice?.tanker_name ?? '',
       trips: invoice?.trips?.toString() ?? '',
       item_no: invoice?.item_no ?? '',
@@ -999,6 +1098,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       service_to: (invoice?.service_to ?? '').slice(0, 10),
       amount: invoice?.amount?.toString() ?? '',
       remarks: invoice?.remarks ?? '',
+      vendor_id: '',
     })
     Promise.all([
       apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
@@ -1009,11 +1109,16 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       ),
       apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
       apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
+      apiGet<{ vendors: Array<{ id: string; name: string }> }>('/api/vendors'),
     ])
-      .then(([m, i, c, s]) => {
+      .then(([m, i, c, s, v]) => {
         setMatrix(m.serviceMatrix)
         setAllInvoices(i.invoices)
         setFullContracts(c.contracts)
+        setVendors(v.vendors)
+        const contractVendorId =
+          c.contracts.find((row) => row.id === (invoice?.contract_id ?? ''))?.vendor_id ?? ''
+        setForm((f) => ({ ...f, vendor_id: f.vendor_id || contractVendorId }))
         for (const { key, value } of s.settings) {
           if (key === 'duplicate_check') setDuplicateCheck(value === 'true')
           if (key === 'maximum_invoice_amount') setMaxInvoiceAmount(Number(value) || undefined)
@@ -1102,6 +1207,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
         t1: form.t1 || null,
         t2: form.t2 || null,
         t3: form.t3 || null,
+        location: form.location || null,
         tanker_name: form.tanker_name || null,
         trips: form.trips ? Number(form.trips) : null,
         item_no: form.item_no || null,
@@ -1111,17 +1217,26 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
         amount: Number(form.amount) || 0,
         remarks: form.remarks || null,
         ...(masterOn ? { masterAccess: true } : {}),
+        ...(masterOn && form.vendor_id && form.vendor_id !== (selectedContract?.vendor_id ?? '')
+          ? { vendor_id: form.vendor_id }
+          : {}),
       }
       if (invoice) {
         await apiPut(`/api/invoices/${invoice.id}`, body)
         toast.success('Invoice updated')
         emitAppEvent('info', 'Invoice updated', `${form.invoice_no} was saved`)
         emitCrossModule('invoice', 'update', invoice.id)
+        if (masterOn && form.vendor_id && form.vendor_id !== (selectedContract?.vendor_id ?? '')) {
+          emitCrossModule('contract', 'update', form.contract_id)
+        }
       } else {
         await apiPost('/api/invoices', body)
         toast.success('Invoice created')
         emitAppEvent('ok', 'Invoice created', `${form.invoice_no} entered for processing`, '/invoices')
         emitCrossModule('invoice', 'create')
+        if (masterOn && form.vendor_id && form.vendor_id !== (selectedContract?.vendor_id ?? '')) {
+          emitCrossModule('contract', 'update', form.contract_id)
+        }
       }
       onSaved()
     } catch (e) {
@@ -1135,6 +1250,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     t1: form.t1 ?? '',
     t2: form.t2 ?? '',
     t3: form.t3 ?? '',
+    location: form.location ?? '',
     tanker_name: form.tanker_name ?? '',
     trips: form.trips ?? '',
     cost_element: form.cost_element ?? '',
@@ -1148,6 +1264,10 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
         (m) => m.t1 === next.t1 && (m.t2 ?? '') === next.t2 && (m.t3 ?? '') === next.t3,
       )
       if (row) next.cost_element = row.cost_element ?? ''
+      const locs = catalogLocations(row)
+      if (!locs.some((l) => l.toLowerCase() === (next.location ?? '').trim().toLowerCase())) {
+        next.location = locs.length === 1 ? locs[0]! : ''
+      }
       return next
     })
 
@@ -1156,7 +1276,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       open={open}
       onClose={onClose}
       title={invoice ? `Edit invoice ${invoice.invoice_no ?? ''}` : 'New invoice'}
-      maxWidth="64rem"
+      maxWidth="70rem"
       footer={
         <>
           <span className="mr-auto flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)]">
@@ -1195,7 +1315,6 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           <div className="glass p-5">
             <div className="section-title">Invoice Details</div>
             <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
-              {/* 1 — system-generated identifiers */}
               <LockedAutoField
                 label="Serial No"
                 value={generatedSerial}
@@ -1211,7 +1330,6 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 onCommit={setEntryDate}
               />
 
-              {/* 2 — contract sets the context for everything below */}
               <div className="sm:col-span-2">
                 <Field
                   label="Contract"
@@ -1223,10 +1341,22 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                     value={form.contract_id}
                     onChange={(e) => {
                       const contract_id = e.target.value
-                      setForm((f) => ({ ...f, contract_id, t1: '', t2: '', t3: '', tanker_name: '', trips: '', cost_element: '' }))
+                      const next = fullContracts.find((c) => c.id === contract_id)
+                      setForm((f) => ({
+                        ...f,
+                        contract_id,
+                        t1: '',
+                        t2: '',
+                        t3: '',
+                        location: '',
+                        tanker_name: '',
+                        trips: '',
+                        cost_element: '',
+                        vendor_id: next?.vendor_id ?? '',
+                      }))
                     }}
                   >
-                    <option value="">Select contract…</option>
+                    <option value="">Select contract...</option>
                     {(fullContracts.length > 0
                       ? fullContracts
                       : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))
@@ -1243,7 +1373,18 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 </Field>
               </div>
 
-              {/* 3 — invoice identity, copied from the paper invoice */}
+              {masterOn && (
+                <div className="sm:col-span-2">
+                  <InvoiceVendorField
+                    vendorId={form.vendor_id ?? ''}
+                    vendors={vendors}
+                    displayName={vendorNameOf(selectedContract, '')}
+                    masterOn={masterOn}
+                    onChange={(vendor_id) => setForm((f) => ({ ...f, vendor_id }))}
+                  />
+                </div>
+              )}
+
               <Field label="Invoice No" required error={showErrors ? issueMap.invoice_no : undefined}>
                 <input
                   className={`input ${showErrors && issueMap.invoice_no ? 'invalid' : ''}`}
@@ -1266,14 +1407,13 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 />
               </Field>
 
-              {/* 4 — item reference + outcome preview */}
               <Field label="Item No">
                 <input className="input" value={form.item_no} onChange={set('item_no')} />
               </Field>
               <div>
                 <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Status on Save</span>
                 <div className="input flex cursor-default items-center gap-2 bg-[var(--surface)]! text-sm">
-                  <StatusBadge tone="warn">Pending</StatusBadge>
+                  <StatusBadge tone={statusTone(invoice?.status ?? 'Pending')}>{invoice?.status ?? 'Pending'}</StatusBadge>
                   <span className="text-[0.65rem] text-[var(--text-muted)]">routes to approvals</span>
                 </div>
               </div>
@@ -1292,7 +1432,6 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
 
             <div className="my-4 border-t border-dashed border-[var(--border)]" />
 
-            {/* 4 — amount, once the service scope is known */}
             <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <Field
@@ -1313,7 +1452,6 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 </Field>
               </div>
 
-              {/* 5 — optional remarks last */}
               <div className="sm:col-span-2">
                 <Field label="Remarks">
                   <textarea className="input min-h-14" rows={2} value={form.remarks} onChange={set('remarks')} />
@@ -1331,7 +1469,6 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
             draftAmount={draftAmount}
           />
           <ValidationSummary issues={issues} idle={!showErrors} />
-
           <div className="glass p-5">
             <div className="section-title">Enforced Rules</div>
             <ul className="space-y-2.5 text-xs leading-relaxed">

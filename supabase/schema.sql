@@ -107,7 +107,8 @@ create table if not exists public.service_matrix (
   t3              text not null,
   cost_element    text not null,
   tanker_required boolean not null default false,
-  trips           boolean not null default false
+  trips           boolean not null default false,
+  locations       text[] not null default '{}'::text[]
 );
 
 create table if not exists public.contract_services (
@@ -142,6 +143,7 @@ create table if not exists public.invoices (
   t1              text,
   t2              text,
   t3              text,
+  location        text,
   tanker_name     text,
   trips           integer,
   item_no         text,

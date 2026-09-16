@@ -469,7 +469,7 @@ export default function DashboardPage() {
               <div className="section-title mb-0!">Status Breakdown</div>
               <span className="badge badge-neutral">click a slice</span>
             </div>
-            <div className="min-h-[280px] px-1">
+            <div className="min-h-[300px] px-1">
               {statusTotal > 0 ? (
                 <HudRing
                   slices={[

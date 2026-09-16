@@ -3,6 +3,7 @@ import { currentFiscalYear, fiscalOf, invoiceBudgetDate, invoiceBudgetFy, isClos
 import { hashFyPassword, LOCKED_FY_MESSAGE, normalizeUnlockPassword, verifyFyPassword } from './fyCrypto'
 import { vendorNameOf } from './relations'
 import { accrualForFy, invoiceAccrualAmount, isBudgetIncrease, isUnpaidPriorYearInvoice, parseReleasedVia } from './accrual'
+import { normalizeLocations } from './invoice'
 
 const R_ADMIN = '00000000-0000-0000-0000-000000000001'
 const R_APPROVER = '00000000-0000-0000-0000-000000000002'
@@ -64,7 +65,7 @@ interface Contract {
   vendors: { name: string; email: string | null }[] | null
   services?: Array<{ id: string; t1: string; t2: string | null; t3: string | null }>
 }
-interface ServiceRow { id: string; t1: string; t2: string | null; t3: string | null; cost_element: string | null; tanker_required: boolean; trips: boolean }
+interface ServiceRow { id: string; t1: string; t2: string | null; t3: string | null; cost_element: string | null; tanker_required: boolean; trips: boolean; locations: string[] }
 interface CostRow { code: string; name: string | null }
 interface Setting { key: string; value: string }
 interface Invoice {
@@ -77,6 +78,7 @@ interface Invoice {
   t1: string | null
   t2: string | null
   t3: string | null
+  location: string | null
   tanker_name: string | null
   trips: number | null
   item_no: string | null
@@ -229,13 +231,25 @@ function embedContract(c: Contract | null): { contract_no: string; service: stri
   return { contract_no: c.contract_no, service: c.service ?? '', vendors: v ? [{ name: v.name, email: v.email }] : [] }
 }
 
+function reassignContractVendor(contractId: string | null | undefined, vendorId: unknown, masterAccess: unknown): void {
+  if (vendorId == null || vendorId === '') return
+  if (!masterAccess) fail('Changing invoice vendor requires Master Access')
+  if (!contractId) fail('Select a contract before changing vendor')
+  const c = contractById(String(contractId))
+  if (!c) fail('Contract not found')
+  const v = vendors.find((x) => x.id === String(vendorId))
+  if (!v) fail('Vendor not found')
+  c.vendor_id = v.id
+  c.vendors = [{ name: v.name, email: v.email }]
+}
+
 const serviceMatrix: ServiceRow[] = [
-  { id: SM_IN_DRAFT, t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', cost_element: 'SUR', tanker_required: true, trips: false },
-  { id: SM_IN_QTY, t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', cost_element: 'SUR', tanker_required: false, trips: false },
-  { id: SM_OUT_LOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', cost_element: 'THL', tanker_required: true, trips: true },
-  { id: SM_OUT_UNLOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', cost_element: 'THL', tanker_required: true, trips: true },
-  { id: SM_ST_DIP, t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', cost_element: 'SM', tanker_required: false, trips: false },
-  { id: SM_ST_LINE, t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', cost_element: 'SM', tanker_required: false, trips: false },
+  { id: SM_IN_DRAFT, t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', cost_element: 'SUR', tanker_required: true, trips: false, locations: ['Keamari', 'Port Qasim'] },
+  { id: SM_IN_QTY, t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', cost_element: 'SUR', tanker_required: false, trips: false, locations: [] },
+  { id: SM_OUT_LOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', cost_element: 'THL', tanker_required: true, trips: true, locations: ['Keamari', 'Port Qasim'] },
+  { id: SM_OUT_UNLOAD, t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', cost_element: 'THL', tanker_required: true, trips: true, locations: ['Keamari'] },
+  { id: SM_ST_DIP, t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', cost_element: 'SM', tanker_required: false, trips: false, locations: [] },
+  { id: SM_ST_LINE, t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', cost_element: 'SM', tanker_required: false, trips: false, locations: [] },
 ]
 
 const contractServices: ContractService[] = [
@@ -358,6 +372,7 @@ function makeInvoice(partial: Partial<Invoice>): Invoice {
     t1: null,
     t2: null,
     t3: null,
+    location: null,
     tanker_name: null,
     trips: null,
     item_no: null,
@@ -381,15 +396,15 @@ function makeInvoice(partial: Partial<Invoice>): Invoice {
 }
 
 const invoices: Invoice[] = [
-  makeInvoice({ serial_no: 'S-1001', processing_date: '2026-06-10', contract_id: C_BH, invoice_no: 'INV-2026-0011', invoice_date: '2026-06-10', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-1', cost_element: 'SUR', service_from: '2026-06-01', service_to: '2026-06-10', amount: 850000, status: 'Pending' }),
+  makeInvoice({ serial_no: 'S-1001', processing_date: '2026-06-10', contract_id: C_BH, invoice_no: 'INV-2026-0011', invoice_date: '2026-06-10', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', location: 'Keamari', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-1', cost_element: 'SUR', service_from: '2026-06-01', service_to: '2026-06-10', amount: 850000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-1002', processing_date: '2026-06-18', contract_id: C_BH, invoice_no: 'INV-2026-0012', invoice_date: '2026-06-18', t1: 'Inward', t2: 'Surveying', t3: 'Quantity Survey', item_no: 'IT-2', cost_element: 'SUR', service_from: '2026-06-08', service_to: '2026-06-18', amount: 640000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-06-19'), approved_amount: 640000 }),
-  makeInvoice({ serial_no: 'S-2001', processing_date: '2026-07-05', contract_id: C_TH, invoice_no: 'INV-2026-0021', invoice_date: '2026-07-05', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', tanker_name: 'MT Star', trips: 3, item_no: 'IT-3', cost_element: 'THL', service_from: '2026-06-28', service_to: '2026-07-05', amount: 1200000, status: 'Pending' }),
-  makeInvoice({ serial_no: 'S-2002', processing_date: '2026-07-22', contract_id: C_TH, invoice_no: 'INV-2026-0022', invoice_date: '2026-07-22', t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', tanker_name: 'MT Star', trips: 3, item_no: 'IT-4', cost_element: 'THL', service_from: '2026-07-12', service_to: '2026-07-22', amount: 980000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-07-23'), approved_amount: 980000 }),
+  makeInvoice({ serial_no: 'S-2001', processing_date: '2026-07-05', contract_id: C_TH, invoice_no: 'INV-2026-0021', invoice_date: '2026-07-05', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', location: 'Port Qasim', tanker_name: 'MT Star', trips: 3, item_no: 'IT-3', cost_element: 'THL', service_from: '2026-06-28', service_to: '2026-07-05', amount: 1200000, status: 'Pending' }),
+  makeInvoice({ serial_no: 'S-2002', processing_date: '2026-07-22', contract_id: C_TH, invoice_no: 'INV-2026-0022', invoice_date: '2026-07-22', t1: 'Outward', t2: 'Tanker Handling', t3: 'Unloading', location: 'Keamari', tanker_name: 'MT Star', trips: 3, item_no: 'IT-4', cost_element: 'THL', service_from: '2026-07-12', service_to: '2026-07-22', amount: 980000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-07-23'), approved_amount: 980000 }),
   makeInvoice({ serial_no: 'S-3001', processing_date: '2026-05-12', contract_id: C_SM, invoice_no: 'INV-2026-0031', invoice_date: '2026-05-12', t1: 'Storage', t2: 'Stock Measurement', t3: 'Tank Dipping', item_no: 'IT-5', cost_element: 'SM', service_from: '2026-05-01', service_to: '2026-05-12', amount: 410000, status: 'Paid', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-05-14'), approved_amount: 410000 }),
-  makeInvoice({ serial_no: 'S-1003', processing_date: '2026-04-20', contract_id: C_BH, invoice_no: 'INV-2026-0013', invoice_date: '2026-04-20', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-6', cost_element: 'SUR', service_from: '2026-04-10', service_to: '2026-04-20', amount: 520000, status: 'Rejected', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-04-22'), remarks: 'Duplicate entry — same survey as INV-2026-0011' }),
-  makeInvoice({ serial_no: 'S-2003', processing_date: '2026-08-02', contract_id: C_TH, invoice_no: 'INV-2026-0023', invoice_date: '2026-08-02', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', tanker_name: 'MT Moon', trips: 2, item_no: 'IT-7', cost_element: 'THL', service_from: '2026-07-25', service_to: '2026-08-02', amount: 1130000, status: 'Pending' }),
+  makeInvoice({ serial_no: 'S-1003', processing_date: '2026-04-20', contract_id: C_BH, invoice_no: 'INV-2026-0013', invoice_date: '2026-04-20', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', location: 'Keamari', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-6', cost_element: 'SUR', service_from: '2026-04-10', service_to: '2026-04-20', amount: 520000, status: 'Rejected', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-04-22'), remarks: 'Duplicate entry — same survey as INV-2026-0011' }),
+  makeInvoice({ serial_no: 'S-2003', processing_date: '2026-08-02', contract_id: C_TH, invoice_no: 'INV-2026-0023', invoice_date: '2026-08-02', t1: 'Outward', t2: 'Tanker Handling', t3: 'Loading', location: 'Keamari', tanker_name: 'MT Moon', trips: 2, item_no: 'IT-7', cost_element: 'THL', service_from: '2026-07-25', service_to: '2026-08-02', amount: 1130000, status: 'Pending' }),
   makeInvoice({ serial_no: 'S-3002', processing_date: '2026-08-15', contract_id: C_SM, invoice_no: 'INV-2026-0032', invoice_date: '2026-08-15', t1: 'Storage', t2: 'Stock Measurement', t3: 'Line Survey', item_no: 'IT-8', cost_element: 'SM', service_from: '2026-08-05', service_to: '2026-08-15', amount: 275000, status: 'Pending' }),
-  makeInvoice({ serial_no: 'S-1004', processing_date: '2026-06-25', contract_id: C_BH, invoice_no: 'INV-2026-0014', invoice_date: '2026-06-25', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-9', cost_element: 'SUR', service_from: '2026-06-15', service_to: '2026-06-25', amount: 300000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-06-26'), approved_amount: 300000 }),
+  makeInvoice({ serial_no: 'S-1004', processing_date: '2026-06-25', contract_id: C_BH, invoice_no: 'INV-2026-0014', invoice_date: '2026-06-25', t1: 'Inward', t2: 'Surveying', t3: 'Draft Survey', location: 'Port Qasim', tanker_name: 'MT Dawn', trips: 1, item_no: 'IT-9', cost_element: 'SUR', service_from: '2026-06-15', service_to: '2026-06-25', amount: 300000, status: 'Approved', approved_by: 'admin@prl.com.pk', approved_date: iso('2026-06-26'), approved_amount: 300000 }),
 ]
 
 for (const inv of invoices) {
@@ -575,7 +590,13 @@ function shapePaymentOrder(p: PoVersion) {
           t1: inv.t1,
           t2: inv.t2,
           t3: inv.t3,
+          location: inv.location,
           contracts: { contract_no: rel?.contract_no ?? null, vendors: rel?.vendors ?? null },
+          processing_date: inv.processing_date,
+          tanker_name: inv.tanker_name,
+          trips: inv.trips,
+          item_no: inv.item_no,
+          remarks: inv.remarks,
         }
       : null,
     history: poHistory.filter((h) => h.po_id === p.id).sort((a, b) => a.created_at.localeCompare(b.created_at)),
@@ -833,6 +854,7 @@ function applyImportRowsDemo(
         if (r.t1) inv.t1 = String(r.t1)
         if (r.t2) inv.t2 = String(r.t2)
         if (r.t3) inv.t3 = String(r.t3)
+        if (r.location) inv.location = String(r.location)
         if (r.tanker_name) inv.tanker_name = String(r.tanker_name)
         if (r.remarks) inv.remarks = String(r.remarks)
         const st = String(r.status ?? '').toLowerCase()
@@ -861,6 +883,7 @@ function applyImportRowsDemo(
         : 'Pending'
       const trips = Number(r.trips)
       if (Number.isFinite(trips)) (inv as unknown as Record<string, unknown>).trips = Math.trunc(trips)
+      if (r.location) inv.location = String(r.location)
       for (const k of ['item_no', 'cost_element', 'service_from', 'service_to', 'approved_by', 'approved_amount', 'remarks'] as const) {
         if (r[k] !== null && r[k] !== undefined && r[k] !== '') (inv as unknown as Record<string, unknown>)[k] = r[k]
       }
@@ -941,6 +964,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (!b.masterAccess) {
       assertOpenDate(invoiceBudgetDate(b))
     }
+    reassignContractVendor((b.contract_id as string) ?? null, b.vendor_id, b.masterAccess)
     const inv = makeInvoice({
       serial_no: (b.serial_no as string) ?? null,
       processing_date: (b.processing_date as string) ?? (b.invoice_date as string) ?? null,
@@ -950,6 +974,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       t1: (b.t1 as string) ?? null,
       t2: (b.t2 as string) ?? null,
       t3: (b.t3 as string) ?? null,
+      location: (b.location as string) ?? null,
       tanker_name: (b.tanker_name as string) ?? null,
       trips: b.trips ? Number(b.trips) : null,
       item_no: (b.item_no as string) ?? null,
@@ -1013,7 +1038,12 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       if ('invoice_date' in updates) assertOpenDate((updates.invoice_date as string) ?? null)
       if ('service_from' in updates) assertOpenDate((updates.service_from as string) ?? null)
     }
-    const fields: (keyof Invoice)[] = ['serial_no', 'processing_date', 'contract_id', 'invoice_no', 'invoice_date', 't1', 't2', 't3', 'tanker_name', 'trips', 'item_no', 'cost_element', 'service_from', 'service_to', 'amount', 'status', 'remarks']
+    reassignContractVendor(
+      (updates.contract_id as string | null | undefined) ?? inv.contract_id,
+      updates.vendor_id,
+      updates.masterAccess,
+    )
+    const fields: (keyof Invoice)[] = ['serial_no', 'processing_date', 'contract_id', 'invoice_no', 'invoice_date', 't1', 't2', 't3', 'location', 'tanker_name', 'trips', 'item_no', 'cost_element', 'service_from', 'service_to', 'amount', 'status', 'remarks']
     for (const f of fields) if (f in updates) inv[f] = updates[f] as never
     inv.updated_at = nowIso()
     inv.updated_by = 'admin@prl.com.pk'
@@ -1129,7 +1159,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   if (m === 'POST' && path === '/api/service-matrix') {
     const b = (body ?? {}) as Record<string, unknown>
     if (!b.t1) fail('T1 is required')
-    const row: ServiceRow = { id: uid(), t1: String(b.t1), t2: (b.t2 as string) ?? null, t3: (b.t3 as string) ?? null, cost_element: (b.cost_element as string) ?? null, tanker_required: Boolean(b.tanker_required), trips: Boolean(b.trips) }
+    const row: ServiceRow = { id: uid(), t1: String(b.t1), t2: (b.t2 as string) ?? null, t3: (b.t3 as string) ?? null, cost_element: (b.cost_element as string) ?? null, tanker_required: Boolean(b.tanker_required), trips: Boolean(b.trips), locations: normalizeLocations(b.locations) }
     serviceMatrix.push(row)
     return { service: row } as T
   }
@@ -1143,6 +1173,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (b.cost_element !== undefined) row.cost_element = (b.cost_element as string) || null
     if (b.tanker_required !== undefined) row.tanker_required = Boolean(b.tanker_required)
     if (b.trips !== undefined) row.trips = Boolean(b.trips)
+    if (b.locations !== undefined) row.locations = normalizeLocations(b.locations)
     return { service: row } as T
   }
   if (m === 'DELETE' && parts.length === 3 && parts[0] === 'api' && parts[1] === 'service-matrix') {

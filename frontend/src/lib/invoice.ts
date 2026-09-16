@@ -1,5 +1,6 @@
 import { formatMoney } from './format'
 import { fiscalYearLabel } from './fiscal'
+import { calendarDateAtNoon, parseCalendarYmd } from './calendarDate'
 
 export interface ServiceMatrixRow {
   id: string
@@ -9,6 +10,7 @@ export interface ServiceMatrixRow {
   cost_element: string | null
   tanker_required: boolean
   trips: boolean
+  locations?: string[] | null
 }
 
 export interface ContractLite {
@@ -45,6 +47,7 @@ export interface InvoiceFormLike {
   t1?: string | null
   t2?: string | null
   t3?: string | null
+  location?: string | null
   tanker_name?: string | null
   service_from?: string | null
   service_to?: string | null
@@ -121,6 +124,39 @@ export function resolveCostElement(
   t3: string | null | undefined,
 ): string | null {
   return matrixRowFor(matrix, t1, t2, t3)?.cost_element ?? null
+}
+
+/** Deduplicate catalog locations while preserving first-seen spelling. */
+export function normalizeLocations(raw: unknown): string[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,;\n]/)
+      : []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of list) {
+    const s = String(item ?? '').trim()
+    if (!s) continue
+    const key = s.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(s)
+  }
+  return out
+}
+
+export function catalogLocations(row: ServiceMatrixRow | null | undefined): string[] {
+  return normalizeLocations(row?.locations)
+}
+
+export function locationOptions(
+  matrix: ServiceMatrixRow[],
+  t1: string | null | undefined,
+  t2: string | null | undefined,
+  t3: string | null | undefined,
+): string[] {
+  return catalogLocations(matrixRowFor(matrix, t1, t2, t3))
 }
 
 /** Open and not past end_date. Closed / Expired / lapsed contracts are excluded. */
@@ -242,9 +278,9 @@ export function validateInvoice(
     })
   }
 
-  if (!form.t1) issues.push({ field: 't1', message: 'Service Type 1 is required' })
-  if (!form.t2) issues.push({ field: 't2', message: 'Service Type 2 is required' })
-  if (!form.t3) issues.push({ field: 't3', message: 'Service Type 3 is required' })
+  if (!form.t1) issues.push({ field: 't1', message: 'Type is required' })
+  if (!form.t2) issues.push({ field: 't2', message: 'Service is required' })
+  if (!form.t3) issues.push({ field: 't3', message: 'Detail is required' })
 
   const row = matrixRowFor(opts.matrix, form.t1, form.t2, form.t3)
   if (row?.tanker_required && !(form.tanker_name ?? '').trim()) {
@@ -252,6 +288,19 @@ export function validateInvoice(
       field: 'tanker_name',
       message: 'Tanker Name is required for this service',
     })
+  }
+
+  const locs = catalogLocations(row)
+  if (locs.length > 0) {
+    const loc = (form.location ?? '').trim()
+    if (!loc) {
+      issues.push({ field: 'location', message: 'Location is required for this service' })
+    } else if (!locs.some((l) => l.toLowerCase() === loc.toLowerCase())) {
+      issues.push({
+        field: 'location',
+        message: 'Location is not valid for this Type / Service / Detail',
+      })
+    }
   }
 
   if (amount <= 0) {
@@ -285,7 +334,7 @@ export interface SerialInvoiceLike {
  * by its starting year, e.g. 2026-08 -> 26 (FY26 = Jul 2026 - Jun 2027).
  */
 export function fiscalYearTag(dateStr: string | undefined | null): string {
-  const d = dateStr ? new Date(dateStr) : new Date()
+  const d = dateStr ? calendarDateAtNoon(dateStr) ?? new Date(dateStr) : new Date()
   const safe = Number.isNaN(d.getTime()) ? new Date() : d
   return fiscalYearLabel(safe).replace(/^FY/i, '').padStart(2, '0')
 }
@@ -301,16 +350,18 @@ export function nextSerialNo(
   invoices: SerialInvoiceLike[],
   excludeId?: string,
 ): string {
-  const d = invoiceDate ? new Date(invoiceDate) : new Date()
+  const d = invoiceDate ? calendarDateAtNoon(invoiceDate) ?? new Date(invoiceDate) : new Date()
   const safe = Number.isNaN(d.getTime()) ? new Date() : d
-  const year = safe.getFullYear()
+  const year = parseCalendarYmd(invoiceDate ?? '')?.y ?? safe.getFullYear()
 
   let maxOrdinal = 0
   let count = 0
   for (const i of invoices) {
     if (excludeId && i.id === excludeId) continue
-    const idate = i.invoice_date ? new Date(i.invoice_date) : null
-    if (!idate || Number.isNaN(idate.getTime()) || idate.getFullYear() !== year) continue
+    const parts = i.invoice_date ? parseCalendarYmd(i.invoice_date) : null
+    const idate = parts ? null : i.invoice_date ? new Date(i.invoice_date) : null
+    const y = parts?.y ?? (idate && !Number.isNaN(idate.getTime()) ? idate.getFullYear() : null)
+    if (y !== year) continue
     count += 1
     const m = (i.serial_no ?? '').trim().match(/^(\d+)/)
     if (m) maxOrdinal = Math.max(maxOrdinal, Number(m[1]))
