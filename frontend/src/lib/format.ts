@@ -66,11 +66,18 @@ export function formatServicePeriod(from: string | null | undefined, to: string 
 
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return '—'
+  // A date-only string is a civil day, never an instant at UTC midnight.
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return `${formatDate(value)} 00:00`
+  }
   const d = typeof value === 'string' ? new Date(value) : value
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return formatDate(value)
+  // Both halves must come from the same clock; formatDate would read the UTC day
+  // while getHours reads the local one, which disagree around midnight.
+  const datePart = `${String(d.getDate()).padStart(2, '0')}-${months[d.getMonth()]}-${d.getFullYear()}`
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
-  return `${formatDate(d)} ${hh}:${mm}`
+  return `${datePart} ${hh}:${mm}`
 }
 
 export function timeAgo(value: string | Date | null | undefined): string {

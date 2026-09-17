@@ -4,10 +4,13 @@ import { authRequired } from '../middleware/auth.js'
 import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
 import { getSetting } from '../services/settingsService.js'
 import { invoiceBudgetDate, LOCKED_FY_MESSAGE, writeBlocked } from '../services/fyLock.js'
+import { parseImportDate } from '../services/calendarDate.js'
 import { firstEmbed, vendorsAsList } from '../services/embed.js'
 import type { AuthUser, PendingFollowup } from '../types/index.js'
 
 export const followupsRouter = Router()
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 function actorKey(req: { user?: AuthUser }): string {
   return req.user?.id || req.user?.email || 'anon'
@@ -23,9 +26,10 @@ function fmtMoney(n: number): string {
 
 function fmtDate(d: string | null): string {
   if (!d) return ''
-  const dt = new Date(d)
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  return `${String(dt.getDate()).padStart(2, '0')}-${months[dt.getMonth()]}-${dt.getFullYear()}`
+  const ymd = parseImportDate(String(d))
+  if (!ymd) return String(d)
+  const [y, m, day] = ymd.split('-')
+  return `${day}-${MONTH_ABBR[Number(m) - 1]}-${y}`
 }
 
 followupsRouter.get('/pending', authRequired, async (_req, res, next) => {
@@ -33,7 +37,6 @@ followupsRouter.get('/pending', authRequired, async (_req, res, next) => {
     const supabase = getSupabase()
     const { data: invoices, error } = await supabase
       .from('invoices')
-      .select('id, invoice_no, invoice_date, amount, contracts(contract_no, vendor_id, vendors(name, email))')
       .select('id, invoice_no, invoice_date, service_from, amount, contracts(contract_no, vendor_id, vendors(name, email))')
       .eq('status', 'Pending')
       .order('created_at', { ascending: true })

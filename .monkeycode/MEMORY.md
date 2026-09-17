@@ -71,3 +71,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - This image has no system Node. Use `/root/.local/node/bin` (`export PATH="/root/.local/node/bin:$PATH"`). Node 22.16.0 was installed there as a tarball.
   - Preview: `cd /workspace/frontend && npm run dev -- --host 0.0.0.0 --port 5173`. Demo is the Login page demo button (`enterDemo()` writes sessionStorage `prl-eoms-demo=1`). Regular email login needs Supabase. Backend is not required for demo.
   - Vite already allows `.monkeycode-ai.online` and `.monkeycode-ai.live`.
+  - The workspace has only `backend/.env.example`; no real `.env` exists, so Supabase is unreachable here and DB-level inspection or repair (queries, backfills) cannot be run by the Agent. Anything that touches real data must be handed to the user to run with their own credentials.
+
+[Project Knowledge Summary]
+- Date: 2026-09-17
+- Context: Discovered by Agent while fixing date/amount import fidelity
+- Category: Testing Methods
+- Instructions:
+  - Backend tests: `cd /workspace/backend && npm test` (node `--import tsx --test test/*.test.ts`). Prefix with `TZ=<zone>` to catch timezone regressions; the suite is expected green in `Asia/Karachi`, `UTC`, `America/New_York`, `Pacific/Kiritimati`.
+  - Frontend has no test runner. Use `cd /workspace/frontend && npx tsc -p tsconfig.app.json --noEmit` and `npx oxlint src` (warnings pre-exist; enforce 0 errors).
+  - Backend typecheck: `cd /workspace/backend && npx tsc --noEmit`.
+  - One-off TS scripts: `NODE_PATH=/workspace/frontend/node_modules /workspace/backend/node_modules/.bin/tsx <file>`; wrap entry in `void main()` (top-level await triggers `ERR_REQUIRE_ASYNC_MODULE`).
+  - The sample import workbook used for fidelity checks is cached at `/workspace/.monkeycode-tmp-files/ae6b970b-Book1-1.xlsx`.
+

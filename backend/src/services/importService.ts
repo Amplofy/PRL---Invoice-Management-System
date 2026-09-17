@@ -1,4 +1,5 @@
 import { getSupabase } from '../config/supabase.js'
+import { parseImportDate } from './calendarDate.js'
 import type { ImportBatch, ImportPreviewRow, ImportType } from '../types/index.js'
 
 const INVOICE_STATUSES = ['Pending', 'Approved', 'Rejected', 'Draft', 'Void', 'Paid']
@@ -21,30 +22,30 @@ function asNumber(v: unknown): number {
   return Number.isFinite(n) ? n : NaN
 }
 
-function asDate(v: unknown): string | null {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    const utcMidnight =
-      v.getUTCHours() === 0 &&
-      v.getUTCMinutes() === 0 &&
-      v.getUTCSeconds() === 0 &&
-      v.getUTCMilliseconds() === 0
-    const y = utcMidnight ? v.getUTCFullYear() : v.getFullYear()
-    const mo = (utcMidnight ? v.getUTCMonth() : v.getMonth()) + 1
-    const d = utcMidnight ? v.getUTCDate() : v.getDate()
-    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-  }
-  const s = asString(v)
-  if (!s) return null
-  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`
-  m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s)
-  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
-  return s
+/**
+ * Imported dates must land exactly as written in the file, so parsing delegates
+ * to the canonical, timezone-independent reader (see services/calendarDate.ts).
+ */
+const asDate = parseImportDate
+
+/**
+ * `invoices.approved_date` is a timestamptz. Pinning the imported civil date to
+ * UTC midnight keeps the day stable whatever the database session timezone is.
+ */
+function dateOnlyToUtcTimestamp(ymd: string | null): string | null {
+  return ymd ? `${ymd}T00:00:00.000Z` : null
 }
 
 function isDateValid(d: string | null): boolean {
   if (!d) return false
-  return !Number.isNaN(Date.parse(d))
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d)
+  if (!m) return false
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const day = Number(m[3])
+  // Date.parse silently rolls 31/02/2026 into March, so verify the parts survive.
+  const probe = new Date(Date.UTC(y, mo - 1, day))
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === day
 }
 
 function mapToColumn(row: Record<string, unknown>, aliases: string[]): unknown {
@@ -165,9 +166,18 @@ function str(row: Record<string, unknown>, key: string): string | null {
   return s === '' ? null : s
 }
 
-function num(row: Record<string, unknown>, key: string): number | null {
+/**
+ * Parse a spreadsheet numeric cell. Blank, missing, null and undefined values
+ * stay null so they do not become a real 0 (which previously turned every
+ * imported invoice's approved_amount into 0 and blanked out PO amounts).
+ */
+export function optionalNumber(row: Record<string, unknown>, key: string): number | null {
   const v = row[key]
-  const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(/,/g, '').trim())
+  if (v === null || v === undefined) return null
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  const s = String(v).replace(/,/g, '').trim()
+  if (s === '') return null
+  const n = Number(s)
   return Number.isFinite(n) ? n : null
 }
 
@@ -254,7 +264,7 @@ export async function applyImportRows(
         service: str(row, 'service') ?? 'General',
         start_date: start,
         end_date: end,
-        value: num(row, 'value') ?? 0,
+        value: optionalNumber(row, 'value') ?? 0,
         status: statusOf(row, CONTRACT_STATUSES, 'Open'),
       }
       const { data: existing } = await supabase.from('contracts').select('id').eq('contract_no', no).maybeSingle()
@@ -276,7 +286,7 @@ export async function applyImportRows(
   // invoices
   for (const row of rows) {
     const invoiceNo = str(row, 'invoice_no')
-    const amount = num(row, 'amount')
+    const amount = optionalNumber(row, 'amount')
     const invoiceDate = str(row, 'invoice_date')
     const contractNo = str(row, 'contract_no')
     if (!invoiceNo || amount === null || amount <= 0 || !invoiceDate || !contractNo) {
@@ -304,7 +314,7 @@ export async function applyImportRows(
       t3: str(row, 't3'),
       location: str(row, 'location'),
       tanker_name: str(row, 'tanker_name'),
-      trips: num(row, 'trips') === null ? null : Math.trunc(num(row, 'trips')!),
+      trips: optionalNumber(row, 'trips') === null ? null : Math.trunc(optionalNumber(row, 'trips')!),
       item_no: str(row, 'item_no'),
       cost_element: str(row, 'cost_element'),
       service_from: asDate(row.service_from),
@@ -312,8 +322,8 @@ export async function applyImportRows(
       amount,
       status: statusOf(row, INVOICE_STATUSES, 'Pending'),
       approved_by: str(row, 'approved_by'),
-      approved_date: asDate(approvedDate),
-      approved_amount: num(row, 'approved_amount'),
+      approved_date: dateOnlyToUtcTimestamp(asDate(approvedDate)),
+      approved_amount: optionalNumber(row, 'approved_amount'),
       remarks: str(row, 'remarks'),
       updated_at: new Date().toISOString(),
       updated_by: userId ?? null,

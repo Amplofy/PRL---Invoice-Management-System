@@ -22,6 +22,20 @@ describe('CSV / calendar dates', () => {
     assert.equal(normalizeDate(utc).value, '2026-06-01')
   })
 
+  // SheetJS (xlsx 0.18.5) with cellDates:true builds a date-only cell as
+  // 2025-09-07T18:59:48Z in Asia/Karachi, i.e. 23:59:48 local on the day before
+  // the cell value. Trusting the local parts moved every imported date one day.
+  it('keeps the cell day for SheetJS local-midnight dates', () => {
+    const sheetjsShifted = new Date('2025-09-07T18:59:48.000Z')
+    assert.equal(dateToCalendarYmd(sheetjsShifted), '2025-09-08')
+    assert.equal(normalizeDate(sheetjsShifted).value, '2025-09-08')
+  })
+
+  it('keeps the intended day for instants a few seconds before midnight', () => {
+    assert.equal(dateToCalendarYmd(new Date('2025-09-07T18:59:48.000Z')), '2025-09-08')
+    assert.equal(dateToCalendarYmd(new Date('2026-06-29T18:59:48.000Z')), '2026-06-30')
+  })
+
   it('reads ISO and day-first strings as the civil date', () => {
     assert.equal(normalizeDate('2026-06-01').value, '2026-06-01')
     assert.equal(normalizeDate('01-06-2026').value, '2026-06-01')

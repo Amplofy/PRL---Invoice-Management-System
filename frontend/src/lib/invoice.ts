@@ -1,6 +1,6 @@
 import { formatMoney } from './format'
 import { fiscalYearLabel } from './fiscal'
-import { calendarDateAtNoon, parseCalendarYmd } from './calendarDate'
+import { calendarDateAtNoon, parseCalendarYmd, todayCalendarYmd } from './calendarDate'
 
 export interface ServiceMatrixRow {
   id: string
@@ -239,7 +239,7 @@ export function validateInvoice(
 
   if (!form.invoice_date) issues.push({ field: 'invoice_date', message: 'Invoice date is required' })
   else if (!opts.futureDateAllowed) {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayCalendarYmd()
     if (form.invoice_date > today)
       issues.push({ field: 'invoice_date', message: 'Future invoice dates are not allowed' })
   }

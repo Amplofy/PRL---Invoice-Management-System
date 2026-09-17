@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ScrollText, Clock, Users } from 'lucide-react'
 import { apiGet } from '../lib/api'
+import { todayCalendarYmd } from '../lib/calendarDate'
 import { formatDateTime, timeAgo } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -149,8 +150,8 @@ export default function AuditLogPage() {
 
   const usersCount = useMemo(() => new Set(filtered.map((e) => e.user_email ?? 'system')).size, [filtered])
   const todayCount = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    return filtered.filter((e) => e.timestamp.slice(0, 10) === today).length
+    const today = todayCalendarYmd()
+    return filtered.filter((e) => todayCalendarYmd(new Date(e.timestamp)) === today).length
   }, [filtered])
 
   return (

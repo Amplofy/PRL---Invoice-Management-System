@@ -42,8 +42,9 @@ If the project already has tables from an earlier release, skip `schema.sql` / `
 4. `supabase/service_locations.sql` — `service_matrix.locations` + `invoices.location`, with default locations for the seeded services
 5. `supabase/import_batches.sql` — `import_batches` table for the admin import-approval workflow (skip if it already exists)
 6. `supabase/rls-hardening.sql` — enables RLS on every table, including the new ones (safe to re-run)
+7. `supabase/fix_zero_amounts.sql` — one-off data repair: clears `approved_amount = 0`, restores zero PO amounts from their invoice, and realigns `po_history` (safe to re-run, deletes nothing)
 
-Before running, take a backup (Supabase Dashboard → Database → Backups, or `pg_dump`). Only `reset.sql` is destructive; the six scripts above are safe.
+Before running, take a backup (Supabase Dashboard → Database → Backups, or `pg_dump`). Only `reset.sql` is destructive; the seven scripts above are safe.
 
 Verify afterwards (each query should return the listed objects):
 
@@ -66,6 +67,11 @@ order by 1, 2;
 
 -- settings (po_template is created on first save from Administration)
 select key from public.app_settings where key in ('po_template','fy_accrual_overrides','cost_center');
+
+-- amount repair: both counts should be 0 after fix_zero_amounts.sql
+select
+  (select count(*) from public.invoices where approved_amount = 0) as zero_approved_invoices,
+  (select count(*) from public.po_versions where amount = 0) as zero_po_amounts;
 ```
 
 Then redeploy backend and frontend from branch `260903-feat-finance-po-paid`.

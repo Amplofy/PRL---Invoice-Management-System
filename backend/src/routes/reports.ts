@@ -4,6 +4,7 @@ import { authRequired } from '../middleware/auth.js'
 import { invoiceApprovedAmount, PO_STATUS, poGeneratedAmount, poReleasedAmount } from '../services/poFinance.js'
 import { invoiceBudgetDate, invoiceBudgetFy } from '../services/fyLock.js'
 import { vendorNameOf } from '../services/embed.js'
+import { civilDayDiff, todayCivilYmd } from '../services/calendarDate.js'
 
 export const reportsRouter = Router()
 
@@ -58,15 +59,16 @@ reportsRouter.get('/reports/dashboard', authRequired, async (req, res, next) => 
     const paymentReleasedVal = cleared.reduce((s, p) => s + poReleasedAmount(p), 0)
     const financePending = pos.filter((p) => String(p.status ?? PO_STATUS.Generated) === PO_STATUS.Generated)
 
-    const today = new Date()
+    const todayYmd = todayCivilYmd()
     const openContracts = (contracts ?? []).filter((c) => {
       if (!c.end_date) return true
-      return new Date(c.end_date) >= today
+      const end = String(c.end_date).slice(0, 10)
+      return end >= todayYmd
     }).length
     const expiring = (contracts ?? []).filter((c) => {
       if (!c.end_date) return false
-      const days = Math.round((new Date(c.end_date).getTime() - today.getTime()) / 86400000)
-      return days >= 0 && days <= 60
+      const days = civilDayDiff(todayYmd, String(c.end_date))
+      return days !== null && days >= 0 && days <= 60
     }).length
 
     const monthly: Record<string, { month: string; total: number; count: number }> = {}

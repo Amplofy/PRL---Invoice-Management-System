@@ -1,5 +1,5 @@
 import { invoiceBudgetFy, isClosedFiscalYear } from './fiscal'
-import { poReleasedAmount } from './paymentOrder'
+import { invoiceApprovedAmount, poReleasedAmount } from './paymentOrder'
 
 export const RELEASED_VIA = [
   { value: 'cheque', label: 'Cheque' },
@@ -31,8 +31,9 @@ export function isUnpaidPriorYearInvoice(
 }
 
 export function invoiceAccrualAmount(inv: { amount?: unknown; approved_amount?: unknown }): number {
-  if (inv.approved_amount != null && inv.approved_amount !== '') return Number(inv.approved_amount) || 0
-  return Number(inv.amount ?? 0) || 0
+  // Same zero-means-unset rule as POs: a blank approved_amount keeps the
+  // invoice amount in play for accrual.
+  return invoiceApprovedAmount(inv)
 }
 
 export interface AccrualInvoice {

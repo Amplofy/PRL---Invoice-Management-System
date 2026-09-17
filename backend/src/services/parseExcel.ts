@@ -7,14 +7,27 @@ export interface ParsedSheet {
   warnings?: string[]
 }
 
+const DATE_TEXT = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Raw cell values with date-formatted cells rendered as YYYY-MM-DD.
+ *
+ * Dates stay on their stored Excel serial (`raw`) and are never read through
+ * `cellDates`, whose local-time Date objects can land on the neighbouring day.
+ * The second pass only supplies readable text for date cells; everything else
+ * keeps the raw value, so neither the timezone nor a cell format moves a date.
+ */
 function sheetMatrix(sheet: xlsx.WorkSheet): string[][] {
-  const raw = xlsx.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    defval: '',
-    blankrows: false,
-    raw: false,
-  })
-  return raw.map((row) => (Array.isArray(row) ? row : []).map((c) => String(c ?? '')))
+  const base = { header: 1, defval: '', blankrows: false } as const
+  const raw = xlsx.utils.sheet_to_json<unknown[]>(sheet, { ...base, raw: true })
+  const display = xlsx.utils.sheet_to_json<unknown[]>(sheet, { ...base, raw: false, dateNF: 'yyyy-mm-dd' })
+  return raw.map((row, r) =>
+    (Array.isArray(row) ? row : []).map((cell, c) => {
+      if (typeof cell !== 'number') return String(cell ?? '')
+      const text = display[r]?.[c]
+      return typeof text === 'string' && DATE_TEXT.test(text.trim()) ? text.trim() : String(cell)
+    }),
+  )
 }
 
 export function parseExcel(buffer: Buffer): Record<string, unknown>[] {

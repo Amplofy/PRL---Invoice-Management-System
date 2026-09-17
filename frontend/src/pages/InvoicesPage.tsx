@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Plus, Trash2, CheckCircle2, XCircle, FileOutput, Pencil, FileCheck2, Lock, AlertTriangle, Languages, Banknote, Clock, Layers } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
+import { calendarDateAtNoon, todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate, formatAmountWords, formatServicePeriod } from '../lib/format'
 import { catalogLocations, contractUtilization, contractStatusLabel, isSelectableContract, isSignedOff, matrixForContract, nextSerialNo, validateInvoice, type ContractLite, type ServiceMatrixRow, type UtilizationInvoice, type SerialInvoiceLike } from '../lib/invoice'
 import { useToast } from '../components/ui/Toast'
@@ -496,7 +497,7 @@ export default function InvoicesPage() {
     }
     try {
       await downloadTableWorkbook({
-        filename: `invoices-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filename: `invoices-${todayCalendarYmd()}.xlsx`,
         title: 'Invoice register',
         subtitle: 'All invoice columns with group subtotals and grand total',
         groupBy: groupKey ? groupMap[groupKey] ?? null : null,
@@ -844,7 +845,7 @@ export default function InvoicesPage() {
                               <span className="flex items-center gap-2 font-semibold">
                                 <Layers size={13} className="text-[var(--accent)]" />
                                 {groupKey === 'month' && /^\d{4}-\d{2}$/.test(g.key)
-                                  ? new Date(`${g.key}-01`).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+                                  ? (calendarDateAtNoon(`${g.key}-01`) ?? new Date(`${g.key}-01`)).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
                                   : g.key}
                               </span>
                               <span className="text-xs text-[var(--text-muted)]">
@@ -1079,7 +1080,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
   useEffect(() => {
     if (!open) return
     setShowErrors(false)
-    setEntryDate(new Date().toISOString().slice(0, 10))
+    setEntryDate(todayCalendarYmd())
     setSerialOverride(invoice?.serial_no ?? null)
     setForm({
       serial_no: invoice?.serial_no ?? '',

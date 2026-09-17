@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Printer, Banknote, RefreshCw, Truck, FileOutput, Layers, BadgeCheck, X } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
+import { calendarDateAtNoon, todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate, formatDateTime } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -330,7 +331,7 @@ export default function PaymentOrdersPage() {
     }
     try {
       await downloadTableWorkbook({
-        filename: `payment-orders-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filename: `payment-orders-${todayCalendarYmd()}.xlsx`,
         title: 'Payment order register',
         subtitle: 'All payment-order columns with group subtotals and grand total',
         groupBy: groupKey ? groupMap[groupKey] ?? null : null,
@@ -653,7 +654,7 @@ export default function PaymentOrdersPage() {
                               <span className="flex items-center gap-2 font-semibold">
                                 <Layers size={13} className="text-[var(--accent)]" />
                                 {groupKey === 'month' && /^\d{4}-\d{2}$/.test(g.key)
-                                  ? new Date(`${g.key}-01`).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+                                  ? (calendarDateAtNoon(`${g.key}-01`) ?? new Date(`${g.key}-01`)).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
                                   : g.key}
                               </span>
                               <span className="text-xs text-[var(--text-muted)]">

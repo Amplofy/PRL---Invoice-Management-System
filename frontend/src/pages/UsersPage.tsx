@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import { Plus, Pencil, ShieldCheck, Users as UsersIcon, Trash2, Lock, KeyRound } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
+import { todayCalendarYmd } from '../lib/calendarDate'
 import { useAuth, hasPermission } from '../lib/auth'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -223,7 +224,7 @@ export default function UsersPage() {
   const exportUsers = async () => {
     try {
       await downloadTableWorkbook({
-        filename: `users-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filename: `users-${todayCalendarYmd()}.xlsx`,
         title: 'User directory',
         subtitle: 'All user columns in the current filter',
         grandTotal: false,
