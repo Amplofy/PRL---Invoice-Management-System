@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Mail, Send, Truck, Layers } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
+import { calendarDateAtNoon, civilDayDiff, todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -56,9 +57,8 @@ const FOLLOWUP_FILTER_COLUMNS: FilterColumnDef[] = [
 
 function daysPending(dateStr: string | null): number | null {
   if (!dateStr) return null
-  const d = new Date(dateStr)
-  if (Number.isNaN(d.getTime())) return null
-  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000))
+  const diff = civilDayDiff(dateStr, todayCalendarYmd())
+  return diff === null ? null : Math.max(0, diff)
 }
 
 export default function FollowupsPage() {
@@ -165,7 +165,7 @@ export default function FollowupsPage() {
     }
     try {
       await downloadTableWorkbook({
-        filename: `followups-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filename: `followups-${todayCalendarYmd()}.xlsx`,
         title: 'Follow-up register',
         subtitle: 'Pending vendor follow-ups with group subtotals and grand total',
         groupBy: groupKey ? groupMap[groupKey] ?? null : null,
@@ -394,7 +394,7 @@ export default function FollowupsPage() {
                               <span className="flex items-center gap-2 font-semibold">
                                 <Layers size={13} className="text-[var(--accent)]" />
                                 {groupKey === 'month' && /^\d{4}-\d{2}$/.test(g.key)
-                                  ? new Date(`${g.key}-01`).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+                                  ? (calendarDateAtNoon(`${g.key}-01`) ?? new Date(`${g.key}-01`)).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
                                   : g.key}
                               </span>
                               <span className="text-xs text-[var(--text-muted)]">

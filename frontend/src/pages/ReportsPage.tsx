@@ -21,6 +21,7 @@ import GlassCard from '../components/ui/GlassCard'
 import EmptyState from '../components/ui/EmptyState'
 import { useThemeColors } from '../lib/themeColors'
 import { fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, currentFiscalYear, shiftFiscalYear, elapsedInFiscalYear, nearbyFiscalYears, isClosedFiscalYear, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isAccrualOpenInvoice, isMiscCostElement, fyStartYear, type FiscalQuarter } from '../lib/fiscal'
+import { civilDayDiff, todayCalendarYmd } from '../lib/calendarDate'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { useCountUp } from '../lib/useCountUp'
@@ -420,7 +421,7 @@ export default function ReportsPage() {
       const date = invoiceBudgetDate(inv)
       const fi = invoiceBudgetInfo(inv)
       if (!date || !fi || !fySet.has(fi.fy)) continue
-      const idx = fyMonthIndex(new Date(date))
+      const idx = fyMonthIndex(date)
       months.set(idx, (months.get(idx) ?? 0) + metricValue(inv))
     }
     return { fy: fyLabel, data: FY_MONTHS.map((label, idx) => ({ label, value: months.get(idx) ?? 0 })) }
@@ -442,7 +443,7 @@ export default function ReportsPage() {
       const date = invoiceBudgetDate(inv)
       const fi = invoiceBudgetInfo(inv)
       if (!date || !fi || !fySet.has(fi.fy)) return false
-      return fyMonthIndex(new Date(date)) === idx
+      return fyMonthIndex(date) === idx
     })
 
   const openSpendMonth = (idx: number) => {
@@ -464,7 +465,7 @@ export default function ReportsPage() {
       const date = invoiceBudgetDate(inv)
       const fi = invoiceBudgetInfo(inv)
       if (!date || !fi || fi.fy !== reportFy) continue
-      const idx = fyMonthIndex(new Date(date))
+      const idx = fyMonthIndex(date)
       if (isSignedOff(inv.status)) {
         approved.set(idx, (approved.get(idx) ?? 0) + invoiceApprovedAmount(inv))
       }
@@ -474,7 +475,7 @@ export default function ReportsPage() {
       const date = invoiceBudgetDate(inv ?? {})
       const fi = invoiceBudgetInfo(inv ?? {})
       if (!date || !fi || fi.fy !== reportFy) continue
-      const idx = fyMonthIndex(new Date(date))
+      const idx = fyMonthIndex(date)
       generated.set(idx, (generated.get(idx) ?? 0) + poGeneratedAmount(p, inv))
       const rel = poReleasedAmount(p)
       if (rel > 0) released.set(idx, (released.get(idx) ?? 0) + rel)
@@ -721,12 +722,12 @@ export default function ReportsPage() {
       { key: '90+', label: '90+ days', min: 91, max: 100000 },
     ]
     const open = scoped.filter((i) => i.status === 'Pending')
-    const now = Date.now()
+    const today = todayCalendarYmd()
     return buckets.map((b) => {
       const rows = open.filter((i) => {
         if (!i.invoice_date) return false
-        const days = Math.floor((now - new Date(i.invoice_date).getTime()) / 86400000)
-        return days >= b.min && days <= b.max
+        const days = civilDayDiff(i.invoice_date, today)
+        return days !== null && days >= b.min && days <= b.max
       })
       return {
         ...b,

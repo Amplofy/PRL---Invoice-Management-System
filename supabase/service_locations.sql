@@ -1,5 +1,5 @@
 -- Service catalog locations + invoice location snapshot.
--- Apply after schema.sql on existing DBs.
+-- Apply after schema.sql on existing DBs. Safe to re-run.
 
 alter table public.service_matrix
   add column if not exists locations text[] not null default '{}'::text[];

@@ -1,5 +1,5 @@
 import { invoiceBudgetFy } from './fyLock.js'
-import { money, poReleasedAmount } from './poFinance.js'
+import { invoiceApprovedAmount, money, poReleasedAmount } from './poFinance.js'
 
 export const RELEASED_VIA = ['cheque', 'bank_transfer', 'rtgs', 'other'] as const
 export type ReleasedVia = (typeof RELEASED_VIA)[number]
@@ -11,8 +11,9 @@ export function parseReleasedVia(raw: unknown): ReleasedVia | null {
 }
 
 export function invoiceAccrualAmount(inv: { amount?: unknown; approved_amount?: unknown }): number {
-  if (inv.approved_amount != null && inv.approved_amount !== '') return money(inv.approved_amount)
-  return money(inv.amount)
+  // Same zero-means-unset rule as POs: a blank approved_amount keeps the
+  // invoice amount in play for accrual.
+  return invoiceApprovedAmount(inv)
 }
 
 export function isBudgetIncrease(previous: number | undefined, next: number): boolean {

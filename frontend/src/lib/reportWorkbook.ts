@@ -19,6 +19,7 @@ import { isSignedOff } from './invoice'
 import { yearlyBudgetFigures } from './fyAnalysis'
 import { downloadAnalysisWorkbook, type AnalysisColumn, type AnalysisSheet } from './analysisWorkbook'
 import { contractNoOf, vendorEmailOf, vendorNameOf } from './relations'
+import { todayCalendarYmd, civilDayDiff } from './calendarDate'
 
 export const REPORT_TEMPLATES = [
   { id: 'overview', label: 'Overview pack' },
@@ -346,7 +347,7 @@ function monthlySheet(rows: ReportInvoice[], filters: ReportExportFilters): Anal
   for (const inv of rows) {
     const date = invoiceBudgetDate(inv)
     if (!date) continue
-    const idx = fyMonthIndex(new Date(date))
+    const idx = fyMonthIndex(date)
     const cur = months.get(idx) ?? { amount: 0, count: 0, approved: 0 }
     cur.amount += metricValue(inv, filters.metric)
     cur.count += 1
@@ -655,9 +656,9 @@ function agingSheets(rows: ReportInvoice[]): AnalysisSheet[] {
     { label: '90+ days', min: 91, max: 100000 },
   ]
   const open = rows.filter((i) => i.status === 'Pending')
-  const now = Date.now()
+  const today = todayCalendarYmd()
   const withDays = open.map((i) => {
-    const days = i.invoice_date ? Math.floor((now - new Date(i.invoice_date).getTime()) / 86400000) : 0
+    const days = (i.invoice_date ? civilDayDiff(i.invoice_date, today) : null) ?? 0
     const bucket = buckets.find((b) => days >= b.min && days <= b.max)?.label ?? '90+ days'
     return { inv: i, days, bucket }
   })
@@ -806,7 +807,7 @@ export async function downloadGeneratedReport(data: ReportExportData, filters: R
   if (want('aging')) sheets.push(...agingSheets(rows))
   if (want('outlook')) sheets.push(outlookSheet(data.invoices, data.yearBudgets, fy))
 
-  const stamp = new Date().toISOString().slice(0, 10)
+  const stamp = todayCalendarYmd()
   const fyTag = filters.fys.length === 1 ? filters.fys[0] : 'multi-fy'
   const template = REPORT_TEMPLATES.find((t) => t.id === filters.template)?.label ?? filters.template
   await downloadAnalysisWorkbook(`PRL-EOMS-${filters.template}-${fyTag}-${stamp}.xlsx`, sheets, {

@@ -115,9 +115,16 @@ export const QUARTERS: FiscalQuarter[] = ['Q1', 'Q2', 'Q3', 'Q4']
 /** Month labels ordered by fiscal year (Jul first). */
 export const FY_MONTHS = ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun']
 
-/** Month index within the fiscal year: 0 = July ... 11 = June. */
-export function fyMonthIndex(d: Date): number {
-  return (d.getMonth() - 6 + 12) % 12
+/**
+ * Month index within the fiscal year: 0 = July ... 11 = June.
+ *
+ * Accepts a civil date string directly so callers cannot accidentally run it
+ * through `new Date('YYYY-MM-DD')`, whose UTC midnight falls in the previous
+ * month for zones west of UTC.
+ */
+export function fyMonthIndex(d: Date | string): number {
+  const date = typeof d === 'string' ? calendarDateAtNoon(d) ?? new Date(d) : d
+  return (date.getMonth() - 6 + 12) % 12
 }
 
 /** Elapsed months in the current FY, 1 (July) through 12 (June). */

@@ -38,6 +38,29 @@ export function colLetter(idx: number): string {
   return s
 }
 
+const DATE_TEXT = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Raw cell values with date-formatted cells rendered as YYYY-MM-DD.
+ *
+ * Dates are kept as their stored Excel serial (`raw`) and never read through
+ * `cellDates`, which builds local-time Date objects that can land on the
+ * neighbouring day. The second pass only supplies readable text; the value
+ * still comes from the serial, so nothing is moved by the browser timezone.
+ */
+function readSheetMatrix(ws: XLSX.WorkSheet): unknown[][] {
+  const base = { header: 1, defval: '', blankrows: false } as const
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { ...base, raw: true })
+  const display = XLSX.utils.sheet_to_json<unknown[]>(ws, { ...base, raw: false, dateNF: 'yyyy-mm-dd' })
+  return raw.map((row, r) =>
+    row.map((cell, c) => {
+      if (typeof cell !== 'number') return cell
+      const text = display[r]?.[c]
+      return typeof text === 'string' && DATE_TEXT.test(text.trim()) ? text.trim() : cell
+    }),
+  )
+}
+
 export async function readWorkbook(file: File): Promise<ParsedWorkbook> {
   const buf = await file.arrayBuffer()
   if (isCsvFile(file)) {
@@ -47,17 +70,12 @@ export async function readWorkbook(file: File): Promise<ParsedWorkbook> {
       sheets: [{ name: 'Sheet1', rowCount: matrix.length, matrix, hiddenCols: [] }],
     }
   }
-  const wb = XLSX.read(buf, { cellDates: true, dense: false })
+  const wb = XLSX.read(buf, { dense: false })
   const sheets: ParsedSheet[] = []
   for (const name of wb.SheetNames) {
     const ws = wb.Sheets[name]
     if (!ws) continue
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, {
-      header: 1,
-      defval: '',
-      blankrows: false,
-      raw: true,
-    })
+    const matrix = readSheetMatrix(ws)
     const hidden: string[] = []
     const cols = (ws['!cols'] ?? []) as Array<{ hidden?: boolean } | undefined>
     cols.forEach((c, i) => {

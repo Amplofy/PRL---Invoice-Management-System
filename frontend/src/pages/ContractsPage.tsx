@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, AlertTriangle, Banknote, Truck, Layers, Lock } from 'lucide-react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api'
+import { civilDayDiff, todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
@@ -165,7 +166,7 @@ export default function ContractsPage() {
 
   const daysLeft = (c: Contract): number | null => {
     if (!c.end_date) return null
-    return Math.round((new Date(c.end_date).getTime() - Date.now()) / 86400000)
+    return civilDayDiff(todayCalendarYmd(), c.end_date)
   }
 
   const expiryBadge = (c: Contract) => {
@@ -290,7 +291,7 @@ export default function ContractsPage() {
     }
     try {
       await downloadTableWorkbook({
-        filename: `contracts-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filename: `contracts-${todayCalendarYmd()}.xlsx`,
         title: 'Contract register',
         subtitle: 'All contract columns with group subtotals and grand total',
         groupBy: groupKey ? groupMap[groupKey] ?? null : null,

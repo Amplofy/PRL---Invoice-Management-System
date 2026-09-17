@@ -6,6 +6,7 @@ import { apiGet } from '../../lib/api'
 import { subscribeAppEvents, type AppEvent } from '../../lib/notify'
 import { timeAgo } from '../../lib/format'
 import { currentFiscalYear } from '../../lib/fiscal'
+import { civilDayDiff, todayCalendarYmd } from '../../lib/calendarDate'
 import { invoiceListPath } from '../../lib/invoiceWindow'
 
 type NotifType = 'ok' | 'warn' | 'err' | 'info'
@@ -150,8 +151,8 @@ export default function Notifications() {
             })
           }
           if (contract.end_date) {
-            const days = Math.round((new Date(contract.end_date).getTime() - now) / 86400000)
-            if (days >= 0 && days <= 60) {
+            const days = civilDayDiff(todayCalendarYmd(), contract.end_date)
+            if (days !== null && days >= 0 && days <= 60) {
               signals.push({
                 id: `sig-exp-${contract.id}`,
                 type: 'warn',

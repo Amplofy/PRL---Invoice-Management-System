@@ -9,6 +9,7 @@ drop table if exists public.discrepancy_emails cascade;
 drop table if exists public.comparison_results cascade;
 drop table if exists public.comparisons cascade;
 drop table if exists public.import_logs cascade;
+drop table if exists public.import_batches cascade;
 drop table if exists public.app_settings cascade;
 drop table if exists public.notifications cascade;
 drop table if exists public.audit_log cascade;

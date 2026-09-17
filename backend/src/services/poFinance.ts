@@ -20,8 +20,10 @@ export function invoiceApprovedAmount(invoice: {
   approved_amount?: unknown
 } | null | undefined): number {
   if (!invoice) return 0
-  const approved = invoice.approved_amount
-  if (approved != null && approved !== '') return money(approved)
+  // A zero approved_amount means "not set" and must not mask the invoice
+  // amount, otherwise POs, accruals and reports read 0.
+  const approved = money(invoice.approved_amount)
+  if (approved > 0) return approved
   return money(invoice.amount)
 }
 
@@ -29,7 +31,10 @@ export function poGeneratedAmount(po: { amount?: unknown } | null | undefined, i
   amount?: unknown
   approved_amount?: unknown
 } | null): number {
-  if (po?.amount != null && po.amount !== '') return money(po.amount)
+  // A stored zero is a legacy/default value; fall back to the invoice so the
+  // PO never reports a blank amount.
+  const stored = money(po?.amount)
+  if (stored > 0) return stored
   return invoiceApprovedAmount(invoice)
 }
 

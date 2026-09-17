@@ -2,6 +2,7 @@
 -- The backend uses the service-role key (bypasses RLS).
 -- The frontend anon key is only used for Auth; it should read no tables directly.
 -- Run this AFTER schema.sql in the Supabase SQL editor.
+-- Safe to re-run: policies are dropped before create.
 
 alter table public.roles enable row level security;
 alter table public.profiles enable row level security;
@@ -21,6 +22,7 @@ alter table public.audit_log enable row level security;
 alter table public.notifications enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.import_logs enable row level security;
+alter table public.import_batches enable row level security;
 alter table public.comparisons enable row level security;
 alter table public.comparison_results enable row level security;
 alter table public.discrepancy_emails enable row level security;
@@ -33,6 +35,7 @@ alter table public.followup_emails enable row level security;
 -- Exception: the frontend reads the signed-in user's own profile
 -- (name/role) directly, so allow self-read on profiles only.
 
+drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own"
   on public.profiles
   for select

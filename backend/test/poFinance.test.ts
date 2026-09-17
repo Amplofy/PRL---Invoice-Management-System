@@ -14,9 +14,22 @@ describe('poFinance', () => {
     assert.equal(invoiceApprovedAmount({ amount: 100, approved_amount: null }), 100)
   })
 
+  it('treats a zero approved_amount as unset so it cannot mask the invoice amount', () => {
+    assert.equal(invoiceApprovedAmount({ amount: 100, approved_amount: 0 }), 100)
+    assert.equal(invoiceApprovedAmount({ amount: 100, approved_amount: '0.00' }), 100)
+    assert.equal(invoiceApprovedAmount({ amount: 100, approved_amount: '' }), 100)
+    assert.equal(invoiceApprovedAmount({ amount: 0, approved_amount: 0 }), 0)
+  })
+
   it('falls back to invoice approved amount for generated PO amount', () => {
     assert.equal(poGeneratedAmount({ amount: 50 }, { amount: 100, approved_amount: 90 }), 50)
     assert.equal(poGeneratedAmount({ amount: null }, { amount: 100, approved_amount: 90 }), 90)
+  })
+
+  it('recovers a legacy zero PO amount from the invoice', () => {
+    assert.equal(poGeneratedAmount({ amount: 0 }, { amount: 100, approved_amount: null }), 100)
+    assert.equal(poGeneratedAmount({ amount: '0' }, { amount: 100, approved_amount: 90 }), 90)
+    assert.equal(poGeneratedAmount({ amount: 0 }, { amount: 0, approved_amount: 0 }), 0)
   })
 
   it('counts released amount only when cleared', () => {

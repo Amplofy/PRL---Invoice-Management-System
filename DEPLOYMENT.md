@@ -20,9 +20,9 @@ If the database already has old/partial tables, clean it first:
 1. Create a project at supabase.com — pick region closest to Pakistan
    (Singapore or Mumbai) for lowest latency.
 2. SQL Editor → run these in order:
-   1. `supabase/schema.sql` (tables)
+   1. `supabase/schema.sql` (tables, including `import_batches`)
    2. `supabase/seed.sql` (roles, permissions, settings)
-   3. `supabase/rls-hardening.sql` (locks anon access; API is the only data path)
+   3. `supabase/rls-hardening.sql` (locks anon access on every table; API is the only data path)
 3. Create auth users: Authentication → Users → Add user.
    Create one user per real account, then link each to an EOMS role by
    inserting into `public.users` (role, auth_id) via SQL editor.
@@ -34,11 +34,45 @@ If the database already has old/partial tables, clean it first:
 
 ### Existing database (do not re-run schema.sql)
 
-If the project already has tables from an earlier release, skip `schema.sql` / `seed.sql` / `reset.sql`. In SQL Editor, run these additive scripts in order and skip any already applied:
+If the project already has tables from an earlier release, skip `schema.sql` / `seed.sql` / `reset.sql`. In SQL Editor, run these additive scripts in order and skip any already applied. Every script is idempotent (`if not exists` / `on conflict do nothing`), adds schema only, and back-fills new columns from existing rows — none of them delete rows, drop columns or overwrite business data.
 
-1. `supabase/finance_po.sql` — Paid status + finance PO columns
-2. `supabase/contract_services.sql` — vendor emails + contract catalog services
+1. `supabase/finance_po.sql` — `po_versions` status/amount/finance/release columns, `po_history`, `po.approve` permission + `finance` role, and a back-fill that marks already-cleared invoices `Paid`
+2. `supabase/contract_services.sql` — `vendor_emails` + `contract_services` tables, `contracts.status` constraint, back-filled from existing vendors/contracts
 3. `supabase/sundry_accruals.sql` — `released_via` / `release_reference` + `fy_accrual_overrides`
+4. `supabase/service_locations.sql` — `service_matrix.locations` + `invoices.location`, with default locations for the seeded services
+5. `supabase/import_batches.sql` — `import_batches` table for the admin import-approval workflow (skip if it already exists)
+6. `supabase/rls-hardening.sql` — enables RLS on every table, including the new ones (safe to re-run)
+7. `supabase/fix_zero_amounts.sql` — one-off data repair: clears `approved_amount = 0`, restores zero PO amounts from their invoice, and realigns `po_history` (safe to re-run, deletes nothing)
+
+Before running, take a backup (Supabase Dashboard → Database → Backups, or `pg_dump`). Only `reset.sql` is destructive; the seven scripts above are safe.
+
+Verify afterwards (each query should return the listed objects):
+
+```sql
+-- tables
+select 'import_batches' as object, to_regclass('public.import_batches') is not null as present
+union all select 'vendor_emails',     to_regclass('public.vendor_emails') is not null
+union all select 'contract_services', to_regclass('public.contract_services') is not null
+union all select 'po_history',        to_regclass('public.po_history') is not null;
+
+-- columns
+select table_name, column_name
+from information_schema.columns
+where table_schema = 'public' and (
+  (table_name = 'invoices' and column_name in ('location','service_from','service_to')) or
+  (table_name = 'service_matrix' and column_name = 'locations') or
+  (table_name = 'po_versions' and column_name in ('status','amount','released_via','release_reference'))
+)
+order by 1, 2;
+
+-- settings (po_template is created on first save from Administration)
+select key from public.app_settings where key in ('po_template','fy_accrual_overrides','cost_center');
+
+-- amount repair: both counts should be 0 after fix_zero_amounts.sql
+select
+  (select count(*) from public.invoices where approved_amount = 0) as zero_approved_invoices,
+  (select count(*) from public.po_versions where amount = 0) as zero_po_amounts;
+```
 
 Then redeploy backend and frontend from branch `260903-feat-finance-po-paid`.
 

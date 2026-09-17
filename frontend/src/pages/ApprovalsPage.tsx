@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, XCircle, FileText, FolderOpen } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
+import { todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
 import { emitAppEvent } from '../lib/notify'
 import { emitCrossModule } from '../lib/store'
@@ -127,7 +128,7 @@ export default function ApprovalsPage() {
   const exportExcel = async () => {
     try {
       await downloadTableWorkbook({
-        filename: `pending-approvals-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        filename: `pending-approvals-${todayCalendarYmd()}.xlsx`,
         title: 'Pending approvals',
         subtitle: 'Full-column queue with grand total',
         groupBy: 'Vendor',

@@ -1,5 +1,5 @@
 import type { SourceColumn } from './importParser'
-import { dateToCalendarYmd, excelSerialToYmd } from './calendarDate'
+import { dateToCalendarYmd, excelSerialToYmd, parseCalendarText } from './calendarDate'
 
 export type ImportType = 'invoices' | 'contracts' | 'vendors'
 export type FieldType = 'text' | 'number' | 'date' | 'status'
@@ -35,13 +35,13 @@ export const IMPORT_SCHEMAS: Record<ImportType, ElementDef[]> = {
     { key: 'trips', label: 'Trips', type: 'number', required: false, aliases: ['trips', 'trip', 'no of trips', 'number of trips', 'trip count'] },
     { key: 'item_no', label: 'Item No', type: 'text', required: false, aliases: ['item no', 'item', 'item number', 'line no', 'line item', 'line'] },
     { key: 'cost_element', label: 'Cost Element', type: 'text', required: false, aliases: ['cost element', 'cost', 'element', 'cost centre', 'cost center', 'gl account', 'gl'] },
-    { key: 'service_from', label: 'Service From', type: 'date', required: false, aliases: ['service from', 'service start', 'period from', 'period start', 'from'] },
+    { key: 'service_from', label: 'Service From', type: 'date', required: false, aliases: ['service from', 'service start', 'period from', 'period start', 'from', 'services month', 'service month', 'svc month', 'month of service'] },
     { key: 'service_to', label: 'Service To', type: 'date', required: false, aliases: ['service to', 'service end', 'period to', 'period end', 'to'] },
     { key: 'amount', label: 'Amount', type: 'number', required: true, aliases: ['amount', 'invoice amount', 'bill amount', 'net amount', 'total amount', 'value', 'net value', 'total', 'amount rs', 'gross amount'] },
     { key: 'status', label: 'Status', type: 'status', required: false, allowed: ['pending', 'approved', 'rejected', 'draft', 'void', 'paid'], aliases: ['status', 'invoice status', 'approval status', 'state'] },
     { key: 'approved_by', label: 'Approved By', type: 'text', required: false, aliases: ['approved by', 'approver', 'approved person', 'authorized by', 'authorised by'] },
     { key: 'approved_date', label: 'Approved Date', type: 'date', required: false, aliases: ['approved date', 'approval date', 'approved on', 'date approved', 'approval on'] },
-    { key: 'approved_amount', label: 'Approved Amount', type: 'number', required: false, aliases: ['approved amount', 'approved value', 'sanctioned amount', 'approved amt', 'approved total'] },
+    { key: 'approved_amount', label: 'Approved Amount', type: 'number', required: false, aliases: ['approved amount', 'approved value', 'sanctioned amount', 'approved amt', 'approved total', 'approved snapshot', 'approval snapshot', 'snapshot amount'] },
     { key: 'contract_no', label: 'Contract No', type: 'text', required: true, aliases: ['contract no', 'contract', 'contract number', 'contract id', 'agreement no', 'agreement', 'lc no'] },
     { key: 'remarks', label: 'Remarks', type: 'text', required: false, aliases: ['remarks', 'remark', 'comments', 'comment', 'notes', 'note'] },
   ],
@@ -89,6 +89,14 @@ function scoreHeader(el: ElementDef, header: string, samples: unknown[]): number
     const dated = samples.filter((v) => v instanceof Date || /\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/.test(String(v))).length
     if (dated >= Math.ceil(samples.length / 2) && best > 0) best = Math.min(1, best + 0.1)
   }
+  if (el.type === 'status' && samples.length > 0) {
+    const allowed = new Set((el.allowed ?? []).map((a) => a.toLowerCase()))
+    const hits = samples.filter((v) => allowed.has(String(v).trim().toLowerCase())).length
+    // Samples prove this is some other "status" column (e.g. "Accepted"); ignore it
+    // so the column that really carries approval values wins the name match.
+    if (hits === 0) return 0
+    if (best > 0) best = Math.min(1, best + 0.1)
+  }
   return best
 }
 
@@ -118,35 +126,25 @@ function iso(d: Date): string {
   return dateToCalendarYmd(d)
 }
 
+/**
+ * Canonical YYYY-MM-DD for an imported date cell. Every branch resolves the date
+ * from the value itself (Excel serial or the day/month/year written in the text)
+ * so the browser timezone never moves an imported date.
+ */
 export function normalizeDate(raw: unknown): { value: string | null; warning?: string } {
   if (raw === null || raw === undefined || raw === '') return { value: null }
-  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return { value: iso(raw) }
-  if (typeof raw === 'number' && raw > 20000 && raw < 80000) {
-    return { value: excelSerialToYmd(raw) }
+  if (raw instanceof Date) {
+    return Number.isNaN(raw.getTime()) ? { value: null } : { value: iso(raw) }
   }
-  const s = String(raw).trim()
+  if (typeof raw === 'number') {
+    if (raw > 20000 && raw < 80000) return { value: excelSerialToYmd(raw) }
+    return { value: null, warning: `unreadable date "${raw}"` }
+  }
+  const s = String(raw).replace(/\u00a0/g, ' ').trim()
   if (!s) return { value: null }
-  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)
-  if (m) {
-    return { value: `${m[1]}-${m[2]!.padStart(2, '0')}-${m[3]!.padStart(2, '0')}` }
-  }
-  m = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2}|\d{4})$/.exec(s)
-  if (m) {
-    let a = Number(m[1])
-    let b = Number(m[2])
-    const yearRaw = m[3]!
-    const year = yearRaw.length === 2 ? 2000 + Number(yearRaw) : Number(yearRaw)
-    if (a > 12 && b <= 12) return { value: `${year}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}` }
-    if (b > 12 && a <= 12) return { value: `${year}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`, warning: 'month-first date detected' }
-    if (a <= 12 && b <= 12) {
-      return {
-        value: `${year}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`,
-        warning: 'ambiguous day/month — read day-first',
-      }
-    }
-  }
-  const parsed = new Date(s)
-  if (!Number.isNaN(parsed.getTime()) && /[a-z]/i.test(s)) return { value: iso(parsed) }
+  if (/^\d{5}(\.\d+)?$/.test(s)) return { value: excelSerialToYmd(Number(s)) }
+  const parsed = parseCalendarText(s)
+  if (parsed) return parsed
   return { value: null, warning: `unreadable date "${s}"` }
 }
 
