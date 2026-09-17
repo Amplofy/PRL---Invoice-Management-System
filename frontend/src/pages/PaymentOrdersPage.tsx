@@ -38,7 +38,7 @@ import {
 import { isUnpaidPriorYearInvoice, RELEASED_VIA, releasedViaLabel } from '../lib/accrual'
 import { invoiceBudgetDate, invoiceBudgetInfo } from '../lib/fiscal'
 import { contractNoOf, vendorEmailOf, vendorNameOf } from '../lib/relations'
-import { openPaymentOrderPrint } from '../lib/poBlueprint'
+import { openPaymentOrderPrint, openPaymentOrderPrintBatch, type PoPrintBatchItem } from '../lib/poBlueprint'
 
 interface PaymentOrder {
   id: string
@@ -166,6 +166,15 @@ export default function PaymentOrdersPage() {
   const [releaseReference, setReleaseReference] = useState('')
   const [rejectReason, setRejectReason] = useState('')
   const [busy, setBusy] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [lastClickIdx, setLastClickIdx] = useState<number | null>(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkReleasing, setBulkReleasing] = useState(false)
+  const [bulkRejecting, setBulkRejecting] = useState(false)
+  const [bulkReleasedVia, setBulkReleasedVia] = useState('')
+  const [bulkReleaseReference, setBulkReleaseReference] = useState('')
+  const [bulkRemarks, setBulkRemarks] = useState('')
+  const [bulkRejectReason, setBulkRejectReason] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -204,6 +213,11 @@ export default function PaymentOrdersPage() {
   useEffect(() => {
     void loadSettings()
   }, [settingsVersion, loadSettings])
+
+  useEffect(() => {
+    document.body.classList.toggle('qa-lift', selected.size > 0)
+    return () => document.body.classList.remove('qa-lift')
+  }, [selected.size])
 
   const refresh = async () => {
     setRefreshing(true)
@@ -316,7 +330,55 @@ export default function PaymentOrdersPage() {
     [sorted, groupKey],
   )
 
-  const visibleColCount = PO_COLUMN_KEYS.filter((k) => col.show(k)).length + 1
+  const sortedIndex = useMemo(() => new Map(sorted.map((o, i) => [o.id, i])), [sorted])
+  const selectedOrders = useMemo(() => orders.filter((o) => selected.has(o.id)), [orders, selected])
+  const selectedRows = useMemo(() => sorted.filter((o) => selected.has(o.id)), [sorted, selected])
+  const selectedTotal = useMemo(() => selectedOrders.reduce((s, o) => s + generatedOf(o), 0), [selectedOrders])
+  const eligibleSelected = useMemo(() => selectedOrders.filter((o) => isAwaitingFinance(o.status)), [selectedOrders])
+  const allVisibleSelected = sorted.length > 0 && sorted.every((o) => selected.has(o.id))
+  const someVisibleSelected = sorted.some((o) => selected.has(o.id))
+
+  const toggleSelect = (o: PaymentOrder, shiftKey: boolean) => {
+    const idx = sortedIndex.get(o.id) ?? -1
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (shiftKey && lastClickIdx !== null && idx >= 0) {
+        const [a, b] = [Math.min(lastClickIdx, idx), Math.max(lastClickIdx, idx)]
+        const add = !prev.has(o.id)
+        for (let k = a; k <= b; k++) {
+          const row = sorted[k]
+          if (row) {
+            if (add) next.add(row.id)
+            else next.delete(row.id)
+          }
+        }
+      } else if (next.has(o.id)) {
+        next.delete(o.id)
+      } else {
+        next.add(o.id)
+      }
+      return next
+    })
+    setLastClickIdx(idx >= 0 ? idx : null)
+  }
+
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      if (sorted.length > 0 && sorted.every((o) => prev.has(o.id))) {
+        const next = new Set(prev)
+        for (const o of sorted) next.delete(o.id)
+        return next
+      }
+      return new Set([...prev, ...sorted.map((o) => o.id)])
+    })
+  }
+
+  const clearSelection = () => {
+    setSelected(new Set())
+    setLastClickIdx(null)
+  }
+
+  const visibleColCount = PO_COLUMN_KEYS.filter((k) => col.show(k)).length + 2
 
   const exportExcel = async () => {
     const groupMap: Record<string, string> = {
@@ -411,7 +473,7 @@ export default function PaymentOrdersPage() {
     }
   }
 
-  const print = (order: PaymentOrder) => {
+  const printItem = (order: PaymentOrder): PoPrintBatchItem => {
     const vendor = vendorNameOf(order)
     const poAmt = generatedOf(order)
     const relAmt = releasedOf(order)
@@ -422,7 +484,95 @@ export default function PaymentOrdersPage() {
         ? costCenter
         : formatMoney(Number(costCenter))
       : ''
-    openPaymentOrderPrint(order, { vendor, amount: printAmt, logoUrl, costCenter: costCenterText }, poTemplate)
+    return { order, extras: { vendor, amount: printAmt, logoUrl, costCenter: costCenterText } }
+  }
+
+  const print = (order: PaymentOrder) => {
+    if (!openPaymentOrderPrint(order, printItem(order).extras, poTemplate)) {
+      toast.error('Print window blocked', 'Allow pop-ups for this site to print the payment order.')
+    }
+  }
+
+  const printSelected = () => {
+    if (selectedRows.length === 0) return
+    if (!openPaymentOrderPrintBatch(selectedRows.map(printItem), poTemplate)) {
+      toast.error('Print window blocked', 'Allow pop-ups for this site to print the selected payment orders.')
+    }
+  }
+
+  const openBulkRelease = () => {
+    setBulkReleasedVia('')
+    setBulkReleaseReference('')
+    setBulkRemarks('')
+    setBulkReleasing(true)
+  }
+
+  const bulkedLocked = async (): Promise<boolean> => {
+    const rows = eligibleSelected.filter((o) => !isUnpaidPriorYearInvoice(o.invoices ?? {}))
+    if (rows.length === 0) return true
+    return guardWrite(...rows.map((o) => invoiceBudgetDate(o.invoices ?? {})))
+  }
+
+  const bulkRelease = async () => {
+    if (eligibleSelected.length === 0) return
+    if (!(await bulkedLocked())) return
+    setBulkBusy(true)
+    try {
+      const d = await apiPost<{ released: number; skipped: number; failed: number }>(
+        '/api/payment-orders/bulk-release',
+        {
+          ids: [...selected],
+          releasedVia: bulkReleasedVia || undefined,
+          releaseReference: bulkReleaseReference.trim() || undefined,
+          remarks: bulkRemarks.trim() || undefined,
+        },
+      )
+      toast.success(
+        `${d.released} payment order${d.released === 1 ? '' : 's'} released`,
+        d.skipped > 0 || d.failed > 0 ? `${d.skipped} skipped, ${d.failed} failed` : undefined,
+      )
+      emitAppEvent('ok', 'Bulk payment release', `${d.released} payment orders cleared by finance`, '/payment-orders')
+      for (const o of eligibleSelected) emitCrossModule('paymentOrder', 'update', o.id)
+      setBulkReleasing(false)
+      clearSelection()
+      await load()
+    } catch (e) {
+      toast.error('Bulk release failed', (e as Error).message)
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const openBulkReject = () => {
+    setBulkRejectReason('')
+    setBulkRejecting(true)
+  }
+
+  const bulkRejectSubmit = async () => {
+    if (!bulkRejectReason.trim()) {
+      toast.error('Rejection reason is required')
+      return
+    }
+    if (eligibleSelected.length === 0) return
+    if (!(await bulkedLocked())) return
+    setBulkBusy(true)
+    try {
+      const d = await apiPost<{ rejected: number; skipped: number; failed: number }>(
+        '/api/payment-orders/bulk-reject',
+        { ids: [...selected], reason: bulkRejectReason.trim() },
+      )
+      toast.success(`${d.rejected} payment order${d.rejected === 1 ? '' : 's'} rejected`)
+      emitAppEvent('err', 'Bulk PO rejection', `${d.rejected} payment orders rejected — ${bulkRejectReason.trim()}`, '/payment-orders')
+      for (const o of eligibleSelected) emitCrossModule('paymentOrder', 'update', o.id)
+      setBulkRejecting(false)
+      setBulkRejectReason('')
+      clearSelection()
+      await load()
+    } catch (e) {
+      toast.error('Bulk rejection failed', (e as Error).message)
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
   const openClear = (o: PaymentOrder) => {
@@ -571,6 +721,19 @@ export default function PaymentOrdersPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <HeaderTh columnKey="select" className="w-9 pr-0" resizable={false}>
+                  <input
+                    type="checkbox"
+                    className="cursor-pointer accent-[var(--accent)]"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected
+                    }}
+                    onChange={toggleAllVisible}
+                    disabled={sorted.length === 0}
+                    title="Select all payment orders in view"
+                  />
+                </HeaderTh>
                 {col.show('po_serial') && <SortableTh label="PO Serial" columnKey="serial_no" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
                 {col.show('generated_at') && <SortableTh label="Generated" columnKey="generated_at" sortKey={sortBy} direction={sortDir} onSort={onSort} preferDesc />}
                 {col.show('generated_by') && <SortableTh label="Generated By" columnKey="generated_by" sortKey={sortBy} direction={sortDir} onSort={onSort} />}
@@ -594,7 +757,16 @@ export default function PaymentOrdersPage() {
             <tbody>
               {(() => {
                 const renderRow = (o: PaymentOrder) => (
-                  <tr key={o.id}>
+                  <tr key={o.id} className={selected.has(o.id) ? 'bg-[rgba(124,58,237,0.07)]' : undefined}>
+                    <td className="pr-0 text-center">
+                      <input
+                        type="checkbox"
+                        className="cursor-pointer accent-[var(--accent)]"
+                        checked={selected.has(o.id)}
+                        onClick={(e) => toggleSelect(o, e.shiftKey)}
+                        onChange={() => undefined}
+                      />
+                    </td>
                     {col.show('po_serial') && <td className="font-semibold">{o.serial_no ?? '—'}</td>}
                     {col.show('generated_at') && <td className="text-xs">{formatDateTime(o.generated_at)}</td>}
                     {col.show('generated_by') && <td className="text-xs">{o.generated_by ?? '—'}</td>}
@@ -700,6 +872,102 @@ export default function PaymentOrdersPage() {
         )}
         </ColumnResizeProvider>
       </GlassCard>
+
+      {selected.size > 0 && (
+        <div
+          className="glass-strong fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-wrap items-center gap-4 rounded-2xl border border-[var(--border)] px-5 py-3 shadow-2xl"
+          style={{ animation: 'toast-in 220ms ease-out' }}
+        >
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <span className="flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-xs font-extrabold text-white" style={{ background: 'var(--gradient-primary)' }}>
+              {selected.size}
+            </span>
+            selected
+            <span className="hidden text-[var(--text-muted)] sm:inline">·</span>
+            <span className="hidden text-xs font-semibold text-[var(--accent-3)] sm:inline">
+              Rs {formatMoney(selectedTotal)} generated
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkBusy}>
+              Clear
+            </Button>
+            <Button variant="ghost" size="sm" onClick={printSelected} disabled={bulkBusy}>
+              <Printer size={14} /> Print selected
+            </Button>
+            {finance && (
+              <>
+                <Button variant="ghost" size="sm" onClick={openBulkReject} disabled={bulkBusy || eligibleSelected.length === 0}>
+                  <X size={14} /> Reject selected
+                </Button>
+                <Button variant="success" size="sm" onClick={openBulkRelease} disabled={bulkBusy || eligibleSelected.length === 0}>
+                  <BadgeCheck size={14} /> Release selected
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <Modal
+        open={bulkReleasing}
+        onClose={() => setBulkReleasing(false)}
+        title={`Release ${eligibleSelected.length} payment order${eligibleSelected.length === 1 ? '' : 's'}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkReleasing(false)} disabled={bulkBusy}>Cancel</Button>
+            <Button variant="success" onClick={bulkRelease} disabled={bulkBusy}>
+              <BadgeCheck size={15} /> {bulkBusy ? 'Releasing…' : `Release ${eligibleSelected.length}`}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <p className="text-[var(--text-dim)]">
+            Each payment order releases its own generated amount. The release channel below is applied to all of them.
+          </p>
+          {eligibleSelected.length < selected.size && (
+            <div className="rounded-xl border border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.08)] px-3 py-2 text-xs font-semibold text-[var(--warn)]">
+              {selected.size - eligibleSelected.length} selected payment order(s) are not awaiting finance and will be skipped.
+            </div>
+          )}
+          <Field label="Released via (optional)">
+            <select className="input" value={bulkReleasedVia} onChange={(e) => setBulkReleasedVia(e.target.value)}>
+              <option value="">Select…</option>
+              {RELEASED_VIA.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Release reference (optional)">
+            <input className="input" value={bulkReleaseReference} onChange={(e) => setBulkReleaseReference(e.target.value)} placeholder="Cheque / transfer number" />
+          </Field>
+          <Field label="Remarks (optional)">
+            <textarea className="input" rows={3} value={bulkRemarks} onChange={(e) => setBulkRemarks(e.target.value)} />
+          </Field>
+        </div>
+      </Modal>
+
+      <Modal
+        open={bulkRejecting}
+        onClose={() => setBulkRejecting(false)}
+        title={`Reject ${eligibleSelected.length} payment order${eligibleSelected.length === 1 ? '' : 's'}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkRejecting(false)} disabled={bulkBusy}>Cancel</Button>
+            <Button variant="danger" onClick={bulkRejectSubmit} disabled={bulkBusy}>
+              <X size={15} /> {bulkBusy ? 'Rejecting…' : `Reject ${eligibleSelected.length}`}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm">
+          <p className="text-[var(--text-dim)]">The same reason will be applied to all selected payment orders.</p>
+          <Field label="Reason" required>
+            <textarea className="input" rows={3} value={bulkRejectReason} onChange={(e) => setBulkRejectReason(e.target.value)} placeholder="Why finance is rejecting these pay orders" />
+          </Field>
+        </div>
+      </Modal>
 
       <Modal
         open={!!clearing}

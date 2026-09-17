@@ -74,3 +74,97 @@ export function normalizePoStatus(status: unknown): PoStatus {
   if (s === PO_STATUS.Cleared || s === PO_STATUS.Rejected) return s
   return PO_STATUS.Generated
 }
+
+export function isAwaitingFinance(status: unknown): boolean {
+  return normalizePoStatus(status) === PO_STATUS.Generated
+}
+
+export type ReleasePatchInput = {
+  email?: string | null
+  now: string
+  releasedAmount: number
+  releasedVia?: string | null
+  releaseReference?: string | null
+  remarks?: string | null
+}
+
+export type PoVersionPatch = {
+  status: PoStatus
+  finance_approved_by: string | null
+  finance_approved_at: string
+  finance_remarks: string | null
+  released_amount: number | null
+  released_by: string | null
+  released_at: string | null
+  released_via: string | null
+  release_reference: string | null
+}
+
+export function releasePatch(input: ReleasePatchInput): PoVersionPatch {
+  const email = input.email ?? null
+  return {
+    status: PO_STATUS.Cleared,
+    finance_approved_by: email,
+    finance_approved_at: input.now,
+    finance_remarks: input.remarks ?? null,
+    released_amount: input.releasedAmount,
+    released_by: email,
+    released_at: input.now,
+    released_via: input.releasedVia ?? null,
+    release_reference: input.releaseReference ?? null,
+  }
+}
+
+export type RejectPatchInput = {
+  email?: string | null
+  now: string
+  reason: string
+}
+
+export function rejectPatch(input: RejectPatchInput): PoVersionPatch {
+  return {
+    status: PO_STATUS.Rejected,
+    finance_approved_by: input.email ?? null,
+    finance_approved_at: input.now,
+    finance_remarks: input.reason,
+    released_amount: null,
+    released_by: null,
+    released_at: null,
+    released_via: null,
+    release_reference: null,
+  }
+}
+
+export type PoBulkOutcome = 'succeeded' | 'skipped' | 'failed'
+
+export type PoBulkResult = {
+  serial?: string | null
+  outcome: PoBulkOutcome
+}
+
+export type PoBulkSummary = {
+  succeeded: number
+  skipped: number
+  failed: number
+  skippedSerials: string[]
+  failedSerials: string[]
+}
+
+export function bulkSummary(results: PoBulkResult[]): PoBulkSummary {
+  const summary: PoBulkSummary = { succeeded: 0, skipped: 0, failed: 0, skippedSerials: [], failedSerials: [] }
+  for (const result of results) {
+    if (result.outcome === 'succeeded') {
+      summary.succeeded += 1
+      continue
+    }
+    const serial = String(result.serial ?? '').trim()
+    if (result.outcome === 'skipped') {
+      summary.skipped += 1
+      if (serial) summary.skippedSerials.push(serial)
+    } else {
+      summary.failed += 1
+      if (serial) summary.failedSerials.push(serial)
+    }
+  }
+  return summary
+}

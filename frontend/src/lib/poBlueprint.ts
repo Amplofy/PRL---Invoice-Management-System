@@ -319,36 +319,12 @@ export function parsePoTemplate(raw: string | null | undefined): PoTemplateConfi
   }
 }
 
-function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): string {
-  const value = (key: string): string => (key && ctx[key] ? ctx[key] : '')
+function ctxValue(ctx: Record<string, string>, key: string): string {
+  return key && ctx[key] ? ctx[key] : ''
+}
 
-  const rows = config.rows.filter((row) => row.enabled !== false && value(row.placeholder))
-  const rowsHtml =
-    rows
-      .map((row, index) => {
-        const content = value(row.placeholder)
-        const codes =
-          index === 0
-            ? `<td class="code">${value(config.orderNumberField) || '&nbsp;'}</td>
-          <td class="code">${value(config.costCenterField) || '&nbsp;'}</td>
-          <td class="code">${value(config.costElementField) || '&nbsp;'}</td>
-          <td class="num">${value(config.amountField) || '&nbsp;'}</td>`
-            : '<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>'
-        return `<tr>
-          <td class="lead"><span class="cap">${esc(row.caption)}</span><span class="val">${content}</span></td>
-          ${codes}
-        </tr>`
-      })
-      .join('\n        ')
-
-  const signatories = config.signatories.filter((label) => clean(label)).slice(0, 4)
-  const sigHtml = signatories
-    .map(
-      (label) =>
-        `<div class="sig"><div class="sig-role">${esc(label)}</div><div class="sig-space"></div><div class="sig-line">Signature &amp; Date</div></div>`,
-    )
-    .join('\n        ')
-
+/** The reusable style block shared by the single and batched print documents. */
+export function poStyleHtml(config: PoTemplateConfig): string {
   const rowHeight = Number(config.rowHeight)
   const fontSize = Number(config.fontSize)
   const spacing = [
@@ -358,15 +334,7 @@ function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): st
     .filter(Boolean)
     .join('\n    ')
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>${esc(config.title)} ${value('poNo')}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <style>
+  return `  <style>
     :root {
       --ink: #1f2937;
       --ink-strong: #111827;
@@ -568,11 +536,53 @@ function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): st
     .remarks .note { margin-top: 4px; color: var(--ink-strong); font-weight: 600; }
     .fd { margin-top: 10px; font-size: 8px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
     @media print { .sheet { width: auto; } }
+    @media print { .batch-item { break-after: page; } .batch-item:last-child { break-after: auto; } }
     ${spacing}
-  </style>
-</head>
-<body>
-  <div class="sheet">
+  </style>`
+}
+
+function printScript(): string {
+  return `  <script>
+    (function () {
+      var go = function () { window.print(); };
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(go);
+      else go();
+    })();
+  </script>`
+}
+
+/** The reusable sheet markup for one payment order. */
+export function poSheetHtml(config: PoTemplateConfig, ctx: Record<string, string>): string {
+  const value = (key: string): string => ctxValue(ctx, key)
+
+  const rows = config.rows.filter((row) => row.enabled !== false && value(row.placeholder))
+  const rowsHtml =
+    rows
+      .map((row, index) => {
+        const content = value(row.placeholder)
+        const codes =
+          index === 0
+            ? `<td class="code">${value(config.orderNumberField) || '&nbsp;'}</td>
+          <td class="code">${value(config.costCenterField) || '&nbsp;'}</td>
+          <td class="code">${value(config.costElementField) || '&nbsp;'}</td>
+          <td class="num">${value(config.amountField) || '&nbsp;'}</td>`
+            : '<td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>'
+        return `<tr>
+          <td class="lead"><span class="cap">${esc(row.caption)}</span><span class="val">${content}</span></td>
+          ${codes}
+        </tr>`
+      })
+      .join('\n        ')
+
+  const signatories = config.signatories.filter((label) => clean(label)).slice(0, 4)
+  const sigHtml = signatories
+    .map(
+      (label) =>
+        `<div class="sig"><div class="sig-role">${esc(label)}</div><div class="sig-space"></div><div class="sig-line">Signature &amp; Date</div></div>`,
+    )
+    .join('\n        ')
+
+  return `  <div class="sheet">
     <header class="masthead">
       <div class="brand">
         ${value('logoUrl') ? `<img src="${value('logoUrl')}" alt="" />` : ''}
@@ -661,14 +671,23 @@ function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): st
       ${esc(config.remarksText)}
       ${value('remarks') ? `<div class="note">${value('remarks')}</div>` : ''}
     </div>
-  </div>
-  <script>
-    (function () {
-      var go = function () { window.print(); };
-      if (document.fonts && document.fonts.ready) document.fonts.ready.then(go);
-      else go();
-    })();
-  </script>
+  </div>`
+}
+
+function renderPoHtml(config: PoTemplateConfig, ctx: Record<string, string>): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${esc(config.title)} ${ctxValue(ctx, 'poNo')}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+${poStyleHtml(config)}
+</head>
+<body>
+${poSheetHtml(config, ctx)}
+${printScript()}
 </body>
 </html>`
 }
@@ -677,11 +696,46 @@ export function paymentOrderBlueprintHtml(order: PoPrintOrder, extras: PoPrintEx
   return renderPoHtml(parsePoTemplate(template), buildContext(order, extras))
 }
 
-export function openPaymentOrderPrint(order: PoPrintOrder, extras: PoPrintExtras, template?: string | null): void {
+export type PoPrintBatchItem = { order: PoPrintOrder; extras: PoPrintExtras }
+
+/** One document holding one sheet per item, printed with a single dialog. */
+export function paymentOrderBatchHtml(items: PoPrintBatchItem[], template?: string | null): string {
+  const config = parsePoTemplate(template)
+  const sheets = items
+    .map((item) => `  <div class="batch-item">\n${poSheetHtml(config, buildContext(item.order, item.extras))}\n  </div>`)
+    .join('\n')
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${esc(config.title)} (${items.length})</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+${poStyleHtml(config)}
+</head>
+<body>
+${sheets}
+${printScript()}
+</body>
+</html>`
+}
+
+export function openPaymentOrderPrint(order: PoPrintOrder, extras: PoPrintExtras, template?: string | null): boolean {
   const win = window.open('', '_blank', 'width=900,height=1200')
-  if (!win) return
+  if (!win) return false
   win.document.write(paymentOrderBlueprintHtml(order, extras, template))
   win.document.close()
+  return true
+}
+
+export function openPaymentOrderPrintBatch(items: PoPrintBatchItem[], template?: string | null): boolean {
+  if (items.length === 0) return false
+  const win = window.open('', '_blank', 'width=900,height=1200')
+  if (!win) return false
+  win.document.write(paymentOrderBatchHtml(items, template))
+  win.document.close()
+  return true
 }
 
 /** Sample data so the admin can preview a template without leaving Administration. */
