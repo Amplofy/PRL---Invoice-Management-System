@@ -12,6 +12,8 @@ import { invoicesRouter } from './routes/invoices.js'
 import { reportsRouter } from './routes/reports.js'
 import { paymentOrdersRouter } from './routes/paymentOrders.js'
 import { fyLockRouter } from './routes/fyLock.js'
+import { authRouter } from './routes/auth.js'
+import { withRequestContext } from './services/requestContext.js'
 
 export const app = express()
 
@@ -21,11 +23,13 @@ app.use(
   })
 )
 app.use(express.json({ limit: '5mb' }))
+app.use(withRequestContext())
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'prl-eoms-backend' })
 })
 
+app.use('/api/auth', authRouter)
 app.use('/api/import', importRouter)
 app.use('/api/compare', compareRouter)
 app.use('/api/uploads', uploadsRouter)

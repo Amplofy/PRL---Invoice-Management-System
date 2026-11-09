@@ -180,13 +180,13 @@ export function doughnutSlice() {
   }
 }
 
-export function waveLine(color: string, _fill = true) {
+export function waveLine(color: string, fill = true) {
   const fillColor = color.startsWith('#') && color.length === 7 ? `${color}33` : color
   return {
     borderColor: color,
     backgroundColor: fillColor,
-    fill: false,
-    tension: 0,
+    fill,
+    tension: 0.28,
     borderWidth: 2.25,
     pointRadius: 3,
     pointHoverRadius: 5.5,

@@ -11,6 +11,8 @@ import StatusBadge from '../components/ui/StatusBadge'
 import Modal from '../components/ui/Modal'
 import Button from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
+import DateField from '../components/ui/DateField'
+import SelectMenu from '../components/ui/SelectMenu'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
@@ -412,7 +414,7 @@ export default function ContractsPage() {
 
       <GlassCard className="overflow-hidden">
         <ColumnResizeProvider storageKey="prl-eoms-colw-contracts">
-        <div className="table-scroll">
+        <div className={`table-scroll${col.hasExtra ? ' has-extra' : ''}`}>
           <table className="data-table">
             <thead>
               <tr>
@@ -671,28 +673,28 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
           <input className="input" value={form.contract_no} onChange={set('contract_no')} />
         </Field>
         <Field label="Vendor" required>
-          <select className="input" value={form.vendor_id} onChange={set('vendor_id')}>
-            <option value="">—</option>
-            {vendors.map((v) => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={form.vendor_id}
+            placeholder="—"
+            options={vendors.map((v) => ({ value: v.id, label: v.name }))}
+            onChange={(vendor_id) => setForm((f) => ({ ...f, vendor_id }))}
+          />
         </Field>
         <Field label="Start Date">
-          <input type="date" className="input" value={form.start_date} onChange={set('start_date')} />
+          <DateField value={form.start_date} onChange={(start_date) => setForm((f) => ({ ...f, start_date }))} />
         </Field>
         <Field label="End Date">
-          <input type="date" className="input" value={form.end_date} onChange={set('end_date')} />
+          <DateField value={form.end_date} onChange={(end_date) => setForm((f) => ({ ...f, end_date }))} />
         </Field>
         <Field label="Value (Rs)">
           <input type="number" className="input" value={form.value} onChange={set('value')} />
         </Field>
         <Field label="Status">
-          <select className="input" value={form.status} onChange={set('status')}>
-            {['Open', 'Closed', 'Expired'].map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <SelectMenu
+            value={form.status}
+            options={['Open', 'Closed', 'Expired'].map((s) => ({ value: s, label: s }))}
+            onChange={(status) => setForm((f) => ({ ...f, status }))}
+          />
         </Field>
         <div className="sm:col-span-2">
           <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
@@ -704,38 +706,26 @@ function ContractFormModal({ open, contract, vendors, onClose, onSaved }: Contra
               const t3s = t3Options(matrix, row.t1, row.t2)
               return (
                 <div key={`svc-${idx}`} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                  <select
-                    className="input"
+                  <SelectMenu
                     value={row.t1}
-                    onChange={(e) => setService(idx, { t1: e.target.value, t2: '', t3: '' })}
-                  >
-                    <option value="">Type 1…</option>
-                    {t1Options(matrix).map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="input"
+                    placeholder="Type 1…"
+                    options={t1Options(matrix).map((o) => ({ value: o, label: o }))}
+                    onChange={(t1) => setService(idx, { t1, t2: '', t3: '' })}
+                  />
+                  <SelectMenu
                     value={row.t2}
                     disabled={!row.t1}
-                    onChange={(e) => setService(idx, { t2: e.target.value, t3: '' })}
-                  >
-                    <option value="">{row.t1 ? 'Type 2…' : 'Select type 1 first'}</option>
-                    {t2s.map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
-                  <select
-                    className="input"
+                    placeholder={row.t1 ? 'Type 2…' : 'Select type 1 first'}
+                    options={t2s.map((o) => ({ value: o, label: o }))}
+                    onChange={(t2) => setService(idx, { t2, t3: '' })}
+                  />
+                  <SelectMenu
                     value={row.t3}
                     disabled={!row.t2}
-                    onChange={(e) => setService(idx, { t3: e.target.value })}
-                  >
-                    <option value="">{row.t2 ? (t3s.length ? 'Type 3…' : '—') : 'Select type 2 first'}</option>
-                    {t3s.map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
+                    placeholder={row.t2 ? (t3s.length ? 'Type 3…' : '—') : 'Select type 2 first'}
+                    options={t3s.map((o) => ({ value: o, label: o }))}
+                    onChange={(t3) => setService(idx, { t3 })}
+                  />
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"

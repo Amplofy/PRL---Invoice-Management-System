@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { FileSpreadsheet } from 'lucide-react'
 import Modal from './ui/Modal'
 import Button from './ui/Button'
+import { Select } from './ui/Field'
 import { QUARTERS, currentFiscalYear } from '../lib/fiscal'
 import {
   REPORT_GROUP_BY,
@@ -155,38 +156,38 @@ export default function GenerateReportDialog({
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Quarter
-            <select className="input mt-2" value={quarter} onChange={(e) => setQuarter(e.target.value)}>
+            <Select className="input mt-2" value={quarter} onChange={(e) => setQuarter(e.target.value)}>
               <option value="all">All quarters</option>
               {QUARTERS.map((q) => (
                 <option key={q} value={q}>
                   {q}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Metric
-            <select className="input mt-2" value={metric} onChange={(e) => setMetric(e.target.value as typeof metric)}>
+            <Select className="input mt-2" value={metric} onChange={(e) => setMetric(e.target.value as typeof metric)}>
               <option value="spend">Spend</option>
               <option value="invoices">Volume</option>
               <option value="approved">Approved</option>
-            </select>
+            </Select>
           </label>
           <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
             Ledger subtotals
-            <select className="input mt-2" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+            <Select className="input mt-2" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
               {REPORT_GROUP_BY.map((g) => (
                 <option key={g.id || 'none'} value={g.id}>
                   {g.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
 
         <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
           Vendor
-          <select
+          <Select
             className="input mt-2"
             value={vendors[0] ?? ''}
             onChange={(e) => setVendors(e.target.value ? [e.target.value] : [])}
@@ -197,12 +198,12 @@ export default function GenerateReportDialog({
                 {v}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
           Contract
-          <select
+          <Select
             className="input mt-2"
             value={contractIds[0] ?? ''}
             onChange={(e) => setContractIds(e.target.value ? [e.target.value] : [])}
@@ -213,12 +214,12 @@ export default function GenerateReportDialog({
                 {cn.contract_no}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <label className="block text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
           Cost element
-          <select
+          <Select
             className="input mt-2"
             value={costElements[0] ?? ''}
             onChange={(e) => setCostElements(e.target.value ? [e.target.value] : [])}
@@ -229,7 +230,7 @@ export default function GenerateReportDialog({
                 {ce}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <fieldset>

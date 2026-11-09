@@ -11,6 +11,7 @@ import {
   isAccrualOpenInvoice,
   isClosedFiscalYear,
   isMiscCostElement,
+  isOpexSpendStatus,
   shiftFiscalYear,
   type FiscalQuarter,
 } from './fiscal'
@@ -339,6 +340,7 @@ function rankedSheet(
     rows: out,
     grandTotal: true,
     tabColor: 'FF1D4E89',
+    chart: { type: 'bar', title, categoryKey: label, valueKey: 'Amount (Rs)' },
   }
 }
 
@@ -365,6 +367,7 @@ function monthlySheet(rows: ReportInvoice[], filters: ReportExportFilters): Anal
       'Approved (Rs)': money(months.get(idx)?.approved ?? 0),
     })),
     grandTotal: true,
+    chart: { type: 'col', title: 'Monthly burn', categoryKey: 'Month', valueKey: 'Amount (Rs)' },
   }
 }
 
@@ -435,6 +438,7 @@ function mixSheet(rows: ReportInvoice[], yearBudgets: ReportBudget[], fySet: Set
   let opexBudget = 0
   let miscBudget = 0
   for (const inv of rows) {
+    if (!isOpexSpendStatus(inv.status)) continue
     if (costCategory(inv.cost_element) === 'OPEX') opex += Number(inv.amount ?? 0)
   }
   for (const b of yearBudgets) {
@@ -455,6 +459,7 @@ function mixSheet(rows: ReportInvoice[], yearBudgets: ReportBudget[], fySet: Set
       { Category: 'Misc.', 'Amount (Rs)': money(miscBudget), 'Share %': total ? money((miscBudget / total) * 100) : 0, Note: 'Misc. cost-element budget' },
     ],
     grandTotal: true,
+    chart: { type: 'pie', title: 'Expense mix', categoryKey: 'Category', valueKey: 'Amount (Rs)' },
   }
 }
 
@@ -675,6 +680,7 @@ function agingSheets(rows: ReportInvoice[]): AnalysisSheet[] {
       }
     }),
     grandTotal: true,
+    chart: { type: 'col', title: 'AP aging', categoryKey: 'Bucket', valueKey: 'Amount (Rs)' },
   }
   const detail: AnalysisSheet = {
     name: 'Aging detail',

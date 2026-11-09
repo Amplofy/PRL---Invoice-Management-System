@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { supabase, isDemoMode, enterDemo } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { apiPost, ApiError } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
 import BrandLogo from '../components/BrandLogo'
 import PRLFlame from '../components/ui/PRLFlame'
@@ -66,13 +67,33 @@ function AuthPanel() {
       return
     }
     setLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    setLoading(false)
-    if (error) {
-      toast.error('Sign-in failed', error.message)
-      return
-    }
     try {
+      let signedIn = false
+      try {
+        const data = await apiPost<{
+          session?: { access_token: string; refresh_token: string }
+        }>('/api/auth/login', { email, password })
+        if (data.session) {
+          const { error } = await supabase.auth.setSession({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+          })
+          if (error) throw error
+          signedIn = true
+        }
+      } catch (err) {
+        if (err instanceof ApiError && (err.detail as { code?: string } | undefined)?.code === 'LOGIN_FALLBACK') {
+          const { error } = await supabase.auth.signInWithPassword({ email, password })
+          if (error) throw error
+          signedIn = true
+        } else {
+          throw err
+        }
+      }
+      if (!signedIn) {
+        toast.error('Sign-in failed', 'No session was returned')
+        return
+      }
       const me = await refresh()
       if (!me) {
         toast.error('Sign-in failed', 'This account cannot access the application')
@@ -81,7 +102,15 @@ function AuthPanel() {
       toast.success('Welcome back')
       navigate('/control-tower', { replace: true })
     } catch (err) {
-      toast.error('Sign-in failed', (err as Error).message)
+      const detail = err instanceof ApiError ? (err.detail as { remainingAttempts?: number } | undefined) : undefined
+      const remaining = detail?.remainingAttempts
+      const extra =
+        typeof remaining === 'number' && remaining > 0
+          ? `${remaining} attempt${remaining === 1 ? '' : 's'} remaining before a 15-minute lockout`
+          : undefined
+      toast.error('Sign-in failed', extra ? `${(err as Error).message}. ${extra}` : (err as Error).message)
+    } finally {
+      setLoading(false)
     }
   }
 

@@ -27,7 +27,7 @@ import {
 import ThemePanel from './ThemePanel'
 import CommandPalette, { type CommandItem } from './ui/CommandPalette'
 import Notifications from './ui/Notifications'
-import { useAuth } from '../lib/auth'
+import { useAuth, isAdmin, canImportData, hasAnyPermission } from '../lib/auth'
 import { initials } from '../lib/format'
 import BrandLogo from './BrandLogo'
 import { SidebarNav } from './Sidebar'
@@ -90,6 +90,12 @@ export default function Header() {
   const { user, signOut, demo } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
+  const paletteItems = COMMAND_ITEMS.filter((item) => {
+    if (item.id === 'import') return canImportData(user)
+    if (item.id === 'admin') return isAdmin(user?.role)
+    if (item.id === 'users') return hasAnyPermission(user, ['users.manage', 'roles.manage'])
+    return true
+  })
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -283,7 +289,7 @@ export default function Header() {
           document.body,
         )}
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={COMMAND_ITEMS} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={paletteItems} />
     </>
   )
 }

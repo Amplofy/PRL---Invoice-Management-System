@@ -11,7 +11,9 @@ import {
   matrixToRecords,
   mergeGroupRows,
   pickBestGroup,
+  splitRepeatedHeaderTables,
   textToMatrix,
+  trimTableEdges,
 } from '../src/services/parseTable.js'
 
 test('parseCsv parses basic CSV with headers', () => {
@@ -144,6 +146,31 @@ trailer<</Root 1 0 R>>
   const groups = await parsePdfGroups(buf)
   assert.ok(groups.length >= 1, 'expected at least one page group')
   assert.match(groups[0]!.name, /Page /)
+})
+
+test('trimTableEdges drops single-cell title and footer lines', () => {
+  const trimmed = trimTableEdges([
+    ['Monthly statement'],
+    ['Invoice', 'Amount', 'Date'],
+    ['INV-1', '100', '2026-01-01'],
+    ['Page 1 of 1'],
+  ])
+  assert.equal(trimmed[0]![0], 'Invoice')
+  assert.equal(trimmed[trimmed.length - 1]![0], 'INV-1')
+})
+
+test('splitRepeatedHeaderTables splits stacked tables that repeat the header', () => {
+  const tables = splitRepeatedHeaderTables([
+    ['Invoice', 'Amount'],
+    ['INV-1', '100'],
+    ['INV-2', '200'],
+    ['Invoice', 'Amount'],
+    ['INV-3', '300'],
+  ])
+  assert.equal(tables.length, 2)
+  assert.equal(tables[0]!.length, 3)
+  assert.equal(tables[1]!.length, 2)
+  assert.equal(tables[1]![1]![0], 'INV-3')
 })
 
 test('parseFile dispatches by extension', async () => {

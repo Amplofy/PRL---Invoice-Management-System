@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import multer from 'multer'
-import { authRequired, requireRole } from '../middleware/auth.js'
+import { authRequired, requirePermission, requireRole, isAdminRole } from '../middleware/auth.js'
 import { parseFile } from '../services/parse.js'
 import {
   applyImportRows,
@@ -21,6 +21,7 @@ export const importRouter = Router()
 importRouter.post(
   '/parse',
   authRequired,
+  requirePermission('import.data'),
   upload.single('file'),
   async (req, res, next) => {
     try {
@@ -57,7 +58,7 @@ importRouter.post(
  * - duplicates present (append mode) or non-admin submitter -> stored as a
  *   pending batch that an admin must approve before anything touches the tables
  */
-importRouter.post('/confirm', authRequired, async (req, res, next) => {
+importRouter.post('/confirm', authRequired, requirePermission('import.data'), async (req, res, next) => {
   try {
     const user = (req as AuthedRequest).user
     const body = req.body as ImportConfirmBody
@@ -70,7 +71,7 @@ importRouter.post('/confirm', authRequired, async (req, res, next) => {
     const mode = body.mode === 'overwrite' ? 'overwrite' : 'append'
 
     const conflicts = await detectConflicts(type, rows)
-    const isAdmin = user.role === 'admin'
+    const isAdmin = isAdminRole(user.role)
     const autoApprove = isAdmin && (conflicts.length === 0 || mode === 'overwrite')
 
     let imported = 0

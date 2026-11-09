@@ -9,6 +9,7 @@ import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import Button from '../components/ui/Button'
 import MappingTable from '../components/ui/MappingTable'
+import { Select } from '../components/ui/Field'
 import { useAuth, isAdmin } from '../lib/auth'
 import {
   readWorkbook, detectHeaderRow, buildColumns, dataRows, type ParsedWorkbook, type SourceColumn,
@@ -504,9 +505,9 @@ export default function ImportPage() {
               <span>·</span>
               <label className="flex items-center gap-1.5">
                 Header row
-                <select
+                <Select
                   className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-xs"
-                  value={headerRowIdx}
+                  value={String(headerRowIdx)}
                   onChange={(e) => changeHeaderRow(Number(e.target.value))}
                 >
                   {Array.from({ length: Math.min(10, (wb?.sheets[sheetIdx].matrix.length ?? 1)) }, (_, i) => (
@@ -514,7 +515,7 @@ export default function ImportPage() {
                       Row {i + 1}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             </div>
           </div>

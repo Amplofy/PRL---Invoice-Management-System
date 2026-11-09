@@ -14,8 +14,11 @@ import {
   AlertTriangle,
   RotateCcw,
   Wallet,
+  Download,
+  ArrowUpDown,
 } from 'lucide-react'
 import { apiGet } from '../lib/api'
+import { downloadTableWorkbook } from '../lib/analysisWorkbook'
 import { formatMoney, formatDate, timeAgo } from '../lib/format'
 import { useThemeColors } from '../lib/themeColors'
 import { currentFiscalYear, elapsedFyMonths, fiscalShortRange, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
@@ -30,8 +33,11 @@ import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import Reveal from '../components/ui/Reveal'
 import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
+import ActionMenu from '../components/ui/ActionMenu'
+import { type InvoiceListQuery } from '../lib/invoiceListQuery'
 import { InvoiceValueChart } from '../components/ui/InvoiceValueChart'
 import { HudRing } from '../components/ui/HudViz'
+import { Select } from '../components/ui/Field'
 
 interface DashboardData {
   kpis: {
@@ -146,7 +152,7 @@ export default function DashboardPage() {
   const [accrualSort, setAccrualSort] = useState<AccrualSortKey>('fy')
   const [accrualFyFilter, setAccrualFyFilter] = useState('all')
   const [accrualMinBalance, setAccrualMinBalance] = useState('')
-  const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[] } | null>(null)
+  const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[]; listQuery?: InvoiceListQuery } | null>(null)
   const c = useThemeColors()
 
   const load = useCallback(async () => {
@@ -156,7 +162,7 @@ export default function DashboardPage() {
       const d = await apiGet<DashboardData>('/api/reports/dashboard')
       setData(d)
       const [inv, bud, po, acc] = await Promise.all([
-        apiGet<{ invoices: Array<Record<string, unknown>> }>(invoiceListPath()),
+        apiGet<{ invoices: Array<Record<string, unknown>> }>(invoiceListPath({ limit: 5000 })),
         apiGet<{ budgets: Array<{ fy: string; amount: number }> }>('/api/budgets'),
         apiGet<{ paymentOrders: Array<{ amount?: number | null; released_amount?: number | null; invoices?: { invoice_date?: string | null; service_from?: string | null; service_to?: string | null } | null }> }>('/api/payment-orders'),
 
@@ -286,7 +292,12 @@ export default function DashboardPage() {
     const month = trendData.keys[idx]
     if (!month) return
     const rows = fyInvoices.filter((i) => String(invoiceBudgetDate(i) ?? '').startsWith(month)).map(toDrillRow)
-    setDrill({ title: `${hudFy} · ${trendData.labels[idx] ?? month}`, subtitle: `${rows.length} invoices by service end`, rows })
+    setDrill({
+      title: `${hudFy} · ${trendData.labels[idx] ?? month}`,
+      subtitle: `${rows.length} invoices by service end`,
+      rows,
+      listQuery: { fy: hudFy, month, sort: 'invoice_date', dir: 'desc' },
+    })
   }
 
   const onStatusClick = (index: number) => {
@@ -298,6 +309,7 @@ export default function DashboardPage() {
       title: `${st} · ${hudFy}`,
       subtitle: `${rows.length} invoices · Rs ${formatMoney(rows.reduce((s, r) => s + r.amount, 0))}`,
       rows,
+      listQuery: { fy: hudFy, status: st, sort: 'amount', dir: 'desc' },
     })
   }
 
@@ -437,10 +449,39 @@ export default function DashboardPage() {
       {/* Charts bento */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <Reveal className="lg:col-span-2" delay={80}>
-          <GlassCard className="h-full p-5 md:p-6" hoverable>
+          <GlassCard className="power-graph h-full p-5 md:p-6" hoverable>
             <div className="mb-1 flex items-center justify-between">
               <div className="section-title mb-0!">{hudFy} invoice value</div>
-              <span className="badge badge-neutral">click a point</span>
+              <ActionMenu
+                label="Actions"
+                icon={<Download size={14} />}
+                title="Chart actions"
+                items={[
+                  {
+                    key: 'excel',
+                    label: 'Export Excel',
+                    disabled: !hasTrendData,
+                    onSelect: () => {
+                      void downloadTableWorkbook({
+                        filename: `PRL-EOMS-${hudFy}-invoice-value.xlsx`,
+                        title: `${hudFy} invoice value`,
+                        subtitle: 'Monthly invoice value by service end',
+                        columns: [
+                          { key: 'Month', header: 'Month', width: 16 },
+                          { key: 'Invoices', header: 'Invoices', kind: 'int', width: 12 },
+                          { key: 'Amount (Rs)', header: 'Amount (Rs)', kind: 'money', width: 16 },
+                        ],
+                        rows: trendData.labels.map((label, i) => ({
+                          Month: label,
+                          Invoices: trendData.counts[i] ?? 0,
+                          'Amount (Rs)': trendData.totals[i] ?? 0,
+                        })),
+                        grandTotal: true,
+                      })
+                    },
+                  },
+                ]}
+              />
             </div>
             <div className="h-[300px]">
               {hasTrendData ? (
@@ -464,10 +505,9 @@ export default function DashboardPage() {
         </Reveal>
 
         <Reveal delay={140}>
-          <GlassCard className="h-full overflow-hidden p-5 md:p-6" hoverable>
+          <GlassCard className="power-graph h-full overflow-hidden p-5 md:p-6" hoverable>
             <div className="mb-1 flex items-center justify-between">
               <div className="section-title mb-0!">Status Breakdown</div>
-              <span className="badge badge-neutral">click a slice</span>
             </div>
             <div className="min-h-[300px] px-1">
               {statusTotal > 0 ? (
@@ -590,6 +630,7 @@ export default function DashboardPage() {
                               title: `${u.contractNo} · ${hudFy}`,
                               subtitle: `${rows.length} invoices this fiscal year · Rs ${formatMoney(u.used)} used`,
                               rows,
+                              listQuery: { fy: hudFy, contract: u.contractNo, sort: 'amount', dir: 'desc' },
                             })
                           }}
                         >
@@ -627,6 +668,7 @@ export default function DashboardPage() {
                               title: `Invoices · ${m.label} ${hudFy}`,
                               subtitle: `${rows.length} invoices · Rs ${formatMoney(m.total)}`,
                               rows,
+                              listQuery: { fy: hudFy, month: m.key, sort: 'invoice_date', dir: 'desc' },
                             })
                           }}
                         >
@@ -696,12 +738,12 @@ export default function DashboardPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-bold">Past-year accruals</div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <select className="input input-fit py-1!" value={accrualFyFilter} onChange={(e) => setAccrualFyFilter(e.target.value)}>
+                  <Select className="input input-fit py-1!" value={accrualFyFilter} onChange={(e) => setAccrualFyFilter(e.target.value)}>
                     <option value="all">All closed FYs</option>
                     {accrualYears.filter((y) => isClosedFiscalYear(y.fy)).map((y) => (
                       <option key={y.fy} value={y.fy}>{y.fy}</option>
                     ))}
-                  </select>
+                  </Select>
                   <input
                     className="input input-fit-sm py-1!"
                     type="number"
@@ -710,13 +752,18 @@ export default function DashboardPage() {
                     value={accrualMinBalance}
                     onChange={(e) => setAccrualMinBalance(e.target.value)}
                   />
-                  <select className="input input-fit py-1!" value={accrualSort} onChange={(e) => setAccrualSort(e.target.value as AccrualSortKey)}>
-                    <option value="fy">Sort FY</option>
-                    <option value="secured">Sort accrual</option>
-                    <option value="unpaid">Sort unpaid</option>
-                    <option value="consumed">Sort released</option>
-                    <option value="balance">Sort balance</option>
-                  </select>
+                  <ActionMenu
+                    label="Sort"
+                    icon={<ArrowUpDown size={14} />}
+                    activeKey={accrualSort}
+                    items={[
+                      { key: 'fy', label: 'Fiscal year', onSelect: () => setAccrualSort('fy') },
+                      { key: 'secured', label: 'Sundry accrual', onSelect: () => setAccrualSort('secured') },
+                      { key: 'unpaid', label: 'Unpaid', onSelect: () => setAccrualSort('unpaid') },
+                      { key: 'consumed', label: 'Released', onSelect: () => setAccrualSort('consumed') },
+                      { key: 'balance', label: 'Balance', onSelect: () => setAccrualSort('balance') },
+                    ]}
+                  />
                 </div>
               </div>
               <p className="mt-1 text-xs text-[var(--text-dim)]">
@@ -820,6 +867,7 @@ export default function DashboardPage() {
         title={drill?.title ?? ''}
         subtitle={drill?.subtitle ?? ''}
         rows={drill?.rows ?? []}
+        listQuery={drill?.listQuery}
         onClose={() => setDrill(null)}
       />
     </div>

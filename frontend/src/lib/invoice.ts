@@ -35,6 +35,9 @@ export interface Utilization {
 export interface UtilizationInvoice {
   id?: string
   invoice_no?: string | null
+  serial_no?: string | null
+  processing_date?: string | null
+  invoice_date?: string | null
   amount: number
   status: string
   contract_id: string | null
@@ -325,8 +328,13 @@ export function validateInvoice(
 
 export interface SerialInvoiceLike {
   id?: string
+  processing_date?: string | null
   invoice_date?: string | null
   serial_no?: string | null
+}
+
+function serialAnchorDate(inv: SerialInvoiceLike): string | null | undefined {
+  return inv.processing_date || inv.invoice_date
 }
 
 /**
@@ -341,25 +349,26 @@ export function fiscalYearTag(dateStr: string | undefined | null): string {
 
 /**
  * Next serial number in the "XXX - YY" format, where XXX is the running
- * invoice count for the Gregorian year of the invoice date and YY is the
+ * invoice count for the Gregorian year of the processing date and YY is the
  * fiscal-year tag. Picks up the highest existing ordinal so deleted rows
  * cannot cause duplicates.
  */
 export function nextSerialNo(
-  invoiceDate: string | undefined | null,
+  processingDate: string | undefined | null,
   invoices: SerialInvoiceLike[],
   excludeId?: string,
 ): string {
-  const d = invoiceDate ? calendarDateAtNoon(invoiceDate) ?? new Date(invoiceDate) : new Date()
+  const d = processingDate ? calendarDateAtNoon(processingDate) ?? new Date(processingDate) : new Date()
   const safe = Number.isNaN(d.getTime()) ? new Date() : d
-  const year = parseCalendarYmd(invoiceDate ?? '')?.y ?? safe.getFullYear()
+  const year = parseCalendarYmd(processingDate ?? '')?.y ?? safe.getFullYear()
 
   let maxOrdinal = 0
   let count = 0
   for (const i of invoices) {
     if (excludeId && i.id === excludeId) continue
-    const parts = i.invoice_date ? parseCalendarYmd(i.invoice_date) : null
-    const idate = parts ? null : i.invoice_date ? new Date(i.invoice_date) : null
+    const raw = serialAnchorDate(i)
+    const parts = raw ? parseCalendarYmd(raw) : null
+    const idate = parts ? null : raw ? new Date(raw) : null
     const y = parts?.y ?? (idate && !Number.isNaN(idate.getTime()) ? idate.getFullYear() : null)
     if (y !== year) continue
     count += 1
@@ -368,5 +377,5 @@ export function nextSerialNo(
   }
 
   const ordinal = Math.max(maxOrdinal + 1, count + 1)
-  return `${String(ordinal).padStart(3, '0')} - ${fiscalYearTag(invoiceDate)}`
+  return `${String(ordinal).padStart(3, '0')} - ${fiscalYearTag(processingDate)}`
 }

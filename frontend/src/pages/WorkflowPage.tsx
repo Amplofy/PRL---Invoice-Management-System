@@ -13,6 +13,7 @@ import EmptyState from '../components/ui/EmptyState'
 import { useLiveDomain } from '../lib/store'
 import type { BadgeTone } from '../components/ui/StatusBadge'
 import { contractNoOf, vendorNameOf } from '../lib/relations'
+import { Select } from '../components/ui/Field'
 
 interface ServiceMatrixRow {
   id: string
@@ -130,16 +131,16 @@ export default function WorkflowPage() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label>
             <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Type</span>
-            <select className="input" value={t1} onChange={(e) => { setT1(e.target.value); setT2(''); setT3('') }}>
+            <Select className="input" value={t1} onChange={(e) => { setT1(e.target.value); setT2(''); setT3('') }}>
               <option value="">All types</option>
               {t1Options.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Service</span>
-            <select
+            <Select
               className="input"
               value={t2}
               onChange={(e) => { setT2(e.target.value); setT3('') }}
@@ -149,16 +150,16 @@ export default function WorkflowPage() {
               {t2Options.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Detail</span>
-            <select className="input" value={t3} onChange={(e) => setT3(e.target.value)} disabled={!t1}>
+            <Select className="input" value={t3} onChange={(e) => setT3(e.target.value)} disabled={!t1}>
               <option value="">All details</option>
               {t3Options.map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Search</span>

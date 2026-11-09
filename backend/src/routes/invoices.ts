@@ -1,11 +1,12 @@
 import { Router } from 'express'
 import { getSupabase } from '../config/supabase.js'
-import { authRequired } from '../middleware/auth.js'
+import { authRequired, requirePermission } from '../middleware/auth.js'
 import { audit } from '../services/auditService.js'
 import { LOCKED_FY_MESSAGE, fiscalBoundsIso, invoiceBudgetDate, invoiceBudgetFy, writeBlocked, writeBlockedForPayment } from '../services/fyLock.js'
 import type { AuthUser } from '../types/index.js'
 import { invoiceApprovedAmount, PO_STATUS } from '../services/poFinance.js'
 import { normalizeContractEmbed } from '../services/embed.js'
+import { getSetting } from '../services/settingsService.js'
 
 export const invoicesRouter = Router()
 
@@ -15,6 +16,28 @@ function actorKey(req: { user?: AuthUser }): string {
 
 function isAdminRole(role: string | undefined): boolean {
   return role === 'admin' || role === 'superadmin'
+}
+
+function truthySetting(value: string | null | undefined): boolean {
+  const v = String(value ?? '').trim().toLowerCase()
+  return v === 'true' || v === '1' || v === 'yes' || v === 'on'
+}
+
+async function shouldAutoGeneratePo(): Promise<boolean> {
+  const raw = await getSetting('po_auto_generate')
+  if (raw == null || raw === '') return true
+  return truthySetting(raw)
+}
+
+async function autoApproveLimitRs(): Promise<number> {
+  const n = Number(await getSetting('auto_approve_limit'))
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+async function shouldNotifyOnSubmit(): Promise<boolean> {
+  const raw = await getSetting('notify_on_submit')
+  if (raw == null || raw === '') return true
+  return truthySetting(raw)
 }
 
 async function reassignContractVendor(
@@ -48,14 +71,17 @@ async function applyMasterVendorChange(
   return {}
 }
 
-invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
+invoicesRouter.get('/invoices', authRequired, requirePermission('invoice.view'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const { status, contract, search, fy, limit } = req.query as Record<string, string | undefined>
+    const MAX = 10_000
+    const cap = Math.min(Math.max(Number(limit) || MAX, 1), MAX)
     let query = supabase
       .from('invoices')
       .select('*, contracts(contract_no, service, vendor_id, vendors(name, email))')
       .order('created_at', { ascending: false })
+      .limit(cap)
 
     if (status && status !== 'all') query = query.eq('status', status)
     if (contract && contract !== 'all') query = query.eq('contract_id', contract)
@@ -71,8 +97,6 @@ invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
         )
       }
     }
-    const cap = Math.min(Math.max(Number(limit) || 0, 0), 500)
-    if (cap) query = query.limit(cap)
 
     const { data, error } = await query
     if (error) {
@@ -84,18 +108,21 @@ invoicesRouter.get('/invoices', authRequired, async (req, res, next) => {
     if (fy && fy !== 'all') {
       invoices = invoices.filter((row) => invoiceBudgetFy(row) === fy)
     }
+    const total = invoices.length
+    const limited = Boolean(limit) && Number(limit) > 0
+    const sliced = limited ? invoices.slice(0, cap) : invoices
     res.json({
-      invoices: invoices.map((row) => ({ ...row, contracts: normalizeContractEmbed((row as { contracts?: unknown }).contracts) })),
+      invoices: sliced.map((row) => ({ ...row, contracts: normalizeContractEmbed((row as { contracts?: unknown }).contracts) })),
       fy: fy ?? 'all',
-      total: invoices.length,
-      hasMore: Boolean(cap) && invoices.length === cap,
+      total,
+      hasMore: limited ? total > sliced.length : total === cap,
     })
   } catch (err) {
     next(err)
   }
 })
 
-invoicesRouter.get('/invoices/:id', authRequired, async (req, res, next) => {
+invoicesRouter.get('/invoices/:id', authRequired, requirePermission('invoice.view'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const { data, error } = await supabase
@@ -113,7 +140,7 @@ invoicesRouter.get('/invoices/:id', authRequired, async (req, res, next) => {
   }
 })
 
-invoicesRouter.post('/invoices', authRequired, async (req, res, next) => {
+invoicesRouter.post('/invoices', authRequired, requirePermission('invoice.create'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const body = req.body ?? {}
@@ -168,13 +195,47 @@ invoicesRouter.post('/invoices', authRequired, async (req, res, next) => {
       return
     }
     await audit('Create', 'Invoice', data.id, `Invoice ${data.invoice_no} created`)
-    res.status(201).json({ invoice: data })
+    let invoice = data
+    let autoApproved = false
+    let po: { id: string } | null = null
+    const amount = Number(invoice.amount ?? 0)
+    const limit = await autoApproveLimitRs()
+    if (limit > 0 && amount > 0 && amount <= limit) {
+      const now = new Date().toISOString()
+      const { data: approved, error: approveErr } = await supabase
+        .from('invoices')
+        .update({
+          status: 'Approved',
+          approved_by: 'auto-approve',
+          approved_date: now,
+          approved_amount: amount,
+          updated_at: now,
+          updated_by: user?.email,
+        })
+        .eq('id', invoice.id)
+        .select()
+        .single()
+      if (!approveErr && approved) {
+        invoice = approved
+        autoApproved = true
+        await audit('AutoApprove', 'Invoice', invoice.id, `Invoice ${invoice.invoice_no} auto-approved (Rs ${amount} ≤ ${limit})`)
+        if (await shouldAutoGeneratePo()) {
+          const generated = await createPo(supabase, invoice.id, user?.email)
+          if (!generated.error) po = generated.po
+        }
+      }
+    }
+    const notifyApprovers = !autoApproved && (await shouldNotifyOnSubmit())
+    if (notifyApprovers) {
+      await audit('NotifyApprovers', 'Invoice', invoice.id, `Invoice ${invoice.invoice_no} submitted for approval`)
+    }
+    res.status(201).json({ invoice, autoApproved, po, notifyApprovers })
   } catch (err) {
     next(err)
   }
 })
 
-invoicesRouter.put('/invoices/:id', authRequired, async (req, res, next) => {
+invoicesRouter.put('/invoices/:id', authRequired, requirePermission('invoice.update'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const body = req.body ?? {}
@@ -230,7 +291,7 @@ invoicesRouter.put('/invoices/:id', authRequired, async (req, res, next) => {
   }
 })
 
-invoicesRouter.delete('/invoices/:id', authRequired, async (req, res, next) => {
+invoicesRouter.delete('/invoices/:id', authRequired, requirePermission('invoice.delete'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const { data: existing } = await supabase
@@ -307,7 +368,7 @@ async function createPo(
   return { po, created: true }
 }
 
-invoicesRouter.post('/invoices/bulk-approve', authRequired, async (req, res, next) => {
+invoicesRouter.post('/invoices/bulk-approve', authRequired, requirePermission('invoice.approve'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const user = (req as { user?: { id?: string; email?: string } }).user
@@ -350,8 +411,10 @@ invoicesRouter.post('/invoices/bulk-approve', authRequired, async (req, res, nex
       }
       approved++
       await audit('BulkApprove', 'Invoice', id, `Invoice ${inv.invoice_no ?? id} bulk-approved`)
-      const { created } = await createPo(supabase, id, user?.email)
-      if (created) poCreated++
+      if (await shouldAutoGeneratePo()) {
+        const { created } = await createPo(supabase, id, user?.email)
+        if (created) poCreated++
+      }
     }
     res.json({ approved, poCreated, failed })
   } catch (err) {
@@ -359,7 +422,7 @@ invoicesRouter.post('/invoices/bulk-approve', authRequired, async (req, res, nex
   }
 })
 
-invoicesRouter.post('/invoices/bulk-reject', authRequired, async (req, res, next) => {
+invoicesRouter.post('/invoices/bulk-reject', authRequired, requirePermission('invoice.reject'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const user = (req as { user?: { email?: string } }).user
@@ -407,7 +470,7 @@ invoicesRouter.post('/invoices/bulk-reject', authRequired, async (req, res, next
   }
 })
 
-invoicesRouter.post('/invoices/:id/approve', authRequired, async (req, res, next) => {
+invoicesRouter.post('/invoices/:id/approve', authRequired, requirePermission('invoice.approve'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const user = (req as { user?: { email?: string } }).user
@@ -440,10 +503,14 @@ invoicesRouter.post('/invoices/:id/approve', authRequired, async (req, res, next
       return
     }
     await audit('Approve', 'Invoice', data.id, `Invoice ${data.invoice_no} approved`)
-    const { po, error: poError } = await createPo(supabase, data.id, user?.email)
-    if (poError) {
-      res.status(500).json({ error: `Invoice approved but PO generation failed: ${poError}` })
-      return
+    let po: { id: string } | null = null
+    if (await shouldAutoGeneratePo()) {
+      const generated = await createPo(supabase, data.id, user?.email)
+      if (generated.error) {
+        res.status(500).json({ error: `Invoice approved but PO generation failed: ${generated.error}` })
+        return
+      }
+      po = generated.po
     }
     res.json({ invoice: data, po })
   } catch (err) {
@@ -451,7 +518,7 @@ invoicesRouter.post('/invoices/:id/approve', authRequired, async (req, res, next
   }
 })
 
-invoicesRouter.post('/invoices/:id/reject', authRequired, async (req, res, next) => {
+invoicesRouter.post('/invoices/:id/reject', authRequired, requirePermission('invoice.reject'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const user = (req as { user?: { email?: string } }).user
@@ -493,7 +560,7 @@ invoicesRouter.post('/invoices/:id/reject', authRequired, async (req, res, next)
   }
 })
 
-invoicesRouter.post('/invoices/:id/po', authRequired, async (req, res, next) => {
+invoicesRouter.post('/invoices/:id/po', authRequired, requirePermission('po.generate'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const user = (req as { user?: { email?: string } }).user
@@ -531,7 +598,7 @@ invoicesRouter.post('/invoices/:id/po', authRequired, async (req, res, next) => 
   }
 })
 
-invoicesRouter.get('/invoices/:id/po', authRequired, async (req, res, next) => {
+invoicesRouter.get('/invoices/:id/po', authRequired, requirePermission('invoice.view'), async (req, res, next) => {
   try {
     const supabase = getSupabase()
     const { data, error } = await supabase

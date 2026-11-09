@@ -1,4 +1,5 @@
 import { Field } from './Field'
+import SelectMenu from './SelectMenu'
 
 export interface InvoiceVendorOption {
   id: string
@@ -30,14 +31,12 @@ export default function InvoiceVendorField({
   }
   return (
     <Field label="Vendor" hint="Master Access: reassigns this contract's vendor">
-      <select className="input" value={vendorId} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Choose vendor</option>
-        {vendors.map((v) => (
-          <option key={v.id} value={v.id}>
-            {v.name}
-          </option>
-        ))}
-      </select>
+      <SelectMenu
+        value={vendorId}
+        placeholder="Choose vendor"
+        options={vendors.map((v) => ({ value: v.id, label: v.name }))}
+        onChange={onChange}
+      />
     </Field>
   )
 }

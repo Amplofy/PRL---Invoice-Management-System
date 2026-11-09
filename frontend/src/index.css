@@ -810,12 +810,204 @@ html::-webkit-scrollbar-thumb:hover {
 .input::placeholder { color: var(--text-muted); }
 select.input {
   appearance: none;
+  background-color: var(--input-bg);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.8rem center;
   padding-right: 2.2rem;
   cursor: pointer;
+  color-scheme: dark;
 }
+[data-mode="light"] select.input {
+  color-scheme: light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+input[type="date"].input {
+  color-scheme: dark;
+  min-height: 2.15rem;
+  position: relative;
+}
+[data-mode="light"] input[type="date"].input {
+  color-scheme: light;
+}
+input[type="date"].input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.72;
+  filter: invert(0.72);
+}
+[data-mode="light"] input[type="date"].input::-webkit-calendar-picker-indicator {
+  filter: none;
+  opacity: 0.8;
+}
+
+.select-trigger,
+.date-field-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.15rem;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.select-trigger:disabled,
+.date-field-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+}
+.menu-panel {
+  position: fixed;
+  z-index: 96;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--glass-border-strong);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-pop);
+}
+[data-mode="light"] .menu-panel {
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+}
+.menu-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.7rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.menu-search-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+.menu-search-input::placeholder { color: var(--text-muted); }
+.menu-list {
+  overflow-y: auto;
+  padding: 0.3rem;
+}
+.menu-empty {
+  padding: 0.7rem 0.55rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+.menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 8px;
+  padding: 0.42rem 0.55rem;
+  font-size: 0.78rem;
+  text-align: left;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.menu-item:hover,
+.menu-item.is-active {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.menu-item.is-selected {
+  font-weight: 650;
+  color: var(--text);
+}
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cal-pop { padding: 0.7rem 0.75rem 0.55rem; }
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-bottom: 0.55rem;
+}
+.cal-caption {
+  flex: 1;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.cal-nav:hover { background: var(--surface-hover); color: var(--text); }
+.cal-dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: center;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.85rem;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  cursor: pointer;
+}
+.cal-day:hover { background: var(--surface-hover); }
+.cal-day.is-out { color: var(--text-muted); opacity: 0.55; }
+.cal-day.is-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+.cal-day.is-selected {
+  background: var(--gradient-primary);
+  color: var(--on-primary);
+  font-weight: 700;
+  box-shadow: none;
+}
+.cal-day.is-selected.is-today { box-shadow: none; }
+.cal-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+.cal-foot-btn {
+  font-size: 0.68rem;
+  font-weight: 650;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0.2rem 0.15rem;
+}
+.cal-foot-btn:hover { text-decoration: underline; }
 
 .input.input-fit {
   width: auto;
@@ -1173,12 +1365,11 @@ select.input {
 .table-container {
   width: 100%;
   border-radius: var(--radius-md);
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   max-width: 100%;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 42%, transparent) transparent;
+  scrollbar-width: none;
   border: 1px solid var(--table-border);
 }
 
@@ -1186,9 +1377,15 @@ select.input {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.table-container.has-extra,
+.table-scroll.has-extra {
+  overflow-x: auto;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--accent) 42%, transparent) transparent;
 }
@@ -1220,8 +1417,11 @@ select.input {
 }
 
 .table-scroll.scroll-y {
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
+}
+.table-scroll.scroll-y.has-extra {
+  overflow-x: auto;
 }
 
 .scroll-y {
@@ -1291,11 +1491,19 @@ select.input {
   color: var(--accent);
 }
 table.data-table {
-  width: max-content;
+  width: 100%;
   min-width: 100%;
   table-layout: auto;
   border-collapse: collapse;
   font-size: 0.85rem;
+}
+.table-container.has-extra table.data-table,
+.table-scroll.has-extra table.data-table {
+  width: max-content;
+}
+.data-table th,
+.data-table td {
+  max-width: 18rem;
 }
 .data-table thead { position: sticky; top: 0; z-index: 1; }
 .data-table th {
@@ -1349,13 +1557,26 @@ body.is-col-resizing {
   text-overflow: ellipsis;
 }
 .data-table td {
-  padding: 0.6rem 0.62rem;
+  padding: 0.55rem 0.7rem;
   border-bottom: 1px solid color-mix(in srgb, var(--table-border) 62%, transparent);
   color: var(--text);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.35;
 }
-.data-table td.cell-wrap { white-space: normal; }
-.data-table td.max-w-md { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; }
+.data-table td.cell-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 22rem;
+}
+.data-table td.max-w-md { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; }
+.data-table td[data-col="remarks"],
+.data-table th[data-col="remarks"] {
+  max-width: 18rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .data-table th[data-col="action"],
 .data-table td.action-cell {
   width: 1%;
@@ -1425,6 +1646,12 @@ tr.grand-total-row td {
   width: min(22px, 24%);
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.28), transparent);
   pointer-events: none;
+}
+.power-graph {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 46%),
+    var(--glass-bg);
+  box-shadow: var(--shadow-card), inset 0 1px 0 color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .report-card {
   transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
@@ -1662,6 +1889,67 @@ tr.grand-total-row td {
 @keyframes pageEnter {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
+}
+@keyframes pgEnter {
+  from { opacity: 0; transform: translateY(22px) scale(0.985); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes pgLeave {
+  from { opacity: 1; transform: none; filter: none; }
+  to { opacity: 0; transform: translateY(-18px) scale(0.985); filter: blur(6px); }
+}
+.pg-enter {
+  animation: pgEnter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.pg-leave {
+  animation: pgLeave 0.34s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+.pg-launch {
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.pg-chart-board {
+  overflow: visible;
+}
+.pg-chart-board-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.85rem 1.15rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.pg-chart-board-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 1100px) {
+  .pg-chart-board-grid.is-split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.pg-chart-pane {
+  min-width: 0;
+  padding: 1.05rem 1.2rem 1.25rem;
+  background: transparent;
+  box-shadow:
+    1px 0 0 color-mix(in srgb, var(--border) 70%, transparent),
+    0 1px 0 color-mix(in srgb, var(--border) 70%, transparent);
+}
+.pg-chart-pane .input {
+  min-width: 0;
+  width: 100%;
+}
+.pg-chart-plot {
+  position: relative;
+  height: 18.5rem;
+  overflow: visible;
+}
+.pg-chart-plot.is-round {
+  height: 20rem;
 }
 
 /* ================= Skeleton ================= */
@@ -2459,30 +2747,92 @@ body.qa-lift .qa-root {
   position: relative;
   isolation: isolate;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .chart-stage-plot {
   position: relative;
   z-index: 1;
   height: 100%;
+  overflow: visible;
 }
 .mix-wave {
   display: flex;
   align-items: stretch;
   height: 4.4rem;
   overflow: hidden;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 88%, var(--bg-1));
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--glass-border-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--glass-bg) 78%, var(--surface));
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 12%, transparent);
+}
+.drill-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+.drill-overlay.is-open {
+  pointer-events: auto;
+}
+.drill-overlay-dim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-1) 52%, transparent);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+.drill-overlay.is-open .drill-overlay-dim {
+  opacity: 1;
+}
+.drill-overlay-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(28rem, 100%);
+  height: 100%;
+  border-left: 1px solid var(--glass-border-strong);
+  background: var(--bg-2);
+  box-shadow: -18px 0 48px color-mix(in srgb, var(--bg-1) 42%, transparent);
+  transform: translateX(100%);
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.drill-overlay.is-open .drill-overlay-panel {
+  transform: none;
+}
+.drill-row {
+  transition: transform 0.18s var(--ease-out), border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.drill-row:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--glass-border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .mix-wave-seg {
   min-width: 4px;
   height: 100%;
   position: relative;
   overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
   transform-origin: left center;
   animation: chartRevealX 0.95s cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: calc(var(--i, 0) * 48ms);
+}
+.mix-wave-seg:hover {
+  filter: brightness(1.08);
 }
 .mix-wave-empty {
   flex: 1;

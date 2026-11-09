@@ -16,7 +16,7 @@ import GlassCard from '../components/ui/GlassCard'
 import Tabs, { useTab } from '../components/ui/Tabs'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
-import { Field } from '../components/ui/Field'
+import { Field, Select } from '../components/ui/Field'
 import EmptyState from '../components/ui/EmptyState'
 import Toggle from '../components/ui/Toggle'
 import SummaryCards from '../components/ui/SummaryCards'
@@ -698,7 +698,7 @@ function BudgetPanel({
               return (
                 <tr key={d.id}>
                   <td>
-                    <select
+                    <Select
                       className="input min-w-[10rem]"
                       value={d.cost_element}
                       onChange={(e) => setLine(d.id, { cost_element: e.target.value })}
@@ -711,7 +711,7 @@ function BudgetPanel({
                       {!costs.some((c) => isMiscCostElement(c.code)) && (
                         <option value={MISC_COST_ELEMENT}>MISC — Miscellaneous</option>
                       )}
-                    </select>
+                    </Select>
                   </td>
                   <td>
                     <input
@@ -1225,12 +1225,12 @@ function PoTextInput({ label, value, onChange, placeholder }: { label: string; v
 function PoSlot({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <Field label={label}>
-      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+      <Select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
         <option value="">— none —</option>
         {PO_PLACEHOLDERS.map((t) => (
           <option key={t.token} value={t.token}>{`${t.description} — {{${t.token}}}`}</option>
         ))}
-      </select>
+      </Select>
     </Field>
   )
 }
@@ -1348,11 +1348,11 @@ function PoTemplatePanel({ settings, setSettings }: { settings: Setting[]; setSe
                 Show
               </label>
               <input className="input" value={row.caption} placeholder="Caption" onChange={(e) => setRow(i, { caption: e.target.value })} />
-              <select className="input" value={row.placeholder} onChange={(e) => setRow(i, { placeholder: e.target.value })}>
+              <Select className="input" value={row.placeholder} onChange={(e) => setRow(i, { placeholder: e.target.value })}>
                 {PO_PLACEHOLDERS.map((t) => (
                   <option key={t.token} value={t.token}>{t.description}</option>
                 ))}
-              </select>
+              </Select>
               <div className="flex justify-end gap-1">
                 <button type="button" className="btn btn-ghost btn-sm" disabled={i === 0} onClick={() => moveRow(i, -1)} aria-label="Move up">
                   <ArrowUp size={14} />
@@ -1528,11 +1528,11 @@ function VendorForm({ initial, onClose, onSaved }: { initial: Vendor | null; onC
                   onChange={(e) => setRow(idx, { email: e.target.value })}
                   placeholder="surveyor@vendor.com"
                 />
-                <select className="input" value={row.label || 'surveyor'} onChange={(e) => setRow(idx, { label: e.target.value })}>
+                <Select className="input" value={row.label || 'surveyor'} onChange={(e) => setRow(idx, { label: e.target.value })}>
                   {EMAIL_LABELS.map((label) => (
                     <option key={label} value={label}>{label}</option>
                   ))}
-                </select>
+                </Select>
                 <label className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
                   <input type="radio" name="vendor-primary-email" checked={Boolean(row.is_primary)} onChange={() => setPrimary(idx)} />
                   Primary
@@ -1714,10 +1714,10 @@ function ServiceForm({ initial, costs, onClose, onSaved }: { initial: ServiceMat
         <Field label="T3"><input className="input" value={form.t3} onChange={(e) => setForm({ ...form, t3: e.target.value })} /></Field>
         <div className="sm:col-span-3">
           <Field label="Cost element">
-            <select className="input" value={form.cost_element} onChange={(e) => setForm({ ...form, cost_element: e.target.value })}>
+            <Select className="input" value={form.cost_element} onChange={(e) => setForm({ ...form, cost_element: e.target.value })}>
               <option value="">None</option>
               {costs.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.name ?? ''}</option>)}
-            </select>
+            </Select>
           </Field>
         </div>
         <div className="sm:col-span-3">

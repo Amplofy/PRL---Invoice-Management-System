@@ -6,7 +6,9 @@ import {
   catalogLocations,
   type ServiceMatrixRow,
 } from '../../lib/invoice'
+import DateField from './DateField'
 import LockedAutoField from './LockedAutoField'
+import SelectMenu from './SelectMenu'
 
 export interface ServiceSelectsValue {
   t1: string
@@ -33,6 +35,10 @@ interface ServiceSelectsProps {
   mode?: 'invoice' | 'catalog'
 }
 
+function opts(values: string[]): { value: string; label: string }[] {
+  return values.map((o) => ({ value: o, label: o }))
+}
+
 export default function ServiceSelects({
   matrix,
   value,
@@ -50,14 +56,12 @@ export default function ServiceSelects({
   const catalog = mode === 'catalog'
   const locations = catalog ? [] : catalogLocations(row)
 
-  // Each level unlocks only once its parent is chosen.
   const t1Locked = disabled || (requireContract && !contractId)
   const t2Locked = disabled || !value.t1
   const t3Locked = disabled || !value.t2
   const locationLocked = disabled || !value.t3
   const t1Placeholder = t1Locked ? 'Select a contract first' : 'Select…'
 
-  // Choosing a level clears everything downstream of it.
   const pickType = (t1: string) =>
     onChange({ t1, t2: '', t3: '', location: '', tanker_name: '', trips: '', cost_element: '' })
   const pickService = (t2: string) =>
@@ -73,17 +77,14 @@ export default function ServiceSelects({
         <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
           Service Type 1<span className="ml-0.5 text-[var(--danger)]">*</span>
         </span>
-        <select
-          className={`input ${issues.t1 ? 'invalid' : ''}`}
+        <SelectMenu
           value={value.t1}
           disabled={t1Locked}
-          onChange={(e) => pickType(e.target.value)}
-        >
-          <option value="">{t1Placeholder}</option>
-          {Array.from(new Set(matrix.map((m) => m.t1))).sort().map((o) => (
-            <option key={o} value={o}>{o}</option>
-          ))}
-        </select>
+          invalid={Boolean(issues.t1)}
+          placeholder={t1Placeholder}
+          options={opts(Array.from(new Set(matrix.map((m) => m.t1))).sort())}
+          onChange={pickType}
+        />
         {issues.t1 && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.t1}</span>}
       </label>
 
@@ -91,17 +92,14 @@ export default function ServiceSelects({
         <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
           Service Type 2<span className="ml-0.5 text-[var(--danger)]">*</span>
         </span>
-        <select
-          className={`input ${issues.t2 ? 'invalid' : ''}`}
+        <SelectMenu
           value={value.t2}
           disabled={t2Locked}
-          onChange={(e) => pickService(e.target.value)}
-        >
-          <option value="">{t2Locked ? 'Select type 1 first' : 'Select…'}</option>
-          {t2Options(matrix, value.t1).map((o) => (
-            <option key={o} value={o}>{o}</option>
-          ))}
-        </select>
+          invalid={Boolean(issues.t2)}
+          placeholder={t2Locked ? 'Select type 1 first' : 'Select…'}
+          options={opts(t2Options(matrix, value.t1))}
+          onChange={pickService}
+        />
         {issues.t2 && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.t2}</span>}
       </label>
 
@@ -109,17 +107,14 @@ export default function ServiceSelects({
         <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
           Service Type 3<span className="ml-0.5 text-[var(--danger)]">*</span>
         </span>
-        <select
-          className={`input ${issues.t3 ? 'invalid' : ''}`}
+        <SelectMenu
           value={value.t3}
           disabled={t3Locked}
-          onChange={(e) => pickDetail(e.target.value)}
-        >
-          <option value="">{t3Locked ? 'Select type 2 first' : 'Select…'}</option>
-          {t3Options(matrix, value.t1, value.t2).map((o) => (
-            <option key={o} value={o}>{o}</option>
-          ))}
-        </select>
+          invalid={Boolean(issues.t3)}
+          placeholder={t3Locked ? 'Select type 2 first' : 'Select…'}
+          options={opts(t3Options(matrix, value.t1, value.t2))}
+          onChange={pickDetail}
+        />
         {issues.t3 && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.t3}</span>}
       </label>
 
@@ -128,17 +123,14 @@ export default function ServiceSelects({
           <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">
             Location<span className="ml-0.5 text-[var(--danger)]">*</span>
           </span>
-          <select
-            className={`input ${issues.location ? 'invalid' : ''}`}
+          <SelectMenu
             value={value.location ?? ''}
             disabled={locationLocked}
-            onChange={(e) => onChange({ location: e.target.value })}
-          >
-            <option value="">{locationLocked ? 'Select type 3 first' : 'Select…'}</option>
-            {locations.map((o) => (
-              <option key={o} value={o}>{o}</option>
-            ))}
-          </select>
+            invalid={Boolean(issues.location)}
+            placeholder={locationLocked ? 'Select type 3 first' : 'Select…'}
+            options={opts(locations)}
+            onChange={(location) => onChange({ location })}
+          />
           {issues.location && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.location}</span>}
         </label>
       )}
@@ -175,12 +167,11 @@ export default function ServiceSelects({
       {!catalog && (
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Service From</span>
-          <input
-            type="date"
-            className={`input ${issues.service_from ? 'invalid' : ''}`}
+          <DateField
             value={value.service_from ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ service_from: e.target.value })}
+            invalid={Boolean(issues.service_from)}
+            onChange={(service_from) => onChange({ service_from })}
           />
           {issues.service_from && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.service_from}</span>}
         </label>
@@ -189,12 +180,11 @@ export default function ServiceSelects({
       {!catalog && (
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-[var(--text-dim)]">Service To</span>
-          <input
-            type="date"
-            className={`input ${issues.service_to ? 'invalid' : ''}`}
+          <DateField
             value={value.service_to ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ service_to: e.target.value })}
+            invalid={Boolean(issues.service_to)}
+            onChange={(service_to) => onChange({ service_to })}
           />
           {issues.service_to && <span className="mt-1 block text-xs text-[var(--danger)]">{issues.service_to}</span>}
         </label>
@@ -206,7 +196,7 @@ export default function ServiceSelects({
           value={costElement}
           onCommit={(next) => onChange({ cost_element: next })}
           hint="Resolved from service matrix"
-          placeholder="Resolved from service matrix"
+          placeholder="From service matrix"
         />
       )}
     </div>
