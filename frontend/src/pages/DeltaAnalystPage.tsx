@@ -7,6 +7,9 @@ import {
 } from 'lucide-react'
 import { apiUpload, apiGet, apiPost } from '../lib/api'
 import { downloadTableWorkbook } from '../lib/analysisWorkbook'
+import { templatesFor } from '../lib/emailTemplates'
+import { dispatchDrafts, draftFits } from '../lib/mailer'
+import { buildDiscrepancyDraft } from '../lib/mailCompose'
 import {
   profileFile, keyCandidates, suggestPairs, verify, narrate, customCandidate,
   type FileProfile, type MatchStrategy, type ValueKind, type KeyCandidate,
@@ -23,7 +26,7 @@ import { useToast } from '../components/ui/Toast'
 import PageHeader from '../components/PageHeader'
 import GlassCard from '../components/ui/GlassCard'
 import Button from '../components/ui/Button'
-import { Field } from '../components/ui/Field'
+import { Field, Select } from '../components/ui/Field'
 import Modal from '../components/ui/Modal'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
@@ -172,10 +175,14 @@ export default function DeltaAnalystPage() {
   const [reviewed, setReviewed] = useState<Set<string>>(new Set())
   const [comparisonId, setComparisonId] = useState<string | null>(null)
   const [sendOpen, setSendOpen] = useState(false)
-  const [vendors, setVendors] = useState<Array<{ id: string; name: string }>>([])
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; email?: string | null }>>([])
   const [vendorId, setVendorId] = useState('')
   const [notes, setNotes] = useState('')
   const [sending, setSending] = useState(false)
+  const [delivery, setDelivery] = useState<'outlook' | 'service'>('outlook')
+  const [templateId, setTemplateId] = useState('discrepancy-standard')
+  const [department, setDepartment] = useState('Finance')
+  const [serviceConfigured, setServiceConfigured] = useState(false)
 
   const [saved, setSaved] = useState<SavedDeltaMethod[]>(() => loadDeltaMethods())
   const [customOpen, setCustomOpen] = useState(false)
@@ -504,21 +511,77 @@ export default function DeltaAnalystPage() {
     setSendOpen(true)
     setNotes('')
     try {
-      const v = await apiGet<{ vendors: Array<{ id: string; name: string }> }>('/api/vendors')
-      setVendors(v.vendors)
+      const v = await apiGet<{ vendors: Array<{ id: string; name: string; email?: string | null }> }>('/api/vendors')
+      setVendors(v.vendors.filter((row) => row.email))
     } catch {
       setVendors([])
     }
+    apiGet<{ serviceConfigured: boolean }>('/api/followups/status')
+      .then((s) => setServiceConfigured(Boolean(s.serviceConfigured)))
+      .catch(() => setServiceConfigured(false))
   }
 
+  const discrepancyList = useMemo(() => {
+    if (!outcome) return ''
+    const lines: string[] = []
+    const mismatches = outcome.rows.filter((r) => r.status === 'mismatch')
+    const missingB = outcome.rows.filter((r) => r.status === 'missing_in_compare')
+    const missingA = outcome.rows.filter((r) => r.status === 'missing_in_base')
+    for (const r of mismatches.slice(0, 20)) {
+      const cell = r.cells.find((c) => c.status === 'mismatch')
+      if (cell) lines.push(`- ${r.key}: ${cell.column} changed from ${cell.baseValue} to ${cell.compareValue}`)
+      else lines.push(`- ${r.key}: values differ`)
+    }
+    if (missingB.length) {
+      lines.push(`Rows in A missing from B (${missingB.length}):`)
+      for (const r of missingB.slice(0, 20)) lines.push(`- ${r.key}`)
+    }
+    if (missingA.length) {
+      lines.push(`Rows in B missing from A (${missingA.length}):`)
+      for (const r of missingA.slice(0, 20)) lines.push(`- ${r.key}`)
+    }
+    return lines.join('\n')
+  }, [outcome])
+
+  const selectedVendor = vendors.find((v) => v.id === vendorId)
+  const discrepancyDraft = selectedVendor?.email
+    ? buildDiscrepancyDraft({
+        templateId,
+        vendorEmail: selectedVendor.email,
+        vendorName: selectedVendor.name,
+        department,
+        baseFileName: fileA?.fileName ?? 'File A',
+        compareFileName: fileB?.fileName ?? 'File B',
+        keyValue: candidate?.baseCols.join('+') || 'row key',
+        discrepancyList,
+        notes,
+      })
+    : null
+  const oversizedDraft = Boolean(discrepancyDraft && !draftFits(discrepancyDraft))
+
   const sendDiscrepancy = async () => {
-    if (!comparisonId || !vendorId) {
+    if (!vendorId || !selectedVendor?.email || !discrepancyDraft) {
       toast.error('Select a vendor with an email')
       return
     }
     setSending(true)
     try {
-      await apiPost(`/api/compare/${comparisonId}/send-discrepancy`, { vendorId, notes })
+      if (delivery === 'outlook') {
+        await dispatchDrafts([discrepancyDraft])
+        toast.success('Outlook opened', 'Draft ready to send')
+        setSendOpen(false)
+        return
+      }
+      if (!comparisonId) {
+        toast.error('Save the comparison before service send')
+        return
+      }
+      await apiPost(`/api/compare/${comparisonId}/send-discrepancy`, {
+        vendorId,
+        notes,
+        subjectOverride: discrepancyDraft.subject,
+        bodyOverride: discrepancyDraft.body,
+      })
       toast.success('Report emailed')
       setSendOpen(false)
     } catch (e) {
@@ -602,7 +665,7 @@ export default function DeltaAnalystPage() {
                 <RotateCcw size={14} /> Start over
               </Button>
             )}
-            {outcome && comparisonId && !isDemoMode() && (
+            {outcome && (
               <Button variant="primary" size="sm" onClick={openSend}>
                 <Send size={15} /> Email report
               </Button>
@@ -741,18 +804,18 @@ export default function DeltaAnalystPage() {
                 <div className="mt-3 flex flex-wrap items-end gap-2">
                   <label className="min-w-36 flex-1 text-xs font-semibold text-[var(--text-muted)]">
                     Column in A
-                    <select className="input mt-1" value={addA} onChange={(e) => setAddA(e.target.value)}>
+                    <Select className="input mt-1" value={addA} onChange={(e) => setAddA(e.target.value)}>
                       <option value="">Select…</option>
                       {fileA.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    </Select>
                   </label>
                   <ArrowRight size={14} className="mb-3 text-[var(--text-muted)]" aria-hidden />
                   <label className="min-w-36 flex-1 text-xs font-semibold text-[var(--text-muted)]">
                     Column in B
-                    <select className="input mt-1" value={addB} onChange={(e) => setAddB(e.target.value)}>
+                    <Select className="input mt-1" value={addB} onChange={(e) => setAddB(e.target.value)}>
                       <option value="">Select…</option>
                       {fileB.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    </Select>
                   </label>
                   <Button variant="ghost" size="sm" onClick={addPair} disabled={!addA || !addB}>
                     <Plus size={14} /> Add
@@ -859,25 +922,70 @@ export default function DeltaAnalystPage() {
         open={sendOpen}
         onClose={() => setSendOpen(false)}
         title="Email difference report"
+        maxWidth="40rem"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setSendOpen(false)}>Cancel</Button>
-            <Button variant="success" onClick={sendDiscrepancy} disabled={sending}>
-              <Send size={15} /> {sending ? 'Sending…' : 'Send email'}
+            <Button variant="ghost" onClick={() => setSendOpen(false)} disabled={sending}>Cancel</Button>
+            <Button variant="success" onClick={sendDiscrepancy} disabled={sending || !discrepancyDraft}>
+              <Send size={15} />
+              {sending ? 'Sending…' : delivery === 'outlook' ? 'Open Outlook' : 'Send email'}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" className={`chip ${delivery === 'outlook' ? 'active' : ''}`} onClick={() => setDelivery('outlook')}>
+              Outlook
+            </button>
+            <button
+              type="button"
+              className={`chip ${delivery === 'service' ? 'active' : ''}`}
+              onClick={() => setDelivery('service')}
+              disabled={!serviceConfigured || !comparisonId}
+              title={
+                !serviceConfigured
+                  ? 'Mail service is not configured'
+                  : !comparisonId
+                    ? 'Comparison is not saved for service send'
+                    : 'Send via configured mail service'
+              }
+            >
+              Service send
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Template">
+              <Select className="input" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+                {templatesFor('discrepancy').map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Department">
+              <input className="input" value={department} onChange={(e) => setDepartment(e.target.value)} />
+            </Field>
+          </div>
           <Field label="Surveyor / vendor" required hint="Vendors without an email are excluded">
-            <select className="input" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+            <Select className="input" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
               <option value="">Select vendor…</option>
               {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
+            </Select>
           </Field>
           <Field label="Additional notes">
             <textarea className="input min-h-24" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional context for the recipient…" />
           </Field>
+          {oversizedDraft && delivery === 'outlook' && (
+            <p className="rounded-lg border border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.08)] px-3 py-2 text-xs text-[var(--warn)]">
+              This mailto link is long. Trim notes if Outlook does not open.
+            </p>
+          )}
+          {discrepancyDraft && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs">
+              <div className="font-semibold text-[var(--text)]">{discrepancyDraft.subject}</div>
+              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans text-[var(--text-dim)]">{discrepancyDraft.body}</pre>
+            </div>
+          )}
         </div>
       </Modal>
     </div>
@@ -1062,10 +1170,10 @@ function KeyPicker({
       <div className="mb-1.5 text-xs font-semibold text-[var(--text-dim)]">{label}</div>
       <div className="space-y-1.5">
         {(multi ? values : values.slice(0, 1)).map((v, i) => (
-          <select key={i} className="input" value={v} onChange={(e) => setAt(i, e.target.value)}>
+          <Select key={i} className="input" value={v} onChange={(e) => setAt(i, e.target.value)}>
             <option value="">Select…</option>
             {columns.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          </Select>
         ))}
       </div>
       {multi && (
@@ -1102,10 +1210,10 @@ function PairRow({
       </td>
       <td className="py-2 pr-3">
         {(unitA || unitB) ? (
-          <select className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs" value={unitValue} onChange={(e) => onUnit(e.target.value)}>
+          <Select className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-xs" value={unitValue} onChange={(e) => onUnit(e.target.value)}>
             <option value="auto">Auto ({(unitA ?? unitB)?.label ?? 'none'})</option>
             {targetOptions.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
-          </select>
+          </Select>
         ) : (
           <span className="text-xs text-[var(--text-muted)]">—</span>
         )}

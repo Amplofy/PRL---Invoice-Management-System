@@ -337,7 +337,23 @@ const settings: Setting[] = [
   { key: 'duplicate_check', value: 'true' },
   { key: 'future_date_allowed', value: 'false' },
   { key: 'enable_audit', value: 'true' },
+  { key: 'po_auto_generate', value: 'true' },
+  { key: 'auto_approve_limit', value: '50000' },
+  { key: 'require_second_approval', value: 'true' },
+  { key: 'approval_sla_hours', value: '48' },
+  { key: 'notify_on_submit', value: 'true' },
 ]
+
+function settingOf(key: string): string | undefined {
+  return settings.find((s) => s.key === key)?.value
+}
+
+function truthySetting(key: string, fallback = false): boolean {
+  const raw = settingOf(key)
+  if (raw == null || raw === '') return fallback
+  const v = raw.trim().toLowerCase()
+  return v === 'true' || v === '1' || v === 'yes' || v === 'on'
+}
 
 let fyPasswordHash = ''
 let fyUnlockedUntil = 0
@@ -914,6 +930,10 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData
   const formType = isForm ? String((body as FormData).get('type') ?? '') : ''
 
+  if (m === 'POST' && path === '/api/auth/login') {
+    fail('Use the live login form outside demo mode')
+  }
+
   if (m === 'GET' && path === '/api/me') {
     return {
       id: 'demo-admin-id',
@@ -939,15 +959,17 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       const contract = qs.get('contract') ?? 'all'
       const search = (qs.get('search') ?? '').toLowerCase()
       const fy = qs.get('fy') ?? ''
-      const cap = Math.min(Math.max(Number(qs.get('limit') || 0) || 0, 0), 500)
+      const rawLimit = Number(qs.get('limit') || 0)
+      const limited = Number.isFinite(rawLimit) && rawLimit > 0
+      const cap = Math.min(Math.max(limited ? rawLimit : 10_000, 1), 10_000)
       let list = invoices
       if (status && status !== 'all') list = list.filter((i) => i.status === status)
       if (contract && contract !== 'all') list = list.filter((i) => i.contract_id === contract)
       if (search) list = list.filter((i) => `${i.invoice_no} ${i.serial_no ?? ''}`.toLowerCase().includes(search))
       if (fy && fy !== 'all') list = list.filter((i) => invoiceBudgetFy(i) === fy)
       const sorted = [...list].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(listInvoice)
-      const sliced = cap ? sorted.slice(0, cap) : sorted
-      return { invoices: sliced, fy: fy || 'all', total: sorted.length, hasMore: cap > 0 && sorted.length > cap } as T
+      const sliced = limited ? sorted.slice(0, cap) : sorted
+      return { invoices: sliced, fy: fy || 'all', total: sorted.length, hasMore: limited ? sorted.length > sliced.length : false } as T
     }
     if (parts.length === 4 && parts[3] === 'po') {
       const list = pos.filter((p) => p.invoice_id === parts[2])
@@ -988,7 +1010,21 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     inv.contracts = embedContract(contractById(inv.contract_id))
     invoices.unshift(inv)
     audit('Create', 'Invoice', inv.id, `Invoice ${inv.invoice_no} created`)
-    return { invoice: listInvoice(inv) } as T
+    let autoApproved = false
+    let po: PoVersion | null = null
+    const limit = Number(settingOf('auto_approve_limit') ?? 0)
+    if (Number.isFinite(limit) && limit > 0 && inv.amount > 0 && inv.amount <= limit) {
+      inv.status = 'Approved'
+      inv.approved_by = 'auto-approve'
+      inv.approved_date = nowIso()
+      inv.approved_amount = inv.amount
+      autoApproved = true
+      audit('AutoApprove', 'Invoice', inv.id, `Invoice ${inv.invoice_no} auto-approved (Rs ${inv.amount} ≤ ${limit})`)
+      if (truthySetting('po_auto_generate', true)) po = makePoForInvoice(inv)
+    }
+    const notifyApprovers = !autoApproved && truthySetting('notify_on_submit', true)
+    if (notifyApprovers) audit('NotifyApprovers', 'Invoice', inv.id, `Invoice ${inv.invoice_no} submitted for approval`)
+    return { invoice: listInvoice(inv), autoApproved, po, notifyApprovers } as T
   }
 
   if (m === 'POST' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'invoices' && parts[3] === 'approve') {
@@ -1001,7 +1037,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     inv.approved_amount = (body as Record<string, unknown>)?.approvedAmount ? Number((body as Record<string, unknown>).approvedAmount) : null
     inv.updated_at = nowIso()
     audit('Approve', 'Invoice', inv.id, `Invoice ${inv.invoice_no} approved`)
-    const po = makePoForInvoice(inv)
+    const po = truthySetting('po_auto_generate', true) ? makePoForInvoice(inv) : null
     return { invoice: listInvoice(inv), po } as T
   }
 
@@ -1461,6 +1497,9 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
   }
 
   if (m === 'GET' && path === '/api/followups/pending') return pendingFollowups() as T
+  if (m === 'GET' && path === '/api/followups/status') {
+    return { serviceConfigured: false, from: '' } as T
+  }
   if (m === 'POST' && path === '/api/followups/send') {
     const ids = (body as { invoiceIds?: string[] })?.invoiceIds ?? []
     if (!Array.isArray(ids) || !ids.length) fail('invoiceIds array is required')
@@ -1469,7 +1508,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       if (inv) assertOpenDate(invoiceBudgetDate(inv))
     }
     audit('SendFollowups', 'Email', null, `Sent ${ids.length} follow-up email(s)`)
-    return { sent: ids, failed: [] } as T
+    return { sent: ids, failed: [], serviceConfigured: false } as T
   }
 
   if (m === 'GET' && path === '/api/payment-orders') {
@@ -1557,7 +1596,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const rows = b.rows ?? []
     const mode = b.mode === 'overwrite' ? 'overwrite' : 'append'
     const conflicts = detectDemoConflicts(type, rows)
-    if (mode === 'overwrite' || conflicts.length === 0) {
+    const autoApprove = conflicts.length === 0 || mode === 'overwrite'
+    if (autoApprove) {
       const { imported, skipped, updated } = applyImportRowsDemo(type, rows, mode === 'overwrite')
       return { status: 'approved', imported, skipped, updated, duplicates: conflicts.length, type } as T
     }
@@ -1611,7 +1651,10 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       assertOpenDate(invoiceBudgetDate(inv))
       inv.status = 'Approved'
       approved++
-      poCreated++
+      if (truthySetting('po_auto_generate', true)) {
+        makePoForInvoice(inv)
+        poCreated++
+      }
     }
     if (approved > 0) audit('BulkApprove', 'Invoice', null, `${approved} invoices bulk-approved`)
     return { approved, poCreated, failed: [] } as T

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Download, TrendingUp, TrendingDown, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, Clock, Banknote, FileSpreadsheet, Lock, CalendarRange, Building2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Download, TrendingUp, TrendingDown, Wallet, Landmark, Sparkles, CircleDollarSign, Gauge, Clock, Banknote, FileSpreadsheet, Lock, CalendarRange, Building2, ArrowUpDown } from 'lucide-react'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -14,13 +15,13 @@ import {
 } from 'chart.js'
 import { Bar, Doughnut, Line } from 'react-chartjs-2'
 import { apiGet } from '../lib/api'
-import { formatMoney, formatDate } from '../lib/format'
+import { formatMoney, formatCompactMoney, formatDate } from '../lib/format'
 import { useLiveDomain } from '../lib/store'
 import { useToast } from '../components/ui/Toast'
 import GlassCard from '../components/ui/GlassCard'
 import EmptyState from '../components/ui/EmptyState'
 import { useThemeColors } from '../lib/themeColors'
-import { fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, currentFiscalYear, shiftFiscalYear, elapsedInFiscalYear, nearbyFiscalYears, isClosedFiscalYear, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isAccrualOpenInvoice, isMiscCostElement, fyStartYear, type FiscalQuarter } from '../lib/fiscal'
+import { fyMonthIndex, FY_MONTHS, QUARTERS, costCategory, currentFiscalYear, shiftFiscalYear, elapsedInFiscalYear, nearbyFiscalYears, isClosedFiscalYear, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isAccrualOpenInvoice, isMiscCostElement, isOpexSpendStatus, fyStartYear, type FiscalQuarter } from '../lib/fiscal'
 import { civilDayDiff, todayCalendarYmd } from '../lib/calendarDate'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { downloadTableWorkbook } from '../lib/analysisWorkbook'
@@ -35,10 +36,13 @@ import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState 
 import { isSignedOff } from '../lib/invoice'
 import { costElementBreakup, filterAccrualYears, yearlyBudgetFigures, type AccrualSortKey } from '../lib/fyAnalysis'
 import AccrualAnalysisPanel from './AccrualAnalysisPanel'
+import PowerGraphPage from './PowerGraphPage'
 import { ChartStage, MixWave } from '../components/ui/EnergyWave'
 import { contractNoOf, vendorNameOf } from '../lib/relations'
 import { barDataset, chartMotion, doughnutSlice, gradientBarFill, reportBarCrown, tooltipMotion, waveLine } from '../lib/chartWave'
 import ChartDrillDown, { type DrillRow } from '../components/ui/ChartDrillDown'
+import ActionMenu from '../components/ui/ActionMenu'
+import { type InvoiceListQuery } from '../lib/invoiceListQuery'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler, reportBarCrown)
 
@@ -174,6 +178,10 @@ interface Insight {
 }
 
 export default function ReportsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [pgOpen, setPgOpen] = useState(() => searchParams.get('pg') === '1')
+  const [pgLeaving, setPgLeaving] = useState(false)
+  const pgLeaveTimer = useRef<number>(0)
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const [yearBudgets, setYearBudgets] = useState<YearBudget[]>([])
@@ -195,7 +203,45 @@ export default function ReportsPage() {
   const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const toast = useToast()
   const c = useThemeColors()
-  const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[] } | null>(null)
+
+  const beginPgLeave = useCallback(() => {
+    if (pgLeaving) return
+    setPgLeaving(true)
+    window.clearTimeout(pgLeaveTimer.current)
+    pgLeaveTimer.current = window.setTimeout(() => {
+      setPgOpen(false)
+      setPgLeaving(false)
+    }, 340)
+  }, [pgLeaving])
+
+  useEffect(() => () => window.clearTimeout(pgLeaveTimer.current), [])
+
+  useEffect(() => {
+    const want = searchParams.get('pg') === '1'
+    if (want && !pgOpen) {
+      setPgLeaving(false)
+      setPgOpen(true)
+    } else if (!want && pgOpen && !pgLeaving) {
+      beginPgLeave()
+    }
+  }, [searchParams, pgOpen, pgLeaving, beginPgLeave])
+
+  const openPowerGraph = () => {
+    window.clearTimeout(pgLeaveTimer.current)
+    setPgLeaving(false)
+    setPgOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.set('pg', '1')
+    setSearchParams(next, { replace: true })
+  }
+
+  const exitPowerGraph = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('pg')
+    setSearchParams(next, { replace: true })
+    beginPgLeave()
+  }
+  const [drill, setDrill] = useState<{ title: string; subtitle: string; rows: DrillRow[]; listQuery?: InvoiceListQuery } | null>(null)
   const [spendHover, setSpendHover] = useState<number | null>(null)
 
   const [, liveVersion] = useLiveDomain(['invoices', 'contracts', 'budgets', 'paymentOrders'])
@@ -204,7 +250,7 @@ export default function ReportsPage() {
     const accrualFy = fyScope === 'all' ? currentFiscalYear() : fyScope
     Promise.all([
       apiGet<{ invoices: Invoice[] }>(
-        invoiceListPath(),
+        invoiceListPath({ fy: fyScope === 'all' ? undefined : fyScope, limit: 5000 }),
       ),
       apiGet<{ contracts: Contract[] }>('/api/contracts'),
       apiGet<{ budgets: YearBudget[] }>('/api/budgets'),
@@ -334,6 +380,10 @@ export default function ReportsPage() {
     (v: number) => (metric === 'invoices' ? formatMoney(v, 0) : `Rs ${formatMoney(v)}`),
     [metric],
   )
+  const fmtAxis = useCallback(
+    (v: number) => (metric === 'invoices' ? formatMoney(v, 0) : `Rs ${formatCompactMoney(v)}`),
+    [metric],
+  )
 
   const kpi = useMemo(() => {
     const total = spendScoped.reduce((s, i) => s + Number(i.amount ?? 0), 0)
@@ -454,6 +504,12 @@ export default function ReportsPage() {
       title: `${m.label} · ${monthly.fy}`,
       subtitle: `${rows.length} invoice${rows.length === 1 ? '' : 's'} · ${fmtMetric(m.value)}`,
       rows,
+      listQuery: {
+        fy: fyScope === 'all' ? undefined : fyScope,
+        fyMonth: idx,
+        sort: 'invoice_date',
+        dir: 'desc',
+      },
     })
   }
 
@@ -509,7 +565,8 @@ export default function ReportsPage() {
     let opex = 0
     let opexBudget = 0
     let miscBudget = 0
-    for (const inv of spendScoped) {
+    for (const inv of scoped) {
+      if (!isOpexSpendStatus(inv.status)) continue
       if (costCategory(inv.cost_element) === 'OPEX') opex += Number(inv.amount ?? 0)
     }
     for (const b of yearBudgets) {
@@ -521,7 +578,7 @@ export default function ReportsPage() {
     const capex = Math.max(0, opexBudget - opex)
     const total = opex + capex + miscBudget
     return { OPEX: opex, CAPEX: capex, Uncategorized: miscBudget, total }
-  }, [spendScoped, yearBudgets, fySet])
+  }, [scoped, yearBudgets, fySet])
 
   const byVendor = useMemo(() => {
     const map = new Map<string, { count: number; total: number }>()
@@ -806,6 +863,14 @@ export default function ReportsPage() {
     }
   }
 
+  if (pgOpen) {
+    return (
+      <div className={pgLeaving ? 'pg-leave' : 'pg-enter'}>
+        <PowerGraphPage onExit={exitPowerGraph} />
+      </div>
+    )
+  }
+
   if (loading) {
     return <div className="py-24 text-center text-[var(--text-muted)]">Loading reports…</div>
   }
@@ -840,14 +905,19 @@ export default function ReportsPage() {
   const fyBarPalette = [c.accent, c.accent2, c.accent3, c.accent4, c.warn]
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pg-enter">
       <PageHeader
         title="Reports & Analysis"
         description="Analyse spend, budget, accruals and AP aging. Generate an Excel workbook from Gen Report."
         actions={
-          <Button variant="primary" onClick={() => setGenOpen(true)}>
-            <FileSpreadsheet size={16} /> Gen Report
-          </Button>
+          <>
+            <Button variant="ghost" className="pg-launch" onClick={openPowerGraph}>
+              <Sparkles size={16} /> Power Graph
+            </Button>
+            <Button variant="primary" onClick={() => setGenOpen(true)}>
+              <FileSpreadsheet size={16} /> Gen Report
+            </Button>
+          </>
         }
       />
 
@@ -1023,17 +1093,62 @@ export default function ReportsPage() {
                 color: seg.color,
                 label: seg.label,
               }))}
+              onSelect={(key) => {
+                const rows = scoped
+                  .filter((inv) => {
+                    if (key === 'OPEX') return isOpexSpendStatus(inv.status) && costCategory(inv.cost_element) === 'OPEX'
+                    if (key === 'Uncategorized') return isMiscCostElement(inv.cost_element)
+                    return false
+                  })
+                  .map(toDrillRow)
+                const seg = mixSegments.find((s) => s.key === key)
+                setDrill({
+                  title: seg?.label ?? key,
+                  subtitle: key === 'CAPEX' ? 'CAPEX outlook is unused OPEX budget' : `${rows.length} invoice${rows.length === 1 ? '' : 's'}`,
+                  rows,
+                  listQuery: {
+                    fy: fyScope === 'all' ? undefined : fyScope,
+                    mix: key === 'OPEX' ? 'opex' : key === 'Uncategorized' ? 'misc' : undefined,
+                    sort: 'amount',
+                    dir: 'desc',
+                  },
+                })
+              }}
             />
           </div>
           <div className="mt-4 space-y-2">
             {mixSegments.map((seg) => (
-              <div key={seg.key} className="flex items-center justify-between text-xs">
+              <button
+                key={seg.key}
+                type="button"
+                className="flex w-full items-center justify-between text-xs"
+                onClick={() => {
+                  const rows = scoped
+                    .filter((inv) => {
+                      if (seg.key === 'OPEX') return isOpexSpendStatus(inv.status) && costCategory(inv.cost_element) === 'OPEX'
+                      if (seg.key === 'Uncategorized') return isMiscCostElement(inv.cost_element)
+                      return false
+                    })
+                    .map(toDrillRow)
+                  setDrill({
+                    title: seg.label,
+                    subtitle: seg.key === 'CAPEX' ? 'CAPEX outlook is unused OPEX budget' : `${rows.length} invoice${rows.length === 1 ? '' : 's'}`,
+                    rows,
+                    listQuery: {
+                      fy: fyScope === 'all' ? undefined : fyScope,
+                      mix: seg.key === 'OPEX' ? 'opex' : seg.key === 'Uncategorized' ? 'misc' : undefined,
+                      sort: 'amount',
+                      dir: 'desc',
+                    },
+                  })
+                }}
+              >
                 <span className="flex items-center gap-2">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: seg.color }} />
                   <span className={categoryMix[seg.key] > 0 ? 'font-semibold' : 'text-[var(--text-dim)]'}>{seg.label}</span>
                 </span>
                 <b>Rs {formatMoney(categoryMix[seg.key])}</b>
-              </div>
+              </button>
             ))}
           </div>
           <p className="mt-auto pt-3 text-[0.62rem] text-[var(--text-dim)]">
@@ -1052,7 +1167,11 @@ export default function ReportsPage() {
             <span className="flex items-center gap-2 text-[0.62rem] font-bold uppercase tracking-wider text-[var(--text-muted)]">
               <Sparkles size={13} className="text-[var(--accent)]" /> Foresight · {forecast.targetFy} projection
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={() => { void exportForecast() }}><Download size={14} /> Forecast Excel</button>
+            <ActionMenu
+              label="Actions"
+              icon={<Download size={14} />}
+              items={[{ key: 'excel', label: 'Forecast Excel', onSelect: () => { void exportForecast() } }]}
+            />
           </div>
           <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
             <div>
@@ -1130,7 +1249,11 @@ export default function ReportsPage() {
       <div className="rise-in" style={{ animationDelay: '340ms' }}>
         <div className="flex items-center justify-between">
           <div className="section-title" style={{ marginBottom: 0 }}>Budget vs actual</div>
-          <button className="btn btn-ghost btn-sm" onClick={() => { void exportBudgetVsActual() }}><Download size={14} /> Excel</button>
+          <ActionMenu
+            label="Actions"
+            icon={<Download size={14} />}
+            items={[{ key: 'excel', label: 'Export Excel', onSelect: () => { void exportBudgetVsActual() } }]}
+          />
         </div>
         {isClosedFiscalYear(reportFy) && accrual && (
           <p className="mt-2 text-xs text-[var(--text-dim)]">
@@ -1309,7 +1432,34 @@ export default function ReportsPage() {
                 options={{
                   responsive: true,
                   maintainAspectRatio: false,
+                  clip: false as const,
+                  layout: { padding: { top: 8, right: 6, bottom: 0, left: 2 } },
                   ...chartMotion('bar'),
+                  onClick: (_evt, elements) => {
+                    const el = elements[0]
+                    if (!el) return
+                    const q = quarterOrder[el.index]
+                    if (!q) return
+                    const fy = quarterlyByFy[el.datasetIndex]?.fy
+                    const rows = spendScoped
+                      .filter((inv) => {
+                        const fi = invoiceBudgetInfo(inv)
+                        if (!fi || fi.quarter !== q.q) return false
+                        return fy ? fi.fy === fy : fySet.has(fi.fy)
+                      })
+                      .map(toDrillRow)
+                    setDrill({
+                      title: `${q.q}${fy ? ` · ${fy}` : ''}`,
+                      subtitle: `${rows.length} invoice${rows.length === 1 ? '' : 's'}`,
+                      rows,
+                      listQuery: {
+                        fy: fy ?? (fyScope === 'all' ? undefined : fyScope),
+                        quarter: q.q,
+                        sort: 'amount',
+                        dir: 'desc',
+                      },
+                    })
+                  },
                   plugins: {
                     legend: {
                       display: selectedFys.length > 1,
@@ -1324,14 +1474,16 @@ export default function ReportsPage() {
                     },
                   },
                   scales: {
-                    x: { grid: { display: false }, ticks: { color: c.ticks } },
+                    x: { grid: { display: false }, ticks: { color: c.ticks, font: { size: 11 } } },
                     y: {
                       beginAtZero: true,
-                      grace: '8%',
+                      grace: '10%',
                       grid: { color: c.grid },
                       ticks: {
                         color: c.ticks,
-                        callback: (value) => fmtMetric(Number(value)),
+                        font: { size: 11 },
+                        maxTicksLimit: 6,
+                        callback: (value) => fmtAxis(Number(value)),
                       },
                     },
                   },
@@ -1428,14 +1580,15 @@ export default function ReportsPage() {
                 Unpaid invoices of {ledgerFy} stay on Accrual Balance. They do not mix with {runningFy} remaining budget.
               </p>
             </div>
-            <div className="flex gap-2">
-              <button className={`btn btn-ghost btn-sm${ledgerSort === 'date' ? ' is-active' : ''}`} onClick={() => setLedgerSort('date')}>
-                Sort date
-              </button>
-              <button className={`btn btn-ghost btn-sm${ledgerSort === 'amount' ? ' is-active' : ''}`} onClick={() => setLedgerSort('amount')}>
-                Sort amount
-              </button>
-            </div>
+            <ActionMenu
+              label="Sort"
+              icon={<ArrowUpDown size={14} />}
+              activeKey={ledgerSort}
+              items={[
+                { key: 'date', label: 'Date', onSelect: () => setLedgerSort('date') },
+                { key: 'amount', label: 'Amount', onSelect: () => setLedgerSort('amount') },
+              ]}
+            />
           </div>
           {ledgerRows.length === 0 ? (
             <p className="mt-3 text-sm text-[var(--text-muted)]">No unpaid invoices on {ledgerFy} accrual.</p>
@@ -1522,14 +1675,26 @@ export default function ReportsPage() {
               options={{
                 responsive: true,
                 maintainAspectRatio: false,
+                clip: false as const,
+                layout: { padding: { top: 8, right: 6, bottom: 0, left: 2 } },
                 ...chartMotion('line'),
                 plugins: {
                   legend: { position: 'bottom', labels: { color: c.ticks, boxWidth: 10, padding: 12 } },
                   tooltip: { ...tooltipMotion() },
                 },
                 scales: {
-                  x: { grid: { display: false }, ticks: { color: c.ticks } },
-                  y: { beginAtZero: true, grace: '8%', grid: { color: c.grid }, ticks: { color: c.ticks } },
+                  x: { grid: { display: false }, ticks: { color: c.ticks, font: { size: 11 } } },
+                  y: {
+                    beginAtZero: true,
+                    grace: '10%',
+                    grid: { color: c.grid },
+                    ticks: {
+                      color: c.ticks,
+                      font: { size: 11 },
+                      maxTicksLimit: 6,
+                      callback: (value) => `Rs ${formatCompactMoney(Number(value))}`,
+                    },
+                  },
                 },
               }}
             />
@@ -1595,11 +1760,23 @@ export default function ReportsPage() {
               options={{
                 responsive: true,
                 maintainAspectRatio: false,
+                clip: false as const,
+                layout: { padding: { top: 8, right: 6, bottom: 0, left: 2 } },
                 ...chartMotion('line'),
                 plugins: { legend: { display: false }, tooltip: { ...tooltipMotion() } },
                 scales: {
-                  x: { grid: { display: false }, ticks: { color: c.ticks } },
-                  y: { beginAtZero: true, grace: '8%', grid: { color: c.grid }, ticks: { color: c.ticks } },
+                  x: { grid: { display: false }, ticks: { color: c.ticks, font: { size: 11 } } },
+                  y: {
+                    beginAtZero: true,
+                    grace: '10%',
+                    grid: { color: c.grid },
+                    ticks: {
+                      color: c.ticks,
+                      font: { size: 11 },
+                      maxTicksLimit: 6,
+                      callback: (value) => fmtAxis(Number(value)),
+                    },
+                  },
                 },
               }}
             />
@@ -1891,6 +2068,7 @@ export default function ReportsPage() {
         title={drill?.title ?? ''}
         subtitle={drill?.subtitle ?? ''}
         rows={drill?.rows ?? []}
+        listQuery={drill?.listQuery}
         onClose={() => setDrill(null)}
       />
     </div>

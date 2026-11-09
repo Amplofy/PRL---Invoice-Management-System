@@ -1,7 +1,10 @@
+import { ArrowUpDown } from 'lucide-react'
 import { formatDate, formatMoney } from '../lib/format'
 import { invoiceBudgetDate, isClosedFiscalYear, shiftFiscalYear } from '../lib/fiscal'
 import type { AccrualSortKey, CostBreakRow } from '../lib/fyAnalysis'
 import type { AccrualSnapshot } from '../lib/accrual'
+import ActionMenu from '../components/ui/ActionMenu'
+import { Select } from '../components/ui/Field'
 
 interface AccrualInvoiceRow {
   id: string
@@ -99,20 +102,25 @@ export default function AccrualAnalysisPanel({
             <p className="mt-1 text-xs text-[var(--text-dim)]">Filter and sort past years. Payments stay off {runningFy} remaining.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <select className="input input-fit py-1!" value={tableFy} onChange={(e) => onTableFy(e.target.value)}>
+            <Select className="input input-fit py-1!" value={tableFy} onChange={(e) => onTableFy(e.target.value)}>
               <option value="all">All closed FYs</option>
               {years.filter((y) => isClosedFiscalYear(y.fy)).map((y) => (
                 <option key={y.fy} value={y.fy}>{y.fy}</option>
               ))}
-            </select>
+            </Select>
             <input className="input input-fit-sm py-1!" type="number" min={0} placeholder="Min balance" value={minBalance} onChange={(e) => onMinBalance(e.target.value)} />
-            <select className="input input-fit py-1!" value={sort} onChange={(e) => onSort(e.target.value as AccrualSortKey)}>
-              <option value="fy">Sort FY</option>
-              <option value="secured">Sort accrual</option>
-              <option value="unpaid">Sort unpaid</option>
-              <option value="consumed">Sort released</option>
-              <option value="balance">Sort balance</option>
-            </select>
+            <ActionMenu
+              label="Sort"
+              icon={<ArrowUpDown size={14} />}
+              activeKey={sort}
+              items={[
+                { key: 'fy', label: 'Fiscal year', onSelect: () => onSort('fy') },
+                { key: 'secured', label: 'Sundry accrual', onSelect: () => onSort('secured') },
+                { key: 'unpaid', label: 'Unpaid', onSelect: () => onSort('unpaid') },
+                { key: 'consumed', label: 'Released', onSelect: () => onSort('consumed') },
+                { key: 'balance', label: 'Balance', onSelect: () => onSort('balance') },
+              ]}
+            />
           </div>
         </div>
         {tableRows.length === 0 ? (
@@ -181,10 +189,15 @@ export default function AccrualAnalysisPanel({
       <div className="report-card glass p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-bold">{ledgerFy} unpaid invoices</div>
-          <div className="flex gap-2">
-            <button className={`btn btn-ghost btn-sm${ledgerSort === 'date' ? ' is-active' : ''}`} onClick={() => onLedgerSort('date')}>Sort date</button>
-            <button className={`btn btn-ghost btn-sm${ledgerSort === 'amount' ? ' is-active' : ''}`} onClick={() => onLedgerSort('amount')}>Sort amount</button>
-          </div>
+          <ActionMenu
+            label="Sort"
+            icon={<ArrowUpDown size={14} />}
+            activeKey={ledgerSort}
+            items={[
+              { key: 'date', label: 'Date', onSelect: () => onLedgerSort('date') },
+              { key: 'amount', label: 'Amount', onSelect: () => onLedgerSort('amount') },
+            ]}
+          />
         </div>
         {ledgerRows.length === 0 ? (
           <p className="mt-3 text-sm text-[var(--text-muted)]">No unpaid invoices on {ledgerFy}.</p>

@@ -104,6 +104,7 @@ export type CompareResult = {
 export type EmailResult = {
   id?: string
   error?: string
+  configured?: boolean
 }
 
 export type PendingFollowup = {

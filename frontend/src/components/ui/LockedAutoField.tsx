@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { Lock, Wand2 } from 'lucide-react'
 import { useMasterAccess } from '../../lib/masterAccess'
+import { formatDate } from '../../lib/format'
 import Modal from './Modal'
 import Button from './Button'
 import { Field } from './Field'
+import DateField from './DateField'
 
 interface LockedAutoFieldProps {
   label: string
@@ -37,7 +39,7 @@ export default function LockedAutoField({
     setOpen(true)
   }
 
-  const shown = display || value || placeholder
+  const shown = display || (type === 'date' && value ? formatDate(value) : value) || placeholder
   const empty = !(display || value)
 
   const editor = (
@@ -61,18 +63,22 @@ export default function LockedAutoField({
       }
     >
       <Field label={`New ${label}`}>
-        <input
-          className="input"
-          type={type}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              onCommit(draft.trim())
-              setOpen(false)
-            }
-          }}
-        />
+        {type === 'date' ? (
+          <DateField value={draft} onChange={setDraft} />
+        ) : (
+          <input
+            className="input"
+            type={type}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                onCommit(draft.trim())
+                setOpen(false)
+              }
+            }}
+          />
+        )}
       </Field>
     </Modal>
   )
@@ -90,7 +96,7 @@ export default function LockedAutoField({
           <span className="text-[0.58rem] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
             {label}
           </span>
-          <span className={`font-mono text-xs font-bold tracking-wide ${empty ? 'text-[var(--text-muted)]' : ''}`}>
+          <span className={`whitespace-nowrap ${empty ? 'text-[0.65rem] font-medium text-[var(--text-muted)]' : 'font-mono text-xs font-bold tracking-wide'}`}>
             {shown}
           </span>
           <Lock size={9} className="shrink-0 text-[var(--text-muted)]" />
@@ -113,16 +119,15 @@ export default function LockedAutoField({
       </span>
       <button
         type="button"
-        className="input flex w-full items-center justify-between text-left font-mono text-sm font-bold tracking-wide"
-        style={{
-          background: 'var(--surface)',
-          cursor: unlocked ? 'pointer' : 'default',
-        }}
+        className="input flex w-full items-center gap-2 bg-[var(--surface)]! text-left text-sm"
+        style={{ cursor: unlocked ? 'pointer' : 'default' }}
         title={unlocked ? 'Master access: click to override' : hint || 'Auto-generated'}
         onClick={click}
       >
-        <span className={empty ? 'text-[var(--text-muted)]' : ''}>{shown}</span>
-        <Lock size={11} className="shrink-0 text-[var(--text-muted)]" />
+        <span className={`min-w-0 truncate whitespace-nowrap ${empty ? 'text-[0.65rem] font-medium text-[var(--text-muted)]' : 'font-mono text-sm font-bold tracking-wide'}`}>
+          {shown}
+        </span>
+        <Lock size={11} className="ml-auto shrink-0 text-[var(--text-muted)]" />
       </button>
       {editor}
     </div>

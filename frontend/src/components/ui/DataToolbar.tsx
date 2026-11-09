@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, Download, Search } from 'lucide-react'
 import { type SortDirection } from '../../lib/export'
+import SelectMenu from './SelectMenu'
 
 export interface FilterDef {
   key: string
@@ -46,19 +47,14 @@ export default function DataToolbar({ leading, search, filters, sort, onExport, 
         {filters && filters.length > 0 && (
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {filters.map((f) => (
-              <select
+              <SelectMenu
                 key={f.key}
                 value={f.value}
-                onChange={(e) => f.onChange(e.target.value)}
+                onChange={f.onChange}
                 aria-label={f.label}
-                className="input input-fit"
-              >
-                {f.options.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+                className="input-fit"
+                options={f.options}
+              />
             ))}
           </div>
         )}
@@ -66,19 +62,14 @@ export default function DataToolbar({ leading, search, filters, sort, onExport, 
         <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
           {sort && (
             <div className="flex shrink-0 items-center gap-2">
-              <select
+              <SelectMenu
                 value={sort.value}
-                onChange={(e) => sort.onValueChange(e.target.value)}
+                onChange={sort.onValueChange}
                 aria-label="Sort by"
-                className="input input-fit"
-              >
-                <option value="">No sort</option>
-                {sort.columns.map((c) => (
-                  <option key={c.key} value={c.key}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
+                className="input-fit"
+                placeholder="No sort"
+                options={sort.columns.map((c) => ({ value: c.key, label: c.label }))}
+              />
               <button
                 type="button"
                 className="sort-dir-btn"

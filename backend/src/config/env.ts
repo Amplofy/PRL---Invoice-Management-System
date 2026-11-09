@@ -22,7 +22,7 @@ export const env: Env = {
   SUPABASE_URL: required('SUPABASE_URL'),
   SUPABASE_SERVICE_ROLE_KEY: required('SUPABASE_SERVICE_ROLE_KEY'),
   SUPABASE_JWT_SECRET: required('SUPABASE_JWT_SECRET'),
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || '',
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '',
   RESEND_API_KEY: process.env.RESEND_API_KEY || '',
   EMAIL_FROM: process.env.EMAIL_FROM || 'PRL Finance <noreply@prl-eoms.com>',
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',

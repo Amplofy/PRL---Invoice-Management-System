@@ -194,3 +194,9 @@ export function costCategory(code: string | null | undefined): 'OPEX' | 'CAPEX' 
   if (isMiscCostElement(code)) return 'Uncategorized'
   return COST_ELEMENT_CATEGORY[code.toUpperCase()] ?? 'Uncategorized'
 }
+
+/** OPEX mix counts every invoice except Rejected / Void. */
+export function isOpexSpendStatus(status: string | null | undefined): boolean {
+  const st = String(status ?? '')
+  return st !== 'Rejected' && st !== 'Void'
+}

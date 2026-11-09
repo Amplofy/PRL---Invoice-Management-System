@@ -215,7 +215,7 @@ export default function AuditLogPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
-        <div className="table-scroll">
+        <div className={`table-scroll${col.hasExtra ? ' has-extra' : ''}`}>
           <table className="data-table">
             <thead>
               <tr>

@@ -9,7 +9,7 @@ import GlassCard from '../components/ui/GlassCard'
 import Tabs, { useTab } from '../components/ui/Tabs'
 import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
-import { Field } from '../components/ui/Field'
+import { Field, Select } from '../components/ui/Field'
 import StatusBadge from '../components/ui/StatusBadge'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
@@ -343,7 +343,7 @@ export default function UsersPage() {
             />
           </DataToolbar>
           <GlassCard className="overflow-hidden">
-            <div className="table-scroll">
+            <div className={`table-scroll${col.hasExtra ? ' has-extra' : ''}`}>
               <table className="data-table">
               <thead>
                 <tr>
@@ -595,18 +595,21 @@ function UserFormModal({
           <input type="email" className="input" value={form.email} onChange={set('email')} autoComplete="off" />
         </Field>
         <Field label="Role" required>
-          <select className="input" value={form.role_id} onChange={set('role_id')}>
+          <Select className="input" value={form.role_id} onChange={set('role_id')}>
             <option value="">Select a role</option>
             {roles.map((r) => (
               <option key={r.id} value={r.id}>{r.name}</option>
             ))}
-          </select>
+          </Select>
         </Field>
-        <Field label="Status">
-          <select className="input" value={form.status} onChange={set('status')} disabled={self}>
+        <Field
+          label="Status"
+          hint={self ? 'You cannot deactivate your own account' : 'Inactive bans the login and signs them out immediately'}
+        >
+          <Select className="input" value={form.status} onChange={set('status')} disabled={self}>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
-          </select>
+          </Select>
         </Field>
         <Field
           label={user ? 'New password' : 'Password'}

@@ -11,6 +11,8 @@ import StatusBadge, { statusTone } from '../components/ui/StatusBadge'
 import Modal from '../components/ui/Modal'
 import Button from '../components/ui/Button'
 import { Field } from '../components/ui/Field'
+import DateField from '../components/ui/DateField'
+import SelectMenu from '../components/ui/SelectMenu'
 import EmptyState from '../components/ui/EmptyState'
 import DataToolbar from '../components/ui/DataToolbar'
 import ColumnsButton from '../components/ui/ColumnsButton'
@@ -22,9 +24,9 @@ import ValidationSummary from '../components/ui/ValidationSummary'
 import { emitAppEvent } from '../lib/notify'
 import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { downloadTableWorkbook } from '../lib/analysisWorkbook'
-import { useAuth, isAdmin } from '../lib/auth'
+import { useAuth, canApproveInvoice, canCreateInvoice, canDeleteInvoice, canGeneratePo, canRejectInvoice, canUpdateInvoice } from '../lib/auth'
 import { useColumnVisibility } from '../lib/columns'
-import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
+import { applyFilters, newFilterId, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
 import AdvancedFilter from '../components/ui/AdvancedFilter'
 import GroupByPicker from '../components/ui/GroupByPicker'
@@ -32,7 +34,8 @@ import SummaryCards from '../components/ui/SummaryCards'
 import SortableTh from '../components/ui/SortableTh'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ColumnResizeProvider, HeaderTh } from '../components/ui/ResizableTh'
-import { costCategory, currentFiscalYear, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isClosedFiscalYear, nearbyFiscalYears } from '../lib/fiscal'
+import { costCategory, currentFiscalYear, fyMonthIndex, invoiceBudgetDate, invoiceBudgetFy, invoiceBudgetInfo, isClosedFiscalYear, isMiscCostElement, isOpexSpendStatus, nearbyFiscalYears } from '../lib/fiscal'
+import { invoiceListQueryHasValues, parseInvoiceListSearch, type InvoiceListMix } from '../lib/invoiceListQuery'
 import { useFyLock } from '../lib/FyLockProvider'
 import { useMasterAccess } from '../lib/masterAccess'
 import { invoiceListPath } from '../lib/invoiceWindow'
@@ -121,6 +124,10 @@ export default function InvoicesPage() {
   const [filters, setFilters] = useState<FilterState[]>([])
   const [filterLogic, setFilterLogic] = useState<FilterLogic>('and')
   const [groupKey, setGroupKey] = useState<string | null>(null)
+  const [monthScope, setMonthScope] = useState<string | null>(null)
+  const [fyMonthScope, setFyMonthScope] = useState<number | null>(null)
+  const [mixScope, setMixScope] = useState<InvoiceListMix | null>(null)
+  const [queryStamp, setQueryStamp] = useState('')
   const [editing, setEditing] = useState<Invoice | null>(null)
   const [creating, setCreating] = useState(false)
   const [rejecting, setRejecting] = useState<Invoice | null>(null)
@@ -139,7 +146,12 @@ export default function InvoicesPage() {
   const [bulkRejecting, setBulkRejecting] = useState(false)
   const toast = useToast()
   const { user } = useAuth()
-  const admin = isAdmin(user?.role)
+  const canCreate = canCreateInvoice(user)
+  const canUpdate = canUpdateInvoice(user)
+  const canDelete = canDeleteInvoice(user)
+  const canApprove = canApproveInvoice(user)
+  const canReject = canRejectInvoice(user)
+  const canGenerate = canGeneratePo(user)
 
   const location = useLocation()
   const navigate = useNavigate()
@@ -149,7 +161,7 @@ export default function InvoicesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const d = await apiGet<{ invoices: Invoice[] }>(invoiceListPath({ fy: fyScope }))
+      const d = await apiGet<{ invoices: Invoice[] }>(invoiceListPath({ fy: fyScope, limit: 5000 }))
       setInvoices(d.invoices)
       const c = await apiGet<{ contracts: Contract[] }>('/api/contracts')
       setContracts(c.contracts)
@@ -173,9 +185,40 @@ export default function InvoicesPage() {
   useEffect(() => {
     const st = location.state as { newInvoice?: boolean } | null
     if (!st?.newInvoice) return
-    setCreating(true)
+    if (canCreate) setCreating(true)
     navigate(location.pathname, { replace: true, state: {} })
-  }, [location.state, location.pathname, navigate])
+  }, [location.state, location.pathname, navigate, canCreate])
+
+  useEffect(() => {
+    const parsed = parseInvoiceListSearch(location.search)
+    if (!invoiceListQueryHasValues(parsed)) {
+      if (queryStamp) {
+        setMonthScope(null)
+        setFyMonthScope(null)
+        setMixScope(null)
+        setFilters([])
+        setQueryStamp('')
+      }
+      return
+    }
+    const stamp = location.search
+    if (stamp === queryStamp) return
+    setQueryStamp(stamp)
+    if (parsed.fy) setFyScope(parsed.fy)
+    setSearch(parsed.q ?? '')
+    setSortBy(parsed.sort ?? 'invoice_date')
+    setSortDir(parsed.dir ?? 'desc')
+    setMonthScope(parsed.month ?? null)
+    setFyMonthScope(parsed.fyMonth ?? null)
+    setMixScope(parsed.mix ?? null)
+
+    const next: FilterState[] = []
+    if (parsed.status) next.push({ id: newFilterId(), key: 'status', op: 'is', value: parsed.status })
+    if (parsed.vendor) next.push({ id: newFilterId(), key: 'vendor', op: 'contains', value: parsed.vendor })
+    if (parsed.contract) next.push({ id: newFilterId(), key: 'contract', op: 'contains', value: parsed.contract })
+    if (parsed.quarter) next.push({ id: newFilterId(), key: 'quarter', op: 'is', value: parsed.quarter })
+    setFilters(next)
+  }, [location.search, queryStamp])
 
   useEffect(() => {
     document.body.classList.toggle('qa-lift', selected.size > 0)
@@ -240,7 +283,7 @@ export default function InvoicesPage() {
   }
 
   const generatePo = async () => {
-    if (!generatingPo) return
+    if (!generatingPo || !canGenerate) return
     if (!isUnpaidPriorYearInvoice(generatingPo) && !(await guardWrite(invoiceBudgetDate(generatingPo)))) return
     try {
       await apiPost(`/api/invoices/${generatingPo.id}/po`, {})
@@ -274,6 +317,7 @@ export default function InvoicesPage() {
       { key: 'status', label: 'Status', type: 'select', options: STATUSES.filter((s) => s !== 'all').map((s) => ({ value: s, label: s })) },
       { key: 'contract_id', label: 'Contract', type: 'select', options: contracts.map((c) => ({ value: c.id, label: c.contract_no })) },
       { key: 'vendor', label: 'Vendor', type: 'text' },
+      { key: 'contract', label: 'Contract', type: 'text' },
       { key: 'invoice_no', label: 'Invoice No', type: 'text' },
       { key: 'serial_no', label: 'Serial', type: 'text' },
       { key: 'invoice_date', label: 'Date', type: 'date' },
@@ -286,6 +330,7 @@ export default function InvoicesPage() {
       { key: 't3', label: 'Detail', type: 'select', options: [...new Set(invoices.map((i) => i.t3).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
       { key: 'location', label: 'Location', type: 'select', options: [...new Set(invoices.map((i) => i.location).filter(Boolean) as string[])].sort().map((v) => ({ value: v, label: v })) },
       { key: 'budget_fy', label: 'Budget FY', type: 'select', options: fyChoices.map((y) => ({ value: y, label: y })) },
+      { key: 'quarter', label: 'Quarter', type: 'select', options: ['Q1', 'Q2', 'Q3', 'Q4'].map((q) => ({ value: q, label: q })) },
       { key: 'amount', label: 'Amount', type: 'number' },
       { key: 'remarks', label: 'Remarks', type: 'text' },
     ],
@@ -296,10 +341,14 @@ export default function InvoicesPage() {
     switch (key) {
       case 'vendor':
         return vendorOf(inv)
+      case 'contract':
+        return contractNoOf(inv)
       case 'contract_id':
         return inv.contract_id
       case 'budget_fy':
         return invoiceBudgetFy(inv)
+      case 'quarter':
+        return invoiceBudgetInfo(inv)?.quarter ?? null
       default:
         return (inv as unknown as Record<string, string | number | null>)[key] ?? null
     }
@@ -314,9 +363,25 @@ export default function InvoicesPage() {
             .includes(q),
         )
       : invoices
-    return applyFilters(searched, filters, filterColumns, invoiceFilterValue, filterLogic)
+    const advanced = applyFilters(searched, filters, filterColumns, invoiceFilterValue, filterLogic)
+    return advanced.filter((inv) => {
+      const date = invoiceBudgetDate(inv)
+      if (monthScope) {
+        if (!date || !date.startsWith(monthScope)) return false
+      }
+      if (fyMonthScope != null) {
+        if (!date || fyMonthIndex(date) !== fyMonthScope) return false
+      }
+      if (mixScope === 'opex') {
+        if (!(isOpexSpendStatus(inv.status) && costCategory(inv.cost_element) === 'OPEX')) return false
+      }
+      if (mixScope === 'misc') {
+        if (!isMiscCostElement(inv.cost_element)) return false
+      }
+      return true
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, search, filters, filterColumns, filterLogic])
+  }, [invoices, search, filters, filterColumns, filterLogic, monthScope, fyMonthScope, mixScope])
 
   const sorted = useMemo(
     () =>
@@ -577,9 +642,11 @@ export default function InvoicesPage() {
         title="Invoices"
         description="Browse, approve, reject and generate payment orders for vendor invoices."
         actions={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            <Plus size={16} /> New Invoice
-          </Button>
+          canCreate ? (
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              <Plus size={16} /> New Invoice
+            </Button>
+          ) : undefined
         }
       />
 
@@ -676,7 +743,7 @@ export default function InvoicesPage() {
 
       <GlassCard className="overflow-hidden">
         <ColumnResizeProvider storageKey="prl-eoms-colw-invoices">
-        <div className="table-scroll">
+        <div className={`table-scroll${col.hasExtra ? ' has-extra' : ''}`}>
           <table className="data-table">
             <thead>
               <tr>
@@ -777,30 +844,36 @@ export default function InvoicesPage() {
                     </td>
                   )}
                   {col.show('remarks') && (
-                    <td className="text-xs text-[var(--text-muted)]" title={inv.remarks ?? undefined}>
+                    <td className="cell-wrap text-xs text-[var(--text-muted)]" title={inv.remarks ?? undefined}>
                       {inv.remarks ?? '—'}
                     </td>
                   )}
                   <td>
                     <div className="flex items-center justify-end gap-1.5">
-                      <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditing(inv)}>
-                        <Pencil size={14} />
-                      </button>
+                      {canUpdate && (
+                        <button className="btn btn-ghost btn-sm" title="Edit" onClick={() => setEditing(inv)}>
+                          <Pencil size={14} />
+                        </button>
+                      )}
                       {inv.status === 'Pending' && (
                         <>
-                          <button className="btn btn-ghost btn-sm" title="Approve" onClick={() => approve(inv)}>
-                            <CheckCircle2 size={14} className="text-[var(--accent-3)]" />
-                          </button>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            title="Reject"
-                            onClick={() => {
-                              setRejecting(inv)
-                              setRejectReason('')
-                            }}
-                          >
-                            <XCircle size={14} className="text-[var(--danger)]" />
-                          </button>
+                          {canApprove && (
+                            <button className="btn btn-ghost btn-sm" title="Approve" onClick={() => approve(inv)}>
+                              <CheckCircle2 size={14} className="text-[var(--accent-3)]" />
+                            </button>
+                          )}
+                          {canReject && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              title="Reject"
+                              onClick={() => {
+                                setRejecting(inv)
+                                setRejectReason('')
+                              }}
+                            >
+                              <XCircle size={14} className="text-[var(--danger)]" />
+                            </button>
+                          )}
                         </>
                       )}
                       {(inv.status === 'Approved' || inv.status === 'Paid') &&
@@ -812,7 +885,7 @@ export default function InvoicesPage() {
                           >
                             <FileCheck2 size={14} className="text-[var(--accent-3)]" />
                           </Link>
-                        ) : (
+                        ) : canGenerate ? (
                           <button
                             className="btn btn-ghost btn-sm"
                             title="Generate PO"
@@ -820,8 +893,8 @@ export default function InvoicesPage() {
                           >
                             <FileOutput size={14} className="text-[var(--accent-2)]" />
                           </button>
-                        ))}
-                      {admin && inv.status !== 'Paid' && (
+                        ) : null)}
+                      {canDelete && inv.status !== 'Paid' && (
                         <button
                           className="btn btn-ghost btn-sm"
                           title="Delete"
@@ -887,9 +960,11 @@ export default function InvoicesPage() {
             title="No invoices found"
             description="Adjust filters or import invoice data."
             action={
-              <Button variant="primary" onClick={() => setCreating(true)}>
-                <Plus size={16} /> Create invoice
-              </Button>
+              canCreate ? (
+                <Button variant="primary" onClick={() => setCreating(true)}>
+                  <Plus size={16} /> Create invoice
+                </Button>
+              ) : undefined
             }
           />
         )}
@@ -932,12 +1007,16 @@ export default function InvoicesPage() {
             <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkBusy}>
               Clear
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setBulkRejecting(true)} disabled={bulkBusy}>
-              <XCircle size={14} /> Reject all
-            </Button>
-            <Button variant="success" size="sm" onClick={bulkApprove} disabled={bulkBusy}>
-              <CheckCircle2 size={14} /> {bulkBusy ? 'Working…' : `Approve all${selectedList.some((i) => i.status === 'Pending') ? ' + generate POs' : ''}`}
-            </Button>
+            {canReject && (
+              <Button variant="ghost" size="sm" onClick={() => setBulkRejecting(true)} disabled={bulkBusy}>
+                <XCircle size={14} /> Reject all
+              </Button>
+            )}
+            {canApprove && (
+              <Button variant="success" size="sm" onClick={bulkApprove} disabled={bulkBusy}>
+                <CheckCircle2 size={14} /> {bulkBusy ? 'Working…' : `Approve all${selectedList.some((i) => i.status === 'Pending') ? ' + generate POs' : ''}`}
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -1106,7 +1185,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
       apiGet<{ invoices: UtilizationInvoice[] }>(
         invoice?.contract_id
           ? invoiceListPath({ contract: invoice.contract_id })
-          : invoiceListPath({ fy: currentFiscalYear() }),
+          : invoiceListPath(),
       ),
       apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
       apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
@@ -1166,15 +1245,16 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
     return map
   }, [issues])
 
+  const processingDate = invoice?.processing_date?.slice(0, 10) || entryDate
+
   // Serial number is auto-generated: "XXX - YY" — running count for the Gregorian
-  // year of the invoice date + fiscal-year tag. Edit mode keeps the stored serial.
+  // year of the processing date + fiscal-year tag. Edit mode keeps the stored serial.
   const generatedSerial = useMemo(
     () =>
       serialOverride ||
-      nextSerialNo(form.invoice_date || undefined, allInvoices as SerialInvoiceLike[], invoice?.id),
-    [serialOverride, form.invoice_date, allInvoices, invoice?.id],
+      nextSerialNo(processingDate || undefined, allInvoices as SerialInvoiceLike[], invoice?.id),
+    [serialOverride, processingDate, allInvoices, invoice?.id],
   )
-  const processingDate = invoice?.processing_date?.slice(0, 10) || entryDate
 
   const focusFirstIssue = () => {
     requestAnimationFrame(() => {
@@ -1231,9 +1311,29 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
           emitCrossModule('contract', 'update', form.contract_id)
         }
       } else {
-        await apiPost('/api/invoices', body)
-        toast.success('Invoice created')
-        emitAppEvent('ok', 'Invoice created', `${form.invoice_no} entered for processing`, '/invoices')
+        const created = await apiPost<{
+          invoice?: { id: string }
+          autoApproved?: boolean
+          po?: { id: string } | null
+          notifyApprovers?: boolean
+        }>('/api/invoices', body)
+        if (created.autoApproved) {
+          toast.success('Invoice created and auto-approved', created.po ? 'Payment order generated' : undefined)
+          emitAppEvent(
+            'ok',
+            'Invoice auto-approved',
+            `${form.invoice_no} skipped the queue${created.po ? ' — PO generated' : ''}`,
+            created.po ? '/payment-orders' : '/invoices',
+          )
+        } else {
+          toast.success('Invoice created')
+          emitAppEvent(
+            'ok',
+            'Invoice created',
+            `${form.invoice_no} entered for processing`,
+            created.notifyApprovers === false ? '/invoices' : '/approvals',
+          )
+        }
         emitCrossModule('invoice', 'create')
         if (masterOn && form.vendor_id && form.vendor_id !== (selectedContract?.vendor_id ?? '')) {
           emitCrossModule('contract', 'update', form.contract_id)
@@ -1320,14 +1420,12 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 label="Serial No"
                 value={generatedSerial}
                 placeholder="···· - ··"
-                hint="Auto-generated: running count for the Gregorian year + fiscal-year tag (Jul–Jun)"
                 onCommit={setSerialOverride}
               />
               <LockedAutoField
                 label="Processing Date"
                 value={processingDate}
                 type="date"
-                hint="Stamped with the date of entry"
                 onCommit={setEntryDate}
               />
 
@@ -1337,11 +1435,19 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                   required
                   hint={masterOn ? 'Master Access: closed and invalid contracts allowed' : 'Live utilization preview on the right'}
                 >
-                  <select
-                    className="input"
+                  <SelectMenu
                     value={form.contract_id}
-                    onChange={(e) => {
-                      const contract_id = e.target.value
+                    placeholder="Select contract..."
+                    options={(fullContracts.length > 0
+                      ? fullContracts
+                      : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))
+                    )
+                      .filter((c) => masterOn || isSelectableContract(c))
+                      .map((c) => ({
+                        value: c.id,
+                        label: `${c.contract_no}${vendorNameOf(c, '') ? ` — ${vendorNameOf(c, '')}` : ''}${contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}`,
+                      }))}
+                    onChange={(contract_id) => {
                       const next = fullContracts.find((c) => c.id === contract_id)
                       setForm((f) => ({
                         ...f,
@@ -1356,21 +1462,7 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                         vendor_id: next?.vendor_id ?? '',
                       }))
                     }}
-                  >
-                    <option value="">Select contract...</option>
-                    {(fullContracts.length > 0
-                      ? fullContracts
-                      : contracts.map((c) => ({ ...c, value: 0, start_date: null, end_date: null, vendors: c.vendors }))
-                    )
-                      .filter((c) => masterOn || isSelectableContract(c))
-                      .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.contract_no}
-                        {vendorNameOf(c, '') ? ` — ${vendorNameOf(c, '')}` : ''}
-                        {contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </Field>
               </div>
 
@@ -1398,13 +1490,11 @@ function InvoiceFormModal({ open, invoice, contracts, onClose, onSaved }: Invoic
                 label="Invoice Date"
                 required
                 error={showErrors ? issueMap.invoice_date : undefined}
-                hint="Drives the serial number"
               >
-                <input
-                  type="date"
-                  className={`input ${showErrors && issueMap.invoice_date ? 'invalid' : ''}`}
+                <DateField
                   value={form.invoice_date}
-                  onChange={set('invoice_date')}
+                  invalid={Boolean(showErrors && issueMap.invoice_date)}
+                  onChange={(invoice_date) => setForm((f) => ({ ...f, invoice_date }))}
                 />
               </Field>
 

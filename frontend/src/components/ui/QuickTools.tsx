@@ -16,7 +16,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { useAuth, isAdmin } from '../../lib/auth'
+import { useAuth, isAdmin, canCreateInvoice, canGeneratePo, canImportData } from '../../lib/auth'
 
 interface CatalogItem {
   id: string
@@ -87,14 +87,24 @@ export default function QuickTools() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const admin = isAdmin(user?.role)
+  const canCreate = canCreateInvoice(user)
+  const canImport = canImportData(user)
+  const canGenerate = canGeneratePo(user)
   const rootRef = useRef<HTMLDivElement>(null)
   const [prefs, setPrefs] = useState<Prefs>(readPrefs)
   const [customizing, setCustomizing] = useState(false)
   const [open, setOpen] = useState(false)
 
   const catalog = useMemo(
-    () => CATALOG.filter((item) => !item.adminOnly || admin),
-    [admin],
+    () =>
+      CATALOG.filter((item) => {
+        if (item.adminOnly && !admin) return false
+        if (item.id === 'new-invoice' && !canCreate) return false
+        if (item.id === 'import' && !canImport) return false
+        if (item.id === 'generate-po' && !canGenerate) return false
+        return true
+      }),
+    [admin, canCreate, canImport, canGenerate],
   )
 
   const expand = () => {

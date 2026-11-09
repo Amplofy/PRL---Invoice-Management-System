@@ -55,6 +55,16 @@ function ProtectedUsersLayout() {
   )
 }
 
+function ProtectedImportLayout() {
+  return (
+    <AuthGuard anyPermission={['import.data']}>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </AuthGuard>
+  )
+}
+
 export default function App() {
   const [booting, setBooting] = useState(() => {
     try {
@@ -94,15 +104,18 @@ export default function App() {
                 <Route path="contracts" element={<ContractsPage />} />
                 <Route path="reports" element={<ReportsPage />} />
                 <Route path="audit-log" element={<AuditLogPage />} />
-                <Route path="import" element={<ImportPage />} />
                 <Route path="followups" element={<FollowupsPage />} />
                 <Route path="delta" element={<DeltaAnalystPage />} />
+                <Route path="power-graph" element={<Navigate to="/reports?pg=1" replace />} />
               </Route>
               <Route path="/admin" element={<ProtectedAdminLayout />}>
                 <Route index element={<AdminPage />} />
               </Route>
               <Route path="/users" element={<ProtectedUsersLayout />}>
                 <Route index element={<UsersPage />} />
+              </Route>
+              <Route path="/import" element={<ProtectedImportLayout />}>
+                <Route index element={<ImportPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/control-tower" replace />} />
             </Routes>

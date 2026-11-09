@@ -32,11 +32,13 @@ import ContractSummaryPanel from '../components/ui/ContractSummaryPanel'
 import ValidationSummary from '../components/ui/ValidationSummary'
 import AmountWords from '../components/ui/AmountWords'
 import { Field } from '../components/ui/Field'
+import DateField from '../components/ui/DateField'
+import SelectMenu from '../components/ui/SelectMenu'
 import InvoiceVendorField from '../components/ui/InvoiceVendorField'
-import { useAuth, isAdmin } from '../lib/auth'
+import { useAuth, canApproveInvoice, canDeleteInvoice, canGeneratePo, canRejectInvoice, canUpdateInvoice } from '../lib/auth'
 import { useFyLock } from '../lib/FyLockProvider'
 import { useMasterAccess } from '../lib/masterAccess'
-import { currentFiscalYear, invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear } from '../lib/fiscal'
+import { invoiceBudgetDate, invoiceBudgetFy, isClosedFiscalYear } from '../lib/fiscal'
 import { invoiceListPath } from '../lib/invoiceWindow'
 import { invoiceApprovedAmount, poGeneratedAmount, poReleasedAmount, poStatusLabel, poStatusTone } from '../lib/paymentOrder'
 import { emitCrossModule, useLiveDomain } from '../lib/store'
@@ -138,7 +140,11 @@ export default function InvoiceWorkspacePage() {
   const navigate = useNavigate()
   const toast = useToast()
   const { user } = useAuth()
-  const admin = isAdmin(user?.role)
+  const canUpdate = canUpdateInvoice(user)
+  const canDelete = canDeleteInvoice(user)
+  const canApprove = canApproveInvoice(user)
+  const canReject = canRejectInvoice(user)
+  const canGenerate = canGeneratePo(user)
   const { guardWrite } = useFyLock()
   const { unlocked: masterOn } = useMasterAccess()
 
@@ -196,7 +202,7 @@ export default function InvoiceWorkspacePage() {
         apiGet<{ auditLog: AuditEntry[] }>('/api/audit-log'),
         apiGet<{ serviceMatrix: ServiceMatrixRow[] }>('/api/service-matrix'),
         apiGet<{ invoices: UtilizationInvoice[] }>(
-          inv.contract_id ? invoiceListPath({ contract: inv.contract_id }) : invoiceListPath({ fy: currentFiscalYear() }),
+          inv.contract_id ? invoiceListPath({ contract: inv.contract_id }) : invoiceListPath(),
         ),
         apiGet<{ contracts: ContractFull[] }>('/api/contracts'),
         apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings'),
@@ -385,7 +391,7 @@ export default function InvoiceWorkspacePage() {
   }
 
   const generatePo = async () => {
-    if (!invoice) return
+    if (!invoice || !canGenerate) return
     if (!isUnpaidPriorYearInvoice(invoice) && !(await guardWrite(invoiceBudgetDate(invoice)))) return
     try {
       await apiPost(`/api/invoices/${invoice.id}/po`, {})
@@ -497,33 +503,37 @@ export default function InvoiceWorkspacePage() {
           <button className="btn btn-ghost" onClick={loadAll} title="Reload from server">
             <RefreshCw size={15} /> Refresh
           </button>
-          {admin && status !== 'Approved' && status !== 'Paid' && poVersions.length === 0 && (
+          {canDelete && status !== 'Approved' && status !== 'Paid' && poVersions.length === 0 && (
             <button className="btn btn-danger" onClick={() => setDeleting(true)}>
               <Trash2 size={15} /> Delete
             </button>
           )}
-          {admin && (status === 'Paid' || (status !== 'Approved' && poVersions.length > 0)) && (
+          {canDelete && (status === 'Paid' || (status !== 'Approved' && poVersions.length > 0)) && (
             <span className="badge badge-neutral" title="Invoices with payment orders cannot be deleted">
               <Landmark size={12} /> Locked (PO exists)
             </span>
           )}
-          {admin && status === 'Pending' && (
+          {status === 'Pending' && (
             <>
-              <button className="btn btn-success" onClick={approve}>
-                <CheckCircle2 size={15} /> Approve
-              </button>
-              <button
-                className="btn btn-warn"
-                onClick={() => {
-                  setRejecting(true)
-                  setRejectReason('')
-                }}
-              >
-                <XCircle size={15} /> Reject
-              </button>
+              {canApprove && (
+                <button className="btn btn-success" onClick={approve}>
+                  <CheckCircle2 size={15} /> Approve
+                </button>
+              )}
+              {canReject && (
+                <button
+                  className="btn btn-warn"
+                  onClick={() => {
+                    setRejecting(true)
+                    setRejectReason('')
+                  }}
+                >
+                  <XCircle size={15} /> Reject
+                </button>
+              )}
             </>
           )}
-          {admin && status === 'Approved' && (
+          {status === 'Approved' && canGenerate && (
             <button className="btn btn-primary" onClick={generatePo}>
               <FileOutput size={15} /> Generate PO
             </button>
@@ -533,9 +543,11 @@ export default function InvoiceWorkspacePage() {
               <Landmark size={15} /> Payment released
             </Link>
           )}
-          <button className="btn btn-primary" onClick={save} disabled={saving || issues.length > 0} title={issues.length > 0 ? `${issues.length} validation issue(s)` : 'Save changes'}>
-            <Save size={15} /> {saving ? 'Saving…' : 'Save'}
-          </button>
+          {canUpdate && (
+            <button className="btn btn-primary" onClick={save} disabled={saving || issues.length > 0} title={issues.length > 0 ? `${issues.length} validation issue(s)` : 'Save changes'}>
+              <Save size={15} /> {saving ? 'Saving…' : 'Save'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -561,25 +573,30 @@ export default function InvoiceWorkspacePage() {
                 <LockedAutoField
                   label="Serial No"
                   value={form.serial_no}
-                  hint="Auto-generated serial"
                   onCommit={(next) => setForm((f) => ({ ...f, serial_no: next }))}
                 />
                 <Field label="Invoice Date" error={issueMap.invoice_date}>
-                  <input type="date" className={`input ${issueMap.invoice_date ? 'invalid' : ''}`} value={form.invoice_date} onChange={set('invoice_date')} />
+                  <DateField
+                    value={form.invoice_date}
+                    invalid={Boolean(issueMap.invoice_date)}
+                    onChange={(invoice_date) => setForm((f) => ({ ...f, invoice_date }))}
+                  />
                 </Field>
                 <LockedAutoField
                   label="Processing Date"
                   value={form.processing_date ?? ''}
                   type="date"
-                  hint="Stamped with the date of entry"
                   onCommit={(next) => setForm((f) => ({ ...f, processing_date: next }))}
                 />
                 <Field label="Contract">
-                  <select
-                    className="input"
+                  <SelectMenu
                     value={form.contract_id}
-                    onChange={(e) => {
-                      const contract_id = e.target.value
+                    placeholder="Choose contract"
+                    options={contracts.filter((c) => masterOn || isSelectableContract(c)).map((c) => ({
+                      value: c.id,
+                      label: `${c.contract_no}${contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}`,
+                    }))}
+                    onChange={(contract_id) => {
                       const next = contracts.find((c) => c.id === contract_id)
                       setForm((f) => ({
                         ...f,
@@ -594,14 +611,7 @@ export default function InvoiceWorkspacePage() {
                         vendor_id: next?.vendor_id ?? '',
                       }))
                     }}
-                  >
-                    <option value="">Choose contract</option>
-                    {contracts.filter((c) => masterOn || isSelectableContract(c)).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.contract_no}{contractStatusLabel(c) ? ` (${contractStatusLabel(c)})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </Field>
                 <InvoiceVendorField
                   vendorId={form.vendor_id ?? ''}
@@ -717,7 +727,9 @@ export default function InvoiceWorkspacePage() {
               title="No payment orders yet"
               description={
                 status === 'Approved'
-                  ? 'Generate a payment order from the action bar above.'
+                  ? canGenerate
+                    ? 'Generate a payment order from the action bar above.'
+                    : 'A payment order can be generated by a user with PO permission.'
                   : status === 'Paid'
                     ? 'Payment has been released. This invoice is closed.'
                     : 'Payment orders become available once the invoice is approved.'

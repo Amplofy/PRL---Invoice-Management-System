@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, XCircle, FileText, FolderOpen } from 'lucide-react'
+import { CheckCircle2, XCircle, FileText, FolderOpen, Clock, ShieldAlert } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
 import { todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate, formatAmountWords } from '../lib/format'
@@ -17,6 +17,7 @@ import Modal from '../components/ui/Modal'
 import DataToolbar from '../components/ui/DataToolbar'
 import { sortRows, dateSortValue, type SortDirection } from '../lib/export'
 import { downloadTableWorkbook } from '../lib/analysisWorkbook'
+import { useAuth, canApproveInvoice, canRejectInvoice } from '../lib/auth'
 import { useFyLock } from '../lib/FyLockProvider'
 import { invoiceBudgetDate, invoiceBudgetInfo } from '../lib/fiscal'
 import { contractNoOf, vendorEmailOf, vendorNameOf } from '../lib/relations'
@@ -25,6 +26,7 @@ interface ApprovalInvoice {
   id: string
   invoice_no: string | null
   invoice_date: string | null
+  created_at?: string | null
   service_from?: string | null
   amount: number
   remarks: string | null
@@ -36,6 +38,13 @@ interface ApprovalInvoice {
   contracts: { contract_no: string | null; service: string | null; vendors: Array<{ name: string | null; email: string | null }> | null } | null
 }
 
+function hoursSince(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return null
+  return (Date.now() - t) / 3_600_000
+}
+
 export default function ApprovalsPage() {
   const [pending, setPending] = useState<ApprovalInvoice[]>([])
   const [loading, setLoading] = useState(true)
@@ -45,7 +54,13 @@ export default function ApprovalsPage() {
   const [sortBy, setSortBy] = useState('invoice_date')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
   const toast = useToast()
+  const { user } = useAuth()
+  const canApprove = canApproveInvoice(user)
+  const canReject = canRejectInvoice(user)
   const { guardWrite } = useFyLock()
+  const [slaHours, setSlaHours] = useState(48)
+  const [autoLimit, setAutoLimit] = useState(0)
+  const [secondApproval, setSecondApproval] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -62,6 +77,20 @@ export default function ApprovalsPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    apiGet<{ settings: Array<{ key: string; value: string }> }>('/api/settings')
+      .then((d) => {
+        const map = new Map((d.settings ?? []).map((s) => [s.key, s.value]))
+        const sla = Number(map.get('approval_sla_hours') ?? 48)
+        setSlaHours(Number.isFinite(sla) && sla > 0 ? sla : 48)
+        const limit = Number(map.get('auto_approve_limit') ?? 0)
+        setAutoLimit(Number.isFinite(limit) && limit > 0 ? limit : 0)
+        const second = String(map.get('require_second_approval') ?? 'true').toLowerCase()
+        setSecondApproval(second === 'true' || second === '1' || second === 'yes' || second === 'on')
+      })
+      .catch(() => undefined)
+  }, [])
 
   const vendorOf = (i: ApprovalInvoice) => {
     return vendorNameOf(i)
@@ -241,6 +270,22 @@ export default function ApprovalsPage() {
                     {inv.invoice_no ?? '—'}
                   </Link>
                   <StatusBadge tone="info">Pending</StatusBadge>
+                  {(() => {
+                    const age = hoursSince(inv.created_at ?? inv.invoice_date)
+                    if (age != null && age > slaHours) {
+                      return (
+                        <span className="badge badge-warn inline-flex items-center gap-1">
+                          <Clock size={11} /> Overdue ({Math.floor(age)}h / {slaHours}h SLA)
+                        </span>
+                      )
+                    }
+                    return null
+                  })()}
+                  {secondApproval && autoLimit > 0 && Number(inv.amount ?? 0) > autoLimit && (
+                    <span className="badge badge-purple inline-flex items-center gap-1" title="High-value invoices need a second sign-off">
+                      <ShieldAlert size={11} /> Second approval
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-sm text-[var(--text-dim)]">
                   <span>Vendor: <b className="text-[var(--text)]">{vendorOf(inv)}</b></span>
@@ -268,19 +313,23 @@ export default function ApprovalsPage() {
               <Link to={`/invoices/${inv.id}`} className="btn btn-ghost">
                 <FolderOpen size={15} /> Open workspace
               </Link>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => {
-                  setRejecting(inv)
-                  setReason('')
-                }}
-              >
-                <XCircle size={15} /> Reject
-              </Button>
-              <Button variant="success" size="sm" onClick={() => approve(inv)}>
-                <CheckCircle2 size={15} /> Approve
-              </Button>
+              {canReject && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => {
+                    setRejecting(inv)
+                    setReason('')
+                  }}
+                >
+                  <XCircle size={15} /> Reject
+                </Button>
+              )}
+              {canApprove && (
+                <Button variant="success" size="sm" onClick={() => approve(inv)}>
+                  <CheckCircle2 size={15} /> Approve
+                </Button>
+              )}
             </div>
           </GlassCard>
         ))}

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken'
 import { env } from '../config/env.js'
 import type { AuthUser } from '../types/index.js'
 import { loadAuthContext } from '../services/usersAdmin.js'
+import { bindActor } from '../services/requestContext.js'
 
 type JwtPayload = {
   sub?: string
@@ -39,7 +40,7 @@ export async function authRequired(
       return
     }
 
-    ;(req as Request & { user: AuthUser }).user = {
+    const user: AuthUser = {
       id: payload.sub,
       role: ctx.role,
       email: payload.email,
@@ -48,10 +49,16 @@ export async function authRequired(
       status: ctx.status,
       username: ctx.username,
     }
+    ;(req as Request & { user: AuthUser }).user = user
+    bindActor(user.email || user.username || user.id)
     next()
   } catch (err) {
     next(err)
   }
+}
+
+export function isAdminRole(role: string | null | undefined): boolean {
+  return role === 'admin' || role === 'superadmin'
 }
 
 export function requireRole(...roles: string[]) {
@@ -61,7 +68,8 @@ export function requireRole(...roles: string[]) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
-    if (!roles.includes(user.role)) {
+    const allowed = roles.includes(user.role) || (isAdminRole(user.role) && roles.includes('admin'))
+    if (!allowed) {
       res.status(403).json({ error: 'Forbidden: insufficient role' })
       return
     }
@@ -76,7 +84,7 @@ export function requirePermission(...codes: string[]) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
-    if (user.role === 'admin' || user.role === 'superadmin') {
+    if (isAdminRole(user.role)) {
       next()
       return
     }

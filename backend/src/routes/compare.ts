@@ -4,7 +4,7 @@ import { getSupabase } from '../config/supabase.js'
 import { authRequired } from '../middleware/auth.js'
 import { parseFileGroups } from '../services/parse.js'
 import { inferColumns } from '../services/parseTable.js'
-import { sendEmail, renderTemplate, textToHtml } from '../services/emailService.js'
+import { sendEmail, renderTemplate, textToHtml, mailServiceConfigured } from '../services/emailService.js'
 import { getUploadedFile } from './uploads.js'
 import { getSetting } from '../services/settingsService.js'
 import { audit } from '../services/auditService.js'
@@ -169,7 +169,12 @@ compareRouter.get('/:id/results', authRequired, async (req, res, next) => {
 compareRouter.post('/:id/send-discrepancy', authRequired, async (req, res, next) => {
   try {
     const { id } = req.params
-    const { vendorId, notes } = req.body as { vendorId?: string; notes?: string }
+    const { vendorId, notes, subjectOverride, bodyOverride } = req.body as {
+      vendorId?: string
+      notes?: string
+      subjectOverride?: string
+      bodyOverride?: string
+    }
     const supabase = getSupabase()
     const { data: comparison } = await supabase
       .from('comparisons')
@@ -216,14 +221,21 @@ compareRouter.post('/:id/send-discrepancy', authRequired, async (req, res, next)
     }
     if (notes) discrepancyList += `\n\nAdditional notes:\n${notes}`
 
-    const body = renderTemplate(template, {
+    const rendered = renderTemplate(template, {
       vendorName: vendor.name,
       baseFileName: comparison.base_file_name,
       compareFileName: comparison.compare_file_name,
       keyValue: mismatches[0]?.key_value || 'multiple rows',
       discrepancyList,
     })
-    const subject = `PRL - Discrepancy Identified (${comparison.base_file_name} vs ${comparison.compare_file_name})`
+    const body = bodyOverride?.trim() ? bodyOverride : rendered
+    const subject = subjectOverride?.trim()
+      ? subjectOverride
+      : `PRL - Discrepancy Identified (${comparison.base_file_name} vs ${comparison.compare_file_name})`
+    if (!mailServiceConfigured()) {
+      res.status(503).json({ error: 'Email service is not configured', serviceConfigured: false })
+      return
+    }
     const emailResult = await sendEmail(vendor.email, subject, textToHtml(body))
 
     await supabase.from('discrepancy_emails').insert({

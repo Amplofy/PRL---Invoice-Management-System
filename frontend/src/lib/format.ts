@@ -11,6 +11,23 @@ export function formatMoney(value: number | string | null | undefined, digits = 
   return `${numberFmt.format(Number(num.toFixed(digits)))}`
 }
 
+export function formatCompactMoney(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const num = typeof value === 'string' ? Number(value) : value
+  if (Number.isNaN(num)) return '—'
+  const abs = Math.abs(num)
+  const sign = num < 0 ? '-' : ''
+  if (abs >= 1_000_000) {
+    const v = abs / 1_000_000
+    return `${sign}${v >= 10 || abs % 1_000_000 === 0 ? v.toFixed(0) : v.toFixed(1)}M`
+  }
+  if (abs >= 1_000) {
+    const v = abs / 1_000
+    return `${sign}${v >= 10 || abs % 1_000 === 0 ? v.toFixed(0) : v.toFixed(1)}k`
+  }
+  return `${sign}${numberFmt.format(abs)}`
+}
+
 const percentFmt = new Intl.NumberFormat('en-PK', { maximumFractionDigits: 1 })
 export function formatPercent(value: number | string | null | undefined): string {
   if (value === null || value === undefined || value === '') return '—'

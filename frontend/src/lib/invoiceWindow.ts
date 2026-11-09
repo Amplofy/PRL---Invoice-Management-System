@@ -17,6 +17,8 @@ const TTL_MS = 20_000
 const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<InvoiceWindow<unknown>>>()
 
+export const INVOICE_WINDOW_LIMIT = 5000
+
 export function invoiceListPath(
   opts: { fy?: string; status?: string; limit?: number; search?: string; contract?: string } = {},
 ): string {

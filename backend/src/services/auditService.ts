@@ -1,4 +1,5 @@
 import { getSupabase } from '../config/supabase.js'
+import { currentActor } from './requestContext.js'
 
 export async function audit(
   action: string,
@@ -10,7 +11,7 @@ export async function audit(
   try {
     const supabase = getSupabase()
     await supabase.from('audit_log').insert({
-      user_email: user ?? null,
+      user_email: user ?? currentActor() ?? null,
       action,
       entity_type: entityType,
       entity_id: entityId,

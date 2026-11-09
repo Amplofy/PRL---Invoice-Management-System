@@ -57,6 +57,8 @@ create table if not exists public.users (
   auth_id     uuid references auth.users(id) on delete set null,
   status      text not null default 'active' check (status in ('active','inactive')),
   last_login  timestamptz,
+  failed_login_count integer not null default 0,
+  locked_until timestamptz,
   created_at  timestamptz not null default now()
 );
 

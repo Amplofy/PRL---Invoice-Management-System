@@ -10,6 +10,10 @@ function getResend(): Resend | null {
   return _resend
 }
 
+export function mailServiceConfigured(): boolean {
+  return Boolean(env.RESEND_API_KEY)
+}
+
 export async function sendEmail(
   to: string,
   subject: string,
@@ -17,7 +21,7 @@ export async function sendEmail(
 ): Promise<EmailResult> {
   const client = getResend()
   if (!client) {
-    return { error: 'RESEND_API_KEY not configured' }
+    return { error: 'RESEND_API_KEY not configured', configured: false }
   }
   try {
     const { data, error } = await client.emails.send({
@@ -26,10 +30,10 @@ export async function sendEmail(
       subject,
       html,
     })
-    if (error) return { error: error.message }
-    return { id: data?.id }
+    if (error) return { error: error.message, configured: true }
+    return { id: data?.id, configured: true }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Email send failed' }
+    return { error: err instanceof Error ? err.message : 'Email send failed', configured: true }
   }
 }
 

@@ -1,4 +1,5 @@
-import type { ReactNode, SelectHTMLAttributes } from 'react'
+import type { ChangeEvent, ReactNode, SelectHTMLAttributes } from 'react'
+import SelectMenu, { optionsFromChildren } from './SelectMenu'
 
 interface FieldProps {
   label: string
@@ -22,14 +23,26 @@ export function Field({ label, children, required, hint, error }: FieldProps) {
   )
 }
 
-interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'onChange'> {
   children: ReactNode
+  onChange?: (e: ChangeEvent<HTMLSelectElement>) => void
 }
 
-export function Select({ children, className = '', ...rest }: SelectProps) {
+export function Select({ children, className = '', value, onChange, disabled, 'aria-label': ariaLabel }: SelectProps) {
+  const parsed = optionsFromChildren(children)
   return (
-    <select className={`input ${className}`} {...rest}>
-      {children}
-    </select>
+    <SelectMenu
+      value={String(value ?? '')}
+      onChange={(next) => {
+        if (!onChange) return
+        onChange({ target: { value: next } } as ChangeEvent<HTMLSelectElement>)
+      }}
+      options={parsed.options}
+      placeholder={parsed.placeholder}
+      disabled={disabled}
+      invalid={className.includes('invalid')}
+      className={className}
+      aria-label={ariaLabel}
+    />
   )
 }

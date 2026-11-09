@@ -81,7 +81,8 @@ insert into public.role_permissions (role_id, permission_id) values
   ('00000000-0000-0000-0000-000000000005', 'reports.view')
 on conflict do nothing;
 
--- finance: last decision on payment orders, then release to surveyor
+-- finance: last decision on payment orders, then release to surveyor.
+-- Never grant invoice.create / invoice.update / invoice.delete to this role.
 insert into public.role_permissions (role_id, permission_id) values
   ('00000000-0000-0000-0000-000000000006', 'invoice.view'),
   ('00000000-0000-0000-0000-000000000006', 'contract.view'),

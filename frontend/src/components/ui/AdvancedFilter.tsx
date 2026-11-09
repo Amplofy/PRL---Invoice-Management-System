@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Filter, Plus, X } from 'lucide-react'
+import DateField from './DateField'
+import SelectMenu from './SelectMenu'
 import {
   FILTER_OPS,
   newFilterId,
@@ -168,43 +170,42 @@ export default function AdvancedFilter({ columns, filters, onChange, logic = 'an
                 Add filter
               </div>
               <div className="space-y-2">
-                <select className="input" value={colKey} onChange={(e) => pickColumn(e.target.value)} aria-label="Filter column">
-                  {columns.map((c) => (
-                    <option key={c.key} value={c.key}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="input"
+                <SelectMenu
+                  value={colKey}
+                  onChange={pickColumn}
+                  aria-label="Filter column"
+                  options={columns.map((c) => ({ value: c.key, label: c.label }))}
+                />
+                <SelectMenu
                   value={op}
-                  onChange={(e) => {
-                    setOp(e.target.value)
+                  onChange={(next) => {
+                    setOp(next)
                     setValueTo('')
                   }}
                   aria-label="Filter operator"
-                >
-                  {FILTER_OPS[column?.type ?? 'text'].map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+                  options={FILTER_OPS[column?.type ?? 'text'].map((o) => ({ value: o.value, label: o.label }))}
+                />
                 {opNeedsValue(op) &&
                   (column?.type === 'select' ? (
-                    <select className="input" value={value} onChange={(e) => setValue(e.target.value)} aria-label="Filter value">
-                      <option value="">Select value…</option>
-                      {(column.options ?? []).map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
+                    <SelectMenu
+                      value={value}
+                      onChange={setValue}
+                      aria-label="Filter value"
+                      placeholder="Select value…"
+                      options={(column.options ?? []).map((o) => ({ value: o.value, label: o.label }))}
+                    />
+                  ) : column?.type === 'date' ? (
+                    <div className={opNeedsRange(op) ? 'grid grid-cols-2 gap-2' : ''}>
+                      <DateField value={value} onChange={setValue} aria-label={opNeedsRange(op) ? 'Filter from' : 'Filter value'} />
+                      {opNeedsRange(op) && (
+                        <DateField value={valueTo} onChange={setValueTo} aria-label="Filter to" />
+                      )}
+                    </div>
                   ) : (
                     <div className={opNeedsRange(op) ? 'grid grid-cols-2 gap-2' : ''}>
                       <input
                         className="input"
-                        type={column?.type === 'number' ? 'number' : column?.type === 'date' ? 'date' : 'text'}
+                        type={column?.type === 'number' ? 'number' : 'text'}
                         value={value}
                         onChange={(e) => setValue(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && addFilter()}
@@ -214,7 +215,7 @@ export default function AdvancedFilter({ columns, filters, onChange, logic = 'an
                       {opNeedsRange(op) && (
                         <input
                           className="input"
-                          type={column?.type === 'number' ? 'number' : column?.type === 'date' ? 'date' : 'text'}
+                          type={column?.type === 'number' ? 'number' : 'text'}
                           value={valueTo}
                           onChange={(e) => setValueTo(e.target.value)}
                           onKeyDown={(e) => e.key === 'Enter' && addFilter()}

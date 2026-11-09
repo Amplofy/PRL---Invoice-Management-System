@@ -196,3 +196,54 @@ export function uniqueGroupName(name: string, used: Map<string, number>): string
   used.set(name, n + 1)
   return n === 0 ? name : `${name} (${n + 1})`
 }
+
+function rowSignature(row: string[]): string {
+  return row.map((c) => normalizeHeader(String(c ?? ''))).join('|')
+}
+
+function filledCount(row: string[]): number {
+  return row.filter((c) => String(c ?? '').trim()).length
+}
+
+/** Drop title/footer lines that are a single cell on an otherwise wide table. */
+export function trimTableEdges(matrix: string[][]): string[][] {
+  const rows = matrix.map((r) => r.map((c) => String(c ?? '').trim()))
+  const width = rows.reduce((m, r) => Math.max(m, r.length), 0)
+  if (width < 2 || rows.length === 0) return rows
+  let start = 0
+  let end = rows.length
+  while (start < end && filledCount(rows[start] ?? []) <= 1) start += 1
+  while (end > start && filledCount(rows[end - 1] ?? []) <= 1) end -= 1
+  return rows.slice(start, end)
+}
+
+/**
+ * Split a stacked page matrix when a header row repeats (two tables on one page).
+ * Returns one or more trimmed matrices.
+ */
+export function splitRepeatedHeaderTables(matrix: string[][]): string[][][] {
+  const compact = matrix
+    .map((r) => r.map((c) => String(c ?? '').trim()))
+    .filter((r) => !rowIsEmpty(r))
+  if (compact.length < 4) return [trimTableEdges(compact)]
+
+  const headerIdx = detectHeaderRowIndex(compact)
+  const header = compact[headerIdx] ?? []
+  if (scoreHeaderRow(header) < 2) return [trimTableEdges(compact)]
+  const sig = rowSignature(header)
+  const repeats: number[] = []
+  for (let i = headerIdx + 2; i < compact.length; i++) {
+    const row = compact[i] ?? []
+    if (rowSignature(row) === sig && scoreHeaderRow(row) >= 2) repeats.push(i)
+  }
+  if (repeats.length === 0) return [trimTableEdges(compact)]
+
+  const cuts = [headerIdx, ...repeats, compact.length]
+  const tables: string[][][] = []
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const slice = compact.slice(cuts[i], cuts[i + 1])
+    const trimmed = trimTableEdges(slice)
+    if (trimmed.length > 0) tables.push(trimmed)
+  }
+  return tables.length > 0 ? tables : [trimTableEdges(compact)]
+}

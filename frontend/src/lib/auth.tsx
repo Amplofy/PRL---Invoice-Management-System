@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { supabase, isDemoMode, exitDemo } from './supabase'
 import { apiGet, ApiError } from './api'
+import { clearPowerGraphSession } from './powerGraphSession'
 
 export interface AuthUser {
   id: string
@@ -97,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh])
 
   const signOut = useCallback(async () => {
+    clearPowerGraphSession()
     exitDemo()
     await supabase?.auth.signOut()
     setUser(null)
@@ -133,4 +135,32 @@ export function hasPermission(user: AuthUser | null | undefined, code: string): 
 
 export function hasAnyPermission(user: AuthUser | null | undefined, codes: string[]): boolean {
   return codes.some((code) => hasPermission(user, code))
+}
+
+export function canCreateInvoice(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'invoice.create')
+}
+
+export function canUpdateInvoice(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'invoice.update')
+}
+
+export function canDeleteInvoice(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'invoice.delete')
+}
+
+export function canApproveInvoice(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'invoice.approve')
+}
+
+export function canRejectInvoice(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'invoice.reject')
+}
+
+export function canGeneratePo(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'po.generate')
+}
+
+export function canImportData(user: AuthUser | null | undefined): boolean {
+  return hasPermission(user, 'import.data')
 }

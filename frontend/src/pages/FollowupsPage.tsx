@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { Mail, Send, Truck, Layers } from 'lucide-react'
 import { apiGet, apiPost } from '../lib/api'
+import { Field, Select } from '../components/ui/Field'
+import { templatesFor, templateById } from '../lib/emailTemplates'
+import { dispatchDrafts, draftFits, type BulkMode } from '../lib/mailer'
+import { buildFollowupPlan } from '../lib/mailCompose'
 import { calendarDateAtNoon, civilDayDiff, todayCalendarYmd } from '../lib/calendarDate'
 import { formatMoney, formatDate } from '../lib/format'
 import { useToast } from '../components/ui/Toast'
@@ -69,6 +73,12 @@ export default function FollowupsPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [result, setResult] = useState<{ sent: string[]; failed: Array<{ invoiceId: string; reason: string }> } | null>(null)
+  const [delivery, setDelivery] = useState<'outlook' | 'service'>('outlook')
+  const [templateId, setTemplateId] = useState('followup-standard')
+  const [department, setDepartment] = useState('Finance')
+  const [bulkMode, setBulkMode] = useState<BulkMode>('combined')
+  const [serviceConfigured, setServiceConfigured] = useState(false)
+  const [progress, setProgress] = useState('')
   const [sortBy, setSortBy] = useState('invoiceDate')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
   const onSort = (key: string, dir: SortDirection) => {
@@ -97,6 +107,12 @@ export default function FollowupsPage() {
       setLoading(false)
     }
   }, [toast])
+
+  useEffect(() => {
+    apiGet<{ serviceConfigured: boolean }>('/api/followups/status')
+      .then((s) => setServiceConfigured(Boolean(s.serviceConfigured)))
+      .catch(() => setServiceConfigured(false))
+  }, [])
 
   useEffect(() => {
     load()
@@ -233,14 +249,43 @@ export default function FollowupsPage() {
   const totalPending = useMemo(() => filtered.reduce((s, p) => s + Number(p.amount ?? 0), 0), [filtered])
   const vendorCount = useMemo(() => new Set(filtered.map((p) => p.vendorId)).size, [filtered])
 
+  const selectedRows = useMemo(
+    () => pending.filter((p) => selected.has(p.invoiceId)),
+    [pending, selected],
+  )
+
+  const followupPlan = useMemo(
+    () => buildFollowupPlan(selectedRows, templateId, department, bulkMode),
+    [selectedRows, templateId, department, bulkMode],
+  )
+
+  const previewDraft = followupPlan.drafts[0]
+  const oversized = followupPlan.drafts.some((d) => !draftFits(d))
+
   const send = async () => {
-    const rows = pending.filter((p) => selected.has(p.invoiceId))
+    const rows = selectedRows
+    if (rows.length === 0) return
     if (!(await guardWrite(...rows.map((p) => p.invoiceDate)))) return
     setSending(true)
+    setProgress('')
     try {
+      if (delivery === 'outlook') {
+        setProgress(`Opening ${followupPlan.drafts.length} Outlook draft${followupPlan.drafts.length === 1 ? '' : 's'}…`)
+        const n = await dispatchDrafts(followupPlan.drafts)
+        setResult({ sent: rows.map((r) => r.invoiceId), failed: [] })
+        toast.success('Outlook opened', `${n} draft${n === 1 ? '' : 's'} ready to send`)
+        emitCrossModule('followup', 'bulk')
+        return
+      }
+      const composed: Record<string, { subject: string; body: string }> = {}
+      for (const row of rows) {
+        const plan = buildFollowupPlan([row], templateId, department, 'individual')
+        const draft = plan.drafts[0]
+        if (draft) composed[row.invoiceId] = { subject: draft.subject, body: draft.body }
+      }
       const d = await apiPost<{ sent: string[]; failed: Array<{ invoiceId: string; reason: string }> }>(
         '/api/followups/send',
-        { invoiceIds: Array.from(selected) },
+        { invoiceIds: Array.from(selected), composed },
       )
       setResult(d)
       if (d.failed.length) toast.warning('Some emails failed', `${d.failed.length} failed`)
@@ -250,6 +295,7 @@ export default function FollowupsPage() {
       toast.error('Send failed', (e as Error).message)
     } finally {
       setSending(false)
+      setProgress('')
     }
   }
 
@@ -338,7 +384,7 @@ export default function FollowupsPage() {
       </DataToolbar>
 
       <GlassCard className="overflow-hidden">
-        <div className="table-scroll">
+        <div className={`table-scroll${col.hasExtra ? ' has-extra' : ''}`}>
           <table className="data-table">
             <thead>
               <tr>
@@ -448,7 +494,7 @@ export default function FollowupsPage() {
         open={confirmOpen}
         onClose={closeConfirm}
         title="Send follow-up emails"
-        maxWidth="34rem"
+        maxWidth="40rem"
         footer={
           result ? (
             <>
@@ -457,8 +503,13 @@ export default function FollowupsPage() {
           ) : (
             <>
               <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={sending}>Cancel</Button>
-              <Button variant="success" onClick={send} disabled={sending}>
-                <Send size={15} /> {sending ? 'Sending…' : `Send to ${selected.size} vendors`}
+              <Button variant="success" onClick={send} disabled={sending || selectedRows.length === 0}>
+                <Send size={15} />
+                {sending
+                  ? (progress || 'Sending…')
+                  : delivery === 'outlook'
+                    ? `Open Outlook (${followupPlan.drafts.length})`
+                    : `Send to ${selected.size} vendors`}
               </Button>
             </>
           )
@@ -466,27 +517,65 @@ export default function FollowupsPage() {
       >
         {!result ? (
           <div className="space-y-4">
-            <div className="text-sm text-[var(--text-dim)]">
-              A pending-invoice reminder will be sent to each selected vendor using the follow-up template from
-              Admin settings.
+            <div className="flex flex-wrap gap-1.5">
+              <button type="button" className={`chip ${delivery === 'outlook' ? 'active' : ''}`} onClick={() => setDelivery('outlook')}>
+                Outlook
+              </button>
+              <button
+                type="button"
+                className={`chip ${delivery === 'service' ? 'active' : ''}`}
+                onClick={() => setDelivery('service')}
+                disabled={!serviceConfigured}
+                title={serviceConfigured ? 'Send via configured mail service' : 'Mail service is not configured'}
+              >
+                Service send
+              </button>
             </div>
-            <div className="max-h-56 space-y-1.5 overflow-y-auto rounded-xl border border-[var(--border)] p-3">
-              {pending
-                .filter((p) => selected.has(p.invoiceId))
-                .map((p) => (
-                  <div key={p.invoiceId} className="flex items-center justify-between text-sm">
-                    <span>
-                      <b>{p.vendorName}</b> — {p.invoiceNo}
-                    </span>
-                    <span className="text-xs text-[var(--text-muted)]">{p.email}</span>
-                  </div>
-                ))}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Template">
+                <Select className="input" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+                  {templatesFor('followup').map((t) => (
+                    <option key={t.id} value={t.id}>{t.label}</option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Department">
+                <input className="input" value={department} onChange={(e) => setDepartment(e.target.value)} />
+              </Field>
             </div>
+            <Field label="Bulk layout">
+              <Select className="input" value={bulkMode} onChange={(e) => setBulkMode(e.target.value as BulkMode)}>
+                <option value="combined">Combined — one message, all surveyors in BCC</option>
+                <option value="individual">Individual — one personalized draft each</option>
+              </Select>
+            </Field>
+            {oversized && delivery === 'outlook' && (
+              <p className="rounded-lg border border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.08)] px-3 py-2 text-xs text-[var(--warn)]">
+                This mailto link is long. Switch to individual drafts if Outlook does not open.
+              </p>
+            )}
+            <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-xl border border-[var(--border)] p-3">
+              {selectedRows.map((p) => (
+                <div key={p.invoiceId} className="flex items-center justify-between text-sm">
+                  <span>
+                    <b>{p.vendorName}</b> — {p.invoiceNo}
+                  </span>
+                  <span className="text-xs text-[var(--text-muted)]">{p.email}</span>
+                </div>
+              ))}
+            </div>
+            {previewDraft && (
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-xs">
+                <div className="font-semibold text-[var(--text)]">{previewDraft.subject || templateById(templateId)?.label}</div>
+                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans text-[var(--text-dim)]">{previewDraft.body}</pre>
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
             <div className="rounded-xl border border-[rgba(16,185,129,0.3)] bg-[rgba(16,185,129,0.08)] p-4 text-sm">
-              <b className="text-[var(--accent-3)]">{result.sent.length}</b> email(s) sent successfully
+              <b className="text-[var(--accent-3)]">{result.sent.length}</b>{' '}
+              {delivery === 'outlook' ? 'draft(s) opened' : 'email(s) sent successfully'}
             </div>
             {result.failed.length > 0 && (
               <div className="rounded-xl border border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] p-4 text-sm">

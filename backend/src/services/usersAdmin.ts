@@ -150,6 +150,7 @@ export async function createDirectoryUser(body: Record<string, unknown>, actor?:
     password,
     email_confirm: true,
     user_metadata: { full_name: fullName, username },
+    ...(status === 'inactive' ? { ban_duration: '876000h' } : {}),
   })
   if (authError || !created.user) {
     throw new HttpError(400, authError?.message || 'Failed to create login account')
@@ -223,9 +224,14 @@ export async function updateDirectoryUser(
     const patch: { email?: string; password?: string; ban_duration?: string } = {}
     if (email !== current.email) patch.email = email
     if (password) patch.password = password
+    if (status === 'inactive') patch.ban_duration = '876000h'
+    else if (current.status === 'inactive' && status === 'active') patch.ban_duration = 'none'
     if (Object.keys(patch).length) {
       const { error } = await supabase.auth.admin.updateUserById(authId, patch)
       if (error) throw new HttpError(400, error.message)
+    }
+    if (status === 'inactive') {
+      await supabase.auth.admin.signOut(authId, 'global').catch(() => undefined)
     }
   }
 

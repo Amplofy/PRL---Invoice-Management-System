@@ -22,7 +22,7 @@ import { useColumnVisibility } from '../lib/columns'
 import { applyFilters, type FilterColumnDef, type FilterLogic, type FilterState } from '../lib/filters'
 import { groupRows } from '../lib/grouping'
 import Modal from '../components/ui/Modal'
-import { Field } from '../components/ui/Field'
+import { Field, Select } from '../components/ui/Field'
 import { useAuth, isFinanceOfficial } from '../lib/auth'
 import { useFyLock } from '../lib/FyLockProvider'
 import { emitCrossModule, useLiveDomain } from '../lib/store'
@@ -717,7 +717,7 @@ export default function PaymentOrdersPage() {
 
       <GlassCard className="overflow-hidden">
         <ColumnResizeProvider storageKey="prl-eoms-colw-payment-orders">
-        <div className="table-scroll">
+        <div className={`table-scroll${col.hasExtra ? ' has-extra' : ''}`}>
           <table className="data-table">
             <thead>
               <tr>
@@ -932,12 +932,12 @@ export default function PaymentOrdersPage() {
             </div>
           )}
           <Field label="Released via (optional)">
-            <select className="input" value={bulkReleasedVia} onChange={(e) => setBulkReleasedVia(e.target.value)}>
+            <Select className="input" value={bulkReleasedVia} onChange={(e) => setBulkReleasedVia(e.target.value)}>
               <option value="">Select…</option>
               {RELEASED_VIA.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field label="Release reference (optional)">
             <input className="input" value={bulkReleaseReference} onChange={(e) => setBulkReleaseReference(e.target.value)} placeholder="Cheque / transfer number" />
@@ -995,12 +995,12 @@ export default function PaymentOrdersPage() {
               <input className="input" inputMode="decimal" value={releasedAmount} onChange={(e) => setReleasedAmount(e.target.value)} />
             </Field>
             <Field label="Released via (optional)">
-              <select className="input" value={releasedVia} onChange={(e) => setReleasedVia(e.target.value)}>
+              <Select className="input" value={releasedVia} onChange={(e) => setReleasedVia(e.target.value)}>
                 <option value="">Select…</option>
                 {RELEASED_VIA.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
-              </select>
+              </Select>
             </Field>
             <Field label="Release reference (optional)">
               <input className="input" value={releaseReference} onChange={(e) => setReleaseReference(e.target.value)} placeholder="Cheque / transfer number" />

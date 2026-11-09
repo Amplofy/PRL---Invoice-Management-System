@@ -50,5 +50,7 @@ export function useColumnVisibility(storageKey: string, allKeys: string[], defau
 
   const show = useCallback((key: string) => visible.has(key), [visible])
 
-  return { show, toggle, reset, hiddenCount: allKeys.length - visible.size }
+  const hasExtra = [...visible].some((key) => !defaultVisible.includes(key))
+
+  return { show, toggle, reset, hiddenCount: allKeys.length - visible.size, hasExtra }
 }
